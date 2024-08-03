@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+axum = { version = "0.7.5", features = ["ws"] }
+axum-extra = { version = "0.9.3", features = ["typed-header"] }
+futures = "0.3.30"
+futures-util = { version = "0.3.30", default-features = false, features = ["sink", "std"] }
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = "1.0.122"
+tokio = { version = "1.39.2", features = ["full"] }
+tower = { version = "0.4.13", features = ["util"] }
+tower-http = { version = "0.5.2", features = ["trace"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
