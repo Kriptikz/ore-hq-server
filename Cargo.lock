@@ -2545,7 +2545,6 @@ dependencies = [
  "axum",
  "axum-extra",
  "bincode",
- "crossbeam-channel",
  "dotenv",
  "drillx",
  "futures",

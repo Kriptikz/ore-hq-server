@@ -5,12 +5,19 @@ use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_utils::{get_proof, get_register_ix};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, native_token::LAMPORTS_PER_SOL, signature::read_keypair_file, signer::Signer, transaction::Transaction};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc::UnboundedSender, Mutex};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct AppState {
     sockets: HashMap<SocketAddr, SplitSink<WebSocket, Message>>
+}
+
+#[derive(Debug)]
+pub enum ClientMessage {
+    Ready(SocketAddr),
+    Mining(SocketAddr),
+    BestSolution(SocketAddr)
 }
 
 mod ore_utils;
@@ -91,8 +98,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let wallet_extension = Arc::new(wallet);
-    let proof_extension = Arc::new(Mutex::new(proof));
-    let nonce_extension = Arc::new(Mutex::new(0u64));
+    let _proof = Arc::new(Mutex::new(proof));
+    let _nonce = Arc::new(Mutex::new(0u64));
+
+    let (client_message_sender, mut client_message_receiver) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
+    let client_channel = client_message_sender.clone();
+
+    tokio::spawn(async move {
+        while let Some(client_message) = client_message_receiver.recv().await {
+            match client_message {
+                ClientMessage::Ready(addr) => {
+                    println!("Client {} is ready!", addr.to_string());
+                },
+                ClientMessage::Mining(addr) => {
+                    println!("Client {} has started mining!", addr.to_string());
+                },
+                ClientMessage::BestSolution(addr) => {
+                    println!("Client {} found a solution.", addr);
+                }
+            }
+        }
+    });
 
     let shared_state = Arc::new(Mutex::new(AppState {
         sockets: HashMap::new(),
@@ -103,8 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/", get(ws_handler))
         .with_state(app_shared_state)
         .layer(Extension(wallet_extension))
-        .layer(Extension(proof_extension))
-        .layer(Extension(nonce_extension))
+        .layer(Extension(client_channel))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -157,15 +182,16 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(app_state): State<Arc<Mutex<AppState>>>,
+    Extension(client_channel): Extension<UnboundedSender<ClientMessage>>
 ) -> impl IntoResponse {
 
     println!("Client: {addr} connected.");
 
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, app_state))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, app_state, client_channel))
 }
 
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<Mutex<AppState>>) {
+async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<Mutex<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
     if socket.send(axum::extract::ws::Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {who}...");
     } else {
@@ -185,28 +211,51 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<Mu
         }
     }
 
-    let _recv_task = tokio::spawn(async move {
-        let mut count = 0;
+    tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
-            count += 1;
-            if process_message(msg, who).is_break() {
+            if process_message(msg, who, client_channel.clone()).is_break() {
                 break;
             }
         }
-
-        count
     }).await;
 
     println!("Websocket context {who} destroyed");
 }
 
-fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
+fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSender<ClientMessage>) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
             println!(">>> {who} sent str: {t:?}");
         },
         Message::Binary(d) => {
-            println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);
+            // first 8 bytes are message type
+            if d.len() > 8 {
+                println!(">>> {} send too many bytes!", who);
+            } else {
+                let mut message_bytes: [u8; 8] = [0; 8];
+                for i in 0..8 {
+                    message_bytes[i] = d[i];
+                }
+                let message_type = u64::from_le_bytes(message_bytes);
+                match message_type {
+                    0 => {
+                        let msg = ClientMessage::Ready(who);
+                        client_channel.send(msg);
+                    },
+                    1 => {
+                        let msg = ClientMessage::Mining(who);
+                        client_channel.send(msg);
+                    },
+                    2 => {
+                        let msg = ClientMessage::BestSolution(who);
+                        client_channel.send(msg);
+                    },
+                    _ => {
+                        println!(">>> {} sent an invalid message", who);
+                    }
+                }
+
+            }
         },
         Message::Close(c) => {
             if let Some(cf) = c {
