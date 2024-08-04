@@ -1,7 +1,8 @@
-use std::{collections::HashMap, net::SocketAddr, ops::ControlFlow, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, ops::ControlFlow, path::Path, sync::Arc, time::Duration};
 
 use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgrade}, response::IntoResponse, routing::get, Router};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
+use solana_sdk::signature::read_keypair_file;
 use tokio::sync::Mutex;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,7 +13,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
+    dotenv::dotenv().ok();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -20,6 +21,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    // load wallet
+    let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
+    let wallet_path = Path::new(&wallet_path_str);
+
+    if !wallet_path.exists() {
+        tracing::error!("Failed to load wallet at: {}", wallet_path_str);
+        return Err("Failed to find wallet path.".into());
+    }
+
+    let wallet = read_keypair_file(wallet_path).expect("Failed to load keypair from file: {wallet_path}");
+
+    println!("loaded wallet...");
+    println!("establishing rpc connection...");
+
 
     let shared_state = Arc::new(Mutex::new(AppState {
         sockets: HashMap::new(),

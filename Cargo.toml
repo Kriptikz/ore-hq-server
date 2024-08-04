@@ -6,12 +6,18 @@ edition = "2021"
 [dependencies]
 axum = { version = "0.7.5", features = ["ws"] }
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
+drillx = { path = "../../regolith-labs/forks/drillx/drillx" }
 futures = "0.3.30"
 futures-util = { version = "0.3.30", default-features = false, features = ["sink", "std"] }
+ore-api = { path = "../../regolith-labs/ore/api" }
+ore-utils = { path = "../../regolith-labs/ore/utils" }
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.122"
+solana-sdk = "1.18.12"
+solana-client = "1.18.12"
 tokio = { version = "1.39.2", features = ["full"] }
 tower = { version = "0.4.13", features = ["util"] }
 tower-http = { version = "0.5.2", features = ["trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+dotenv = "0.15.0"
