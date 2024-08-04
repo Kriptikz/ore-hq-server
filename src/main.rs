@@ -1,8 +1,10 @@
 use std::{collections::HashMap, net::SocketAddr, ops::ControlFlow, path::Path, sync::Arc, time::Duration};
 
-use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgrade}, response::IntoResponse, routing::get, Router};
+use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgrade}, response::IntoResponse, routing::get, Extension, Router};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
-use solana_sdk::signature::read_keypair_file;
+use ore_utils::{get_proof, get_register_ix};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::{commitment_config::CommitmentConfig, native_token::LAMPORTS_PER_SOL, signature::read_keypair_file, signer::Signer, transaction::Transaction};
 use tokio::sync::Mutex;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -10,6 +12,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct AppState {
     sockets: HashMap<SocketAddr, SplitSink<WebSocket, Message>>
 }
+
+mod ore_utils;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,8 +26,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // load wallet
+    // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
+    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
+
+    // load wallet
     let wallet_path = Path::new(&wallet_path_str);
 
     if !wallet_path.exists() {
@@ -31,11 +38,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Failed to find wallet path.".into());
     }
 
-    let wallet = read_keypair_file(wallet_path).expect("Failed to load keypair from file: {wallet_path}");
+    let wallet = read_keypair_file(wallet_path).expect("Failed to load keypair from file: {wallet_path_str}");
+    println!("loaded wallet {}", wallet.pubkey().to_string());
 
-    println!("loaded wallet...");
     println!("establishing rpc connection...");
+    let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
 
+    println!("loading sol balance...");
+    let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
+        balance
+    } else {
+        return Err("Failed to load balance".into());
+    };
+
+    println!("Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
+
+    if balance < 1_000_000 {
+        return Err("Sol balance is too low!".into());
+    }
+
+    let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
+        loaded_proof
+    } else {
+        println!("Failed to load proof.");
+        println!("Creating proof account...");
+
+        let ix = get_register_ix(wallet.pubkey());
+
+        if let Ok((hash, _slot)) = rpc_client
+            .get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+            tx.sign(&[&wallet], hash);
+
+            let result = rpc_client
+                .send_and_confirm_transaction_with_spinner_and_commitment(
+                    &tx, rpc_client.commitment()
+                ).await;
+
+            if let Ok(sig) = result {
+                println!("Sig: {}", sig.to_string());
+            } else {
+                return Err("Failed to create proof account".into());
+            }
+        }
+        let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
+            loaded_proof
+        } else {
+            return Err("Failed to get newly created proof".into());
+        };
+        proof
+    };
+
+    let wallet_extension = Arc::new(wallet);
+    let proof_extension = Arc::new(Mutex::new(proof));
+    let nonce_extension = Arc::new(Mutex::new(0u64));
 
     let shared_state = Arc::new(Mutex::new(AppState {
         sockets: HashMap::new(),
@@ -45,6 +102,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(ws_handler))
         .with_state(app_shared_state)
+        .layer(Extension(wallet_extension))
+        .layer(Extension(proof_extension))
+        .layer(Extension(nonce_extension))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -52,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .unwrap();
 
