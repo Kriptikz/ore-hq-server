@@ -229,26 +229,22 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
         },
         Message::Binary(d) => {
             // first 8 bytes are message type
-            if d.len() > 8 {
+            if d.len() > 1 {
                 println!(">>> {} send too many bytes!", who);
             } else {
-                let mut message_bytes: [u8; 8] = [0; 8];
-                for i in 0..8 {
-                    message_bytes[i] = d[i];
-                }
-                let message_type = u64::from_le_bytes(message_bytes);
+                let message_type = d[0];
                 match message_type {
                     0 => {
                         let msg = ClientMessage::Ready(who);
-                        client_channel.send(msg);
+                        let _ = client_channel.send(msg);
                     },
                     1 => {
                         let msg = ClientMessage::Mining(who);
-                        client_channel.send(msg);
+                        let _ = client_channel.send(msg);
                     },
                     2 => {
                         let msg = ClientMessage::BestSolution(who);
-                        client_channel.send(msg);
+                        let _ = client_channel.send(msg);
                     },
                     _ => {
                         println!(">>> {} sent an invalid message", who);
