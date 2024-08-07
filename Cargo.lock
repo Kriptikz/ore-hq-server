@@ -1246,7 +1246,7 @@ checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
 name = "drillx"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.420"
 dependencies = [
  "equix",
  "serde",
@@ -2522,7 +2522,7 @@ checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
 name = "ore-api"
-version = "2.1.0-devnet"
+version = "2.1.0"
 dependencies = [
  "array-const-fn-init",
  "bytemuck",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "ore-utils"
-version = "2.1.0-devnet"
+version = "2.1.0"
 dependencies = [
  "bytemuck",
  "solana-program",
