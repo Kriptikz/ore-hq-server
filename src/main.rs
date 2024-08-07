@@ -7,13 +7,13 @@ use ore_api::state::Proof;
 use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_register_ix, ORE_TOKEN_DECIMALS};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, signature::read_keypair_file, signer::Signer, transaction::Transaction};
-use tokio::sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex};
+use tokio::sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct AppState {
-    sockets: HashMap<SocketAddr, SplitSink<WebSocket, Message>>
+    sockets: HashMap<SocketAddr, Mutex<SplitSink<WebSocket, Message>>>
 }
 
 pub struct MessageInternalMineSuccess {
@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proof_ext = Arc::new(Mutex::new(proof));
     let nonce_ext = Arc::new(Mutex::new(0u64));
 
-    let shared_state = Arc::new(Mutex::new(AppState {
+    let shared_state = Arc::new(RwLock::new(AppState {
         sockets: HashMap::new(),
     }));
     let ready_clients = Arc::new(Mutex::new(HashSet::new()));
@@ -182,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         start..end
                     };
                     {
-                        let mut shared_state = app_shared_state.lock().await;
+                        let shared_state = app_shared_state.read().await;
                         // message type is 8 bytes = 1 u8
                         // challenge is 256 bytes = 32 u8
                         // cutoff is 64 bytes = 8 u8
@@ -195,13 +195,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bin_data[49..57].copy_from_slice(&nonce_range.end.to_le_bytes());
 
 
-                        if let Some(sender) = shared_state.sockets.get_mut(&client) {
-                            let _ = sender.send(Message::Binary(bin_data.to_vec())).await;
-                            {
-                                // waiting for a lock inside a lock feels bad...
-                                let mut ready_clients_lock = ready_clients.lock().await;
-                                ready_clients_lock.remove(&client);
-                            }
+                        if let Some(sender) = shared_state.sockets.get(&client) {
+                            let _ = sender.lock().await.send(Message::Binary(bin_data.to_vec())).await;
+                            let _ = ready_clients.lock().await.remove(&client);
                         }
                     }
                 }
@@ -347,9 +343,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     msg.total_balance
                 );
                 {
-                    let mut locked = app_shared_state.lock().await;
-                    for (_socket_addr, socket_sender) in locked.sockets.iter_mut() {
-                        if let Ok(_) = socket_sender.send(Message::Text(message.clone())).await {
+                    let shared_state = app_shared_state.read().await;
+                    for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
+                        if let Ok(_) = socket_sender.lock().await.send(Message::Text(message.clone())).await {
                         } else {
                             println!("Failed to send client text");
                         }
@@ -396,7 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    State(app_state): State<Arc<Mutex<AppState>>>,
+    State(app_state): State<Arc<RwLock<AppState>>>,
     Extension(client_channel): Extension<UnboundedSender<ClientMessage>>
 ) -> impl IntoResponse {
 
@@ -406,7 +402,7 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, addr, app_state, client_channel))
 }
 
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<Mutex<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
+async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
     if socket.send(axum::extract::ws::Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {who}...");
     } else {
@@ -417,14 +413,14 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<Mu
     }
 
     let (sender, mut receiver) = socket.split();
-    {
-        let mut app_state = app_state.lock().await;
-        if app_state.sockets.contains_key(&who) {
-            println!("Socket addr: {who} already has an active connection");
-        } else {
-            app_state.sockets.insert(who, sender);
-        }
+    let mut app_state = app_state.write().await;
+    if app_state.sockets.contains_key(&who) {
+        println!("Socket addr: {who} already has an active connection");
+        // TODO: Close Connection here?
+    } else {
+        app_state.sockets.insert(who, Mutex::new(sender));
     }
+    drop(app_state);
 
     let _ = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
@@ -505,7 +501,7 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
 async fn client_message_handler_system(
     mut receiver_channel: UnboundedReceiver<ClientMessage>,
-    shared_state: &Arc<Mutex<AppState>>,
+    shared_state: &Arc<RwLock<AppState>>,
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
     best_hash: Arc<Mutex<BestHash>>
@@ -515,16 +511,16 @@ async fn client_message_handler_system(
             ClientMessage::Ready(addr) => {
                 println!("Client {} is ready!", addr.to_string());
                 {
-                    let mut locked = shared_state.lock().await;
-                    if let Some(sender) = locked.sockets.get_mut(&addr) {
+                    let shared_state = shared_state.read().await;
+                    if let Some(sender) = shared_state.sockets.get(&addr) {
                         {
                             let mut ready_clients = ready_clients.lock().await;
                             ready_clients.insert(addr);
                         }
 
-                        if let Ok(_) = sender.send(Message::Text(String::from("Client successfully added."))).await {
+                        if let Ok(_) = sender.lock().await.send(Message::Text(String::from("Client successfully added."))).await {
                         } else {
-                            println!("Failed to send start mining message!");
+                            println!("Failed notify client they were readied up!");
                         }
                     }
                 }
@@ -562,27 +558,28 @@ async fn client_message_handler_system(
 }
 
 async fn ping_check_system(
-    shared_state: &Arc<Mutex<AppState>>,
+    shared_state: &Arc<RwLock<AppState>>,
 ) {
     loop {
         // send ping to all sockets
-        {
-            let mut failed_sockets = Vec::new();
-            let mut app_state = shared_state.lock().await;
-            // I don't like doing all this work while holding this lock...
-            for (who, socket) in app_state.sockets.iter_mut() {
-                if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
-                    //println!("Pinged: {who}...");
-                } else {
-                    failed_sockets.push(who.clone());
-                }
-            }
-
-            // remove any sockets where ping failed
-            for address in failed_sockets {
-                 app_state.sockets.remove(&address);
+        let mut failed_sockets = Vec::new();
+        let app_state = shared_state.read().await;
+        // I don't like doing all this work while holding this lock...
+        for (who, socket) in app_state.sockets.iter() {
+            if socket.lock().await.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
+                //println!("Pinged: {who}...");
+            } else {
+                failed_sockets.push(who.clone());
             }
         }
+        drop(app_state);
+
+        // remove any sockets where ping failed
+        let mut app_state = shared_state.write().await;
+        for address in failed_sockets {
+             app_state.sockets.remove(&address);
+        }
+        drop(app_state);
 
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
