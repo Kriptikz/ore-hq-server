@@ -16,6 +16,12 @@ struct AppState {
     sockets: HashMap<SocketAddr, SplitSink<WebSocket, Message>>
 }
 
+pub struct MessageInternalMineSuccess {
+    difficulty: u32,
+    total_balance: f64,
+    rewards: f64,
+}
+
 #[derive(Debug)]
 pub enum ClientMessage {
     Ready(SocketAddr),
@@ -205,6 +211,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let (mine_success_sender, mut mine_success_receiver) = tokio::sync::mpsc::unbounded_channel::<MessageInternalMineSuccess>();
+
     let rpc_client = Arc::new(rpc_client);
     let app_proof = proof_ext.clone();
     let app_best_hash = best_hash.clone();
@@ -237,6 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // TODO: choose a bus
                     let bus = 4;
+                    let difficulty = solution.to_hash().difficulty();
 
                     let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
                     ixs.push(ix_mine);
@@ -264,12 +273,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let rewards = loaded_proof.balance - proof.balance;
                                             let rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                             info!("Earned: {} ORE", rewards);
+
+                                            let _ = mine_success_sender.send(MessageInternalMineSuccess {
+                                                difficulty,
+                                                total_balance: balance,
+                                                rewards
+                                            });
+
                                             {
                                                 let mut mut_proof = app_proof.lock().await;
                                                 *mut_proof = loaded_proof;
                                                 break;
                                             }
-
                                         }
                                     } else {
                                         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -317,6 +332,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
             };
+        }
+    });
+
+
+    let app_shared_state = shared_state.clone();
+    tokio::spawn(async move {
+        loop {
+            while let Some(msg) = mine_success_receiver.recv().await {
+                let message = format!(
+                    "Submitted Difficulty: {}\nEarned: {} ORE.\nTotal Balance: {}\n",
+                    msg.difficulty,
+                    msg.rewards,
+                    msg.total_balance
+                );
+                {
+                    let mut locked = app_shared_state.lock().await;
+                    for (_socket_addr, socket_sender) in locked.sockets.iter_mut() {
+                        if let Ok(_) = socket_sender.send(Message::Text(message.clone())).await {
+                        } else {
+                            println!("Failed to send client text");
+                        }
+                    }
+                }
+            }
         }
     });
 
