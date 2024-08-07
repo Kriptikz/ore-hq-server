@@ -240,38 +240,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
                     ixs.push(ix_mine);
-                    let mut attempts = 3;
                     info!("Starting mine submission attempts.");
-                    while attempts > 0 {
-                        if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
-                            let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
+                    if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+                        let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
-                            tx.sign(&[&signer], hash);
-                            
+                        tx.sign(&[&signer], hash);
+                        
+                        for i in 0..3 {
                             info!("Sending signed tx...");
-                            for _ in 0..3 {
-                                let sig = rpc_client.send_and_confirm_transaction(&tx).await;
-                                if let Ok(sig) = sig {
-                                    // success
-                                    info!("Success!!");
-                                    // update proof
-                                    loop {
-                                        if let Ok(loaded_proof) = get_proof(&rpc_client, signer.pubkey()).await {
-                                            if proof != loaded_proof {
-                                                info!("Got new proof.");
-                                                let balance = (loaded_proof.balance as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                                info!("New balance: {}", balance);
-                                                {
-                                                    let mut mut_proof = app_proof.lock().await;
-                                                    *mut_proof = loaded_proof;
-                                                    break;
-                                                }
-
+                            info!("attempt: {}", i + 1);
+                            let sig = rpc_client.send_and_confirm_transaction(&tx).await;
+                            if let Ok(sig) = sig {
+                                // success
+                                info!("Success!!");
+                                info!("Sig: {}", sig);
+                                // update proof
+                                loop {
+                                    if let Ok(loaded_proof) = get_proof(&rpc_client, signer.pubkey()).await {
+                                        if proof != loaded_proof {
+                                            info!("Got new proof.");
+                                            let balance = (loaded_proof.balance as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                            info!("New balance: {}", balance);
+                                            let rewards = loaded_proof.balance - proof.balance;
+                                            let rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                            info!("Earned: {} ORE", rewards);
+                                            {
+                                                let mut mut_proof = app_proof.lock().await;
+                                                *mut_proof = loaded_proof;
+                                                break;
                                             }
-                                        } else {
-                                            tokio::time::sleep(Duration::from_millis(500)).await;
+
                                         }
+                                    } else {
+                                        tokio::time::sleep(Duration::from_millis(500)).await;
                                     }
+                                }
+                                // reset nonce
+                                {
+                                    let mut nonce = app_nonce.lock().await;
+                                    *nonce = 0;
+                                }
+                                // reset best hash
+                                {
+                                    info!("reset best hash");
+                                    let mut mut_best_hash = app_best_hash.lock().await;
+                                    mut_best_hash.solution = None;
+                                    mut_best_hash.difficulty = 0;
+                                }
+                                break;
+                            } else {
+                                // sent error
+                                if i >= 2 {
+                                    info!("Failed to send after 3 attempts. Discarding and refreshing data.");
                                     // reset nonce
                                     {
                                         let mut nonce = app_nonce.lock().await;
@@ -284,17 +304,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         mut_best_hash.solution = None;
                                         mut_best_hash.difficulty = 0;
                                     }
-                                    attempts = 0;
                                     break;
                                 }
-                                tokio::time::sleep(Duration::from_millis(500)).await;
                             }
-                        } else {
-                            error!("Failed to get latest blockhash. retrying...");
-                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                            tokio::time::sleep(Duration::from_millis(500)).await;
                         }
-
-                        attempts = attempts - 1;
+                    } else {
+                        error!("Failed to get latest blockhash. retrying...");
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
                     }
                 }
             } else {
