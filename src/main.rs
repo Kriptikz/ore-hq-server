@@ -563,7 +563,7 @@ async fn client_message_handler_system(
                 if solution.is_valid(&challenge) {
                     let diff = solution.to_hash().difficulty();
                     println!("{} found diff: {}", addr, diff);
-                    if diff > MIN_DIFF {
+                    if diff >= MIN_DIFF {
                         {
                             let mut best_hash = best_hash.lock().await;
                             if diff > best_hash.difficulty {
