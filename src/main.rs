@@ -1,6 +1,7 @@
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow}, path::Path, sync::Arc, time::Duration};
 
-use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgrade}, response::IntoResponse, routing::get, Extension, Router};
+use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgrade}, http::StatusCode, response::IntoResponse, routing::get, Extension, Router};
+use axum_extra::{headers::authorization::Basic, TypedHeader};
 use drillx::{Solution};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::state::Proof;
@@ -34,6 +35,10 @@ pub struct BestHash {
     difficulty: u32,
 }
 
+pub struct Config {
+    password: String,
+}
+
 mod ore_utils;
 
 #[tokio::main]
@@ -50,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
+    let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
 
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
@@ -111,6 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
+    let config = Arc::new(Mutex::new(Config {
+        password,
+    }));
+
     let best_hash = Arc::new(Mutex::new(BestHash {
         solution: None,
         difficulty: 0
@@ -127,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (client_message_sender, client_message_receiver) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
 
+    // Handle client messages
     let app_shared_state = shared_state.clone();
     let app_ready_clients = ready_clients.clone();
     let app_proof = proof_ext.clone();
@@ -360,6 +371,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(ws_handler))
         .with_state(app_shared_state)
+        .layer(Extension(config))
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
         // Logging
@@ -391,15 +403,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    TypedHeader(auth_header): TypedHeader<axum_extra::headers::Authorization<Basic>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(app_state): State<Arc<RwLock<AppState>>>,
-    Extension(client_channel): Extension<UnboundedSender<ClientMessage>>
+    Extension(client_channel): Extension<UnboundedSender<ClientMessage>>,
+    Extension(config): Extension<Arc<Mutex<Config>>>,
 ) -> impl IntoResponse {
+
+    let password = auth_header.password();
+    if config.lock().await.password.ne(password) {
+        error!("Auth failed..");
+        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials"));
+    }
 
     println!("Client: {addr} connected.");
 
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, app_state, client_channel))
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, app_state, client_channel)))
 }
 
 async fn handle_socket(mut socket: WebSocket, who: SocketAddr, app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
