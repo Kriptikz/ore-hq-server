@@ -573,10 +573,7 @@ async fn client_message_handler_system(
                         }
 
                         // calculate rewards
-                        let mut hashpower = MIN_HASHPOWER;
-                        for _ in MIN_DIFF..diff {
-                            hashpower = hashpower * 2
-                        }
+                        let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
 
                         println!("Client: {}, provided {} Hashpower", addr, hashpower);
                     } else {
