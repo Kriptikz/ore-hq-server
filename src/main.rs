@@ -4,10 +4,11 @@ use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgr
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use drillx::{Solution};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
-use ore_api::state::Proof;
+use ore_api::{consts::BUS_COUNT, state::Proof};
 use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_register_ix, ORE_TOKEN_DECIMALS};
+use rand::Rng;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, signature::read_keypair_file, signer::Signer, transaction::Transaction};
+use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::read_keypair_file, signer::Signer, transaction::Transaction};
 use tokio::sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{debug, error, info};
@@ -33,6 +34,12 @@ pub enum ClientMessage {
     Ready(SocketAddr),
     Mining(SocketAddr),
     BestSolution(SocketAddr, Solution)
+}
+
+pub struct EpochHashes {
+    best_hash: BestHash,
+    submissions: HashMap<Pubkey, u32>,
+
 }
 
 pub struct BestHash {
@@ -255,8 +262,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let noop_ix = get_auth_ix(signer.pubkey());
                     ixs.push(noop_ix);
 
-                    // TODO: choose a bus
-                    let bus = 4;
+                    // TODO: choose the highest balance bus
+                    let bus = rand::thread_rng().gen_range(0..BUS_COUNT);
                     let difficulty = solution.to_hash().difficulty();
 
                     let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
