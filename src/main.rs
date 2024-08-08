@@ -13,6 +13,11 @@ use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+
+const MIN_DIFF: u32 = 8;
+const MIN_HASHPOWER: u64 = 5;
+
+
 struct AppState {
     sockets: HashMap<SocketAddr, Mutex<SplitSink<WebSocket, Message>>>
 }
@@ -558,7 +563,7 @@ async fn client_message_handler_system(
                 if solution.is_valid(&challenge) {
                     let diff = solution.to_hash().difficulty();
                     println!("{} found diff: {}", addr, diff);
-                    if diff > 3 {
+                    if diff > MIN_DIFF {
                         {
                             let mut best_hash = best_hash.lock().await;
                             if diff > best_hash.difficulty {
@@ -566,6 +571,14 @@ async fn client_message_handler_system(
                                 best_hash.solution = Some(solution);
                             }
                         }
+
+                        // calculate rewards
+                        let mut hashpower = MIN_HASHPOWER;
+                        for _ in MIN_DIFF..diff {
+                            hashpower = hashpower * 2
+                        }
+
+                        println!("Client: {}, provided {} Hashpower", addr, hashpower);
                     } else {
                         println!("Diff to low, skipping");
                     }
