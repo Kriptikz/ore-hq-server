@@ -2,6 +2,7 @@ use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow}, 
 
 use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, State, WebSocketUpgrade}, http::StatusCode, response::IntoResponse, routing::get, Extension, Router};
 use axum_extra::{headers::authorization::Basic, TypedHeader};
+use clap::Parser;
 use drillx::{Solution};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
@@ -53,9 +54,24 @@ pub struct Config {
 
 mod ore_utils;
 
+#[derive(Parser, Debug)]
+#[command(version, author, about, long_about = None)]
+struct Args {
+    #[arg(
+        long,
+        value_name = "priority fee",
+        help = "Number of microlamports to pay as priority fee per transaction",
+        default_value = "0",
+        global = true
+    )]
+    priority_fee: u32,
+}
+
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
+    let args = Args::parse();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -68,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
+    let priority_fee = Arc::new(Mutex::new(args.priority_fee));
 
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
@@ -237,6 +254,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_best_hash = best_hash.clone();
     let app_wallet = wallet_extension.clone();
     let app_nonce = nonce_ext.clone();
+    let app_prio_fee = priority_fee.clone();
     tokio::spawn(async move {
         loop {
             let proof = {
@@ -253,7 +271,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let signer = app_wallet.clone();
                     let mut ixs = vec![];
                     // TODO: set cu's
-                    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480_000);
+                    let prio_fee = {
+                        priority_fee.lock().await.clone()
+                    };
+
+                    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(prio_fee);
                     ixs.push(cu_limit_ix);
 
                     let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(100_000);
