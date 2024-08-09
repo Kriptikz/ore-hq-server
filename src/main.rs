@@ -446,6 +446,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some((supplied_diff, pubkey_hashpower)) = msg.submissions.get(&pubkey) {
                             let hashpower_percent = (*pubkey_hashpower as f64).div(msg.total_hashpower as f64);
 
+                            // TODO: handle overflow/underflow and float imprecision issues
                             let earned_rewards = hashpower_percent.mul(msg.rewards);
                             let message = format!(
                                 "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}",
@@ -571,7 +572,7 @@ async fn ws_handler(
 
 }
 
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubkey, app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
+async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubkey, rw_app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
     if socket.send(axum::extract::ws::Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {who}...");
     } else {
@@ -582,10 +583,10 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
     }
 
     let (sender, mut receiver) = socket.split();
-    let mut app_state = app_state.write().await;
+    let mut app_state = rw_app_state.write().await;
     if app_state.sockets.contains_key(&who) {
         println!("Socket addr: {who} already has an active connection");
-        // TODO: Close Connection here?
+        return;
     } else {
         app_state.sockets.insert(who, (who_pubkey, Mutex::new(sender)));
     }
@@ -599,7 +600,11 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
         }
     }).await;
 
-    println!("Client: {who} disconnected!");
+    let mut app_state = rw_app_state.write().await;
+    app_state.sockets.remove(&who);
+    drop(app_state);
+
+    info!("Client: {} disconnected!", who_pubkey.to_string());
 }
 
 fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSender<ClientMessage>) -> ControlFlow<(), ()> {
