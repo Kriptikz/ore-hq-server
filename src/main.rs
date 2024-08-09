@@ -603,8 +603,6 @@ async fn client_message_handler_system(
 
                         // calculate rewards
                         let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
-
-                        println!("Client: {}, provided {} Hashpower", addr, hashpower);
                     } else {
                         println!("Diff to low, skipping");
                     }
