@@ -632,9 +632,9 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
 
                     let time_since = now - ts;
-                    info!("Time since message created and signed: {}", time_since);
                     if time_since > 5 {
                         error!("Client tried to ready up with expired signed message");
+                        return ControlFlow::Break(());
                     }
 
                     let msg = ClientMessage::Ready(who);
@@ -668,9 +668,7 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
                     b_index += 32;
 
-                    println!("binary length: {}", d.len());
                     let signature_bytes = d[b_index..].to_vec();
-
                     if let Ok(sig_str) = String::from_utf8(signature_bytes.clone()) {
                         if let Ok(sig) = Signature::from_str(&sig_str) {
                             let pubkey = Pubkey::new_from_array(pubkey);
