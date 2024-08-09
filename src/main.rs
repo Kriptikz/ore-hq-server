@@ -64,7 +64,7 @@ struct Args {
         default_value = "0",
         global = true
     )]
-    priority_fee: u32,
+    priority_fee: u64,
 }
 
 
@@ -275,10 +275,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         priority_fee.lock().await.clone()
                     };
 
-                    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(prio_fee);
+                    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
                     ixs.push(cu_limit_ix);
 
-                    let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(100_000);
+                    let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
                     ixs.push(prio_fee_ix);
 
                     let noop_ix = get_auth_ix(signer.pubkey());
