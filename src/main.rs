@@ -774,10 +774,10 @@ async fn client_message_handler_system(
                         let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
                         {
                             let mut epoch_hashes = epoch_hashes.write().await;
+                            epoch_hashes.submissions.insert(pubkey, (diff, hashpower));
                             if diff > epoch_hashes.best_hash.difficulty {
                                 epoch_hashes.best_hash.difficulty = diff;
                                 epoch_hashes.best_hash.solution = Some(solution);
-                                epoch_hashes.submissions.insert(pubkey, (diff, hashpower));
                             }
                         }
 
