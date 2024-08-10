@@ -447,7 +447,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let hashpower_percent = (*pubkey_hashpower as f64).div(msg.total_hashpower as f64);
 
                             // TODO: handle overflow/underflow and float imprecision issues
-                            let earned_rewards = hashpower_percent.mul(msg.rewards);
+                            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                            let earned_rewards = hashpower_percent.mul(msg.rewards).mul(decimals).floor().div(decimals);
                             let message = format!(
                                 "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}",
                                 msg.difficulty,
