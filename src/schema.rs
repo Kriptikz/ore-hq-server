@@ -14,8 +14,8 @@ diesel::table! {
         #[max_length = 32]
         challenge -> Binary,
         rewards_earned -> Nullable<Bigint>,
-        created_at -> Nullable<Timestamp>,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -26,8 +26,8 @@ diesel::table! {
         pool_id -> Integer,
         txn_id -> Integer,
         amount -> Tinyint,
-        created_at -> Nullable<Timestamp>,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -37,8 +37,8 @@ diesel::table! {
         #[max_length = 44]
         pubkey -> Varchar,
         enabled -> Nullable<Bool>,
-        created_at -> Nullable<Timestamp>,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -49,8 +49,8 @@ diesel::table! {
         proof_pubkey -> Varchar,
         total_rewards -> Nullable<Bigint>,
         claimed_rewards -> Nullable<Bigint>,
-        created_at -> Nullable<Timestamp>,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -61,8 +61,8 @@ diesel::table! {
         challenge_id -> Integer,
         difficulty -> Tinyint,
         nonce -> Bigint,
-        created_at -> Nullable<Timestamp>,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -78,8 +78,8 @@ diesel::table! {
         #[max_length = 200]
         signature -> Varchar,
         priority_fee -> Nullable<Unsigned<Integer>>,
-        created_at -> Nullable<Timestamp>,
-        updated_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
