@@ -10,7 +10,7 @@ use diesel::{query_dsl::methods::FilterDsl, sql_types::{Bool, Text}, ExpressionM
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
-use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS};
+use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
 use rand::Rng;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -116,6 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_database = Arc::new(AppDatabase::new(database_url));
 
+
     let whitelist = if let Some(whitelist) = args.whitelist {
         let file = Path::new(&whitelist);
         if file.exists() {
@@ -158,6 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let wallet = read_keypair_file(wallet_path).expect("Failed to load keypair from file: {wallet_path_str}");
     println!("loaded wallet {}", wallet.pubkey().to_string());
+
 
     println!("establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
@@ -208,6 +210,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
+    println!("Validating pool exists in db");
+    let result = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await;
+
+    match result {
+        Ok(_) => {}
+        Err(AppDatabaseError::EntityDoesNotExist) => {
+            println!("Pool missing from database. Inserting...");
+            let proof_pubkey = proof_pubkey(wallet.pubkey());
+            let result = app_database.add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string()).await;
+
+            if result.is_err() {
+                panic!("Failed to create pool in database");
+            }
+        },
+        Err(_) => {
+            panic!("Failed to get database pool connection");
+        }
+    }
+
     let config = Arc::new(Mutex::new(Config {
         password,
         whitelist
@@ -237,8 +258,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_ready_clients = ready_clients.clone();
     let app_proof = proof_ext.clone();
     let app_epoch_hashes = epoch_hashes.clone();
+    let app_app_database = app_database.clone();
     tokio::spawn(async move {
-        client_message_handler_system(client_message_receiver, &app_shared_state, app_ready_clients, app_proof, app_epoch_hashes).await;
+        client_message_handler_system(client_message_receiver, &app_shared_state, app_app_database, app_ready_clients, app_proof, app_epoch_hashes).await;
     });
 
     // Handle ready clients
@@ -961,6 +983,7 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 async fn client_message_handler_system(
     mut receiver_channel: UnboundedReceiver<ClientMessage>,
     shared_state: &Arc<RwLock<AppState>>,
+    app_database: Arc<AppDatabase>,
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
     epoch_hashes: Arc<RwLock<EpochHashes>>
