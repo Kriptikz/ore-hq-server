@@ -1,5 +1,6 @@
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Mul}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
+use app_database::{AppDatabase, AppDatabaseError};
 use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Router};
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -21,6 +22,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use self::models::*;
 
 mod models;
+mod app_database;
 mod schema;
 
 
@@ -112,14 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
 
-    let manager = Manager::new(
-        database_url,
-        deadpool_diesel::Runtime::Tokio1,
-    );
-
-    let pool = Pool::builder(manager).build().unwrap();
-
-    let database_pool = Arc::new(pool);
+    let app_database = Arc::new(AppDatabase::new(database_url));
 
     let whitelist = if let Some(whitelist) = args.whitelist {
         let file = Path::new(&whitelist);
@@ -528,7 +523,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/signup", post(post_signup))
         .with_state(app_shared_state)
-        .layer(Extension(database_pool))
+        .layer(Extension(app_database))
         .layer(Extension(config))
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
@@ -593,58 +588,43 @@ struct SignupParams {
 
 async fn post_signup(
     query_params: Query<SignupParams>,
-    Extension(database_pool): Extension<Arc<Pool>>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<Keypair>>,
     Extension(app_config): Extension<Arc<Mutex<Config>>>,
     body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        let db_conn = if let Ok(db_conn) = database_pool.get().await {
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("SELECT pubkey, enabled FROM miners WHERE miners.pubkey = ?")
-                .bind::<Text, _>(user_pubkey.to_string())
-                .get_result::<Miner>(conn)
-            }).await;
+        let db_miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await;
 
-            match res {
-                Ok(Ok(miner)) => {
-                    if miner.enabled {
-                        return Response::builder()
-                            .status(StatusCode::OK)
-                            .header("Content-Type", "text/text")
-                            .body("SUCCESS".to_string())
-                            .unwrap();
-                    }
-                },
-                Ok(Err(_)) => {
-                    println!("No miner accounts exists. Signing up new user.");
-
-                }
-                _ => {
-                    println!("Error selecting miner account");
+        match db_miner {
+            Ok(miner) => {
+                if miner.enabled {
+                    println!("Miner account already enabled!");
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "text/text")
+                        .body("SUCCESS".to_string())
+                        .unwrap();
                 }
             }
-            db_conn
-        } else {
-            error!("Failed to get database pool connection");
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("Failed to get db pool connection".to_string())
-                .unwrap();
-        };
+            Err(AppDatabaseError::EntityDoesNotExist) => {
+                println!("No miner account exists. Signing up new user.");
+            },
+            Err(_) => {
+                error!("Failed to get database pool connection");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to get db pool connection".to_string())
+                    .unwrap();
+            }
+        }
 
         if let Some(whitelist) = &app_config.lock().await.whitelist {
             if whitelist.contains(&user_pubkey) {
-                let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("INSERT INTO miners (pubkey, enabled) VALUES (?, ?)")
-                    .bind::<Text, _>(user_pubkey.to_string())
-                    .bind::<Bool, _>(true)
-                    .execute(conn)
-                    .expect("Failed to insert miner into database!")
-                }).await;
+                let result = app_database.add_new_miner(user_pubkey.to_string(), true).await;
 
-                if res.is_ok() {
+                if result.is_ok() {
                     return Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "text/text")
@@ -654,7 +634,7 @@ async fn post_signup(
                     error!("Failed to add miner to database");
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to add user to database".to_string())
+                        .body("Failed to add miner to database".to_string())
                         .unwrap();
                 }
             } 
@@ -725,13 +705,7 @@ async fn post_signup(
                     .unwrap();
             }
 
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("INSERT INTO miners (pubkey, enabled) VALUES (?, ?)")
-                .bind::<Text, _>(user_pubkey.to_string())
-                .bind::<Bool, _>(true)
-                .execute(conn)
-                .expect("Failed to insert miner into database!")
-            }).await;
+            let res = app_database.add_new_miner(user_pubkey.to_string(), true).await;
 
             if res.is_ok() {
                 return Response::builder()
@@ -768,7 +742,7 @@ async fn ws_handler(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Extension(app_config): Extension<Arc<Mutex<Config>>>,
     Extension(client_channel): Extension<UnboundedSender<ClientMessage>>,
-    Extension(database_pool): Extension<Arc<Pool>>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
     query_params: Query<WsQueryParams>
 ) -> impl IntoResponse {
 
@@ -787,37 +761,25 @@ async fn ws_handler(
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
     }
 
-    let db_conn = if let Ok(db_conn) = database_pool.get().await {
-        db_conn
-    } else {
-        error!("Failed to get database pool connection");
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Failed to get db connection"));
-    };
-
     // verify client
     if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
-        let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-            diesel::sql_query("SELECT pubkey, enabled FROM miners WHERE miners.pubkey = ?")
-            .bind::<Text, _>(user_pubkey.to_string())
-            .get_result::<Miner>(conn)
-        }).await;
+        let db_miner = app_database.get_miner_by_pubkey_str(pubkey.to_string()).await;
 
-        let mut enabled = false;
-        match res {
-            Ok(Ok(miner)) => {
-                if miner.enabled {
-                    enabled = true;
-                }
-            },
-            Ok(Err(_)) => {
-                println!("No miner accounts exists. Signing up new user.");
-
+        let miner;
+        match db_miner {
+            Ok(db_miner) => {
+                miner = db_miner;
             }
-            _ => {
-                println!("Error selecting miner account");
+            Err(AppDatabaseError::EntityDoesNotExist) => {
+                return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine. please sign up."));
+            },
+            Err(_) => {
+                error!("Failed to get database pool connection.");
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
             }
         }
-        if !enabled {
+
+        if !miner.enabled {
             return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine"));
         }
 
