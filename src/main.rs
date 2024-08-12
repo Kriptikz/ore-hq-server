@@ -768,6 +768,7 @@ async fn ws_handler(
     State(app_state): State<Arc<RwLock<AppState>>>,
     Extension(app_config): Extension<Arc<Mutex<Config>>>,
     Extension(client_channel): Extension<UnboundedSender<ClientMessage>>,
+    Extension(database_pool): Extension<Arc<Pool>>,
     query_params: Query<WsQueryParams>
 ) -> impl IntoResponse {
 
@@ -786,38 +787,51 @@ async fn ws_handler(
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
     }
 
+    let db_conn = if let Ok(db_conn) = database_pool.get().await {
+        db_conn
+    } else {
+        error!("Failed to get database pool connection");
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Failed to get db connection"));
+    };
+
     // verify client
-    if let Ok(pubkey) = Pubkey::from_str(pubkey) {
-        if let Some(whitelist) = &app_config.lock().await.whitelist {
-            if whitelist.contains(&pubkey) {
-                if let Ok(signature) = Signature::from_str(signed_msg) {
-                    let ts_msg = msg_timestamp.to_le_bytes();
-                    
-                    if signature.verify(&pubkey.to_bytes(), &ts_msg) {
-                        println!("Client: {addr} connected with pubkey {pubkey}.");
-                        return Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, pubkey, app_state, client_channel)));
-                    } else {
-                        return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
-                    }
-                } else {
-                    return Err((StatusCode::UNAUTHORIZED, "Invalid signature"));
+    if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
+        let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+            diesel::sql_query("SELECT pubkey, enabled FROM miners WHERE miners.pubkey = ?")
+            .bind::<Text, _>(user_pubkey.to_string())
+            .get_result::<Miner>(conn)
+        }).await;
+
+        let mut enabled = false;
+        match res {
+            Ok(Ok(miner)) => {
+                if miner.enabled {
+                    enabled = true;
                 }
+            },
+            Ok(Err(_)) => {
+                println!("No miner accounts exists. Signing up new user.");
+
+            }
+            _ => {
+                println!("Error selecting miner account");
+            }
+        }
+        if !enabled {
+            return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine"));
+        }
+
+        if let Ok(signature) = Signature::from_str(signed_msg) {
+            let ts_msg = msg_timestamp.to_le_bytes();
+            
+            if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
+                println!("Client: {addr} connected with pubkey {pubkey}.");
+                return Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, user_pubkey, app_state, client_channel)));
             } else {
-                return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine"));
+                return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
             }
         } else {
-            if let Ok(signature) = Signature::from_str(signed_msg) {
-                let ts_msg = msg_timestamp.to_le_bytes();
-                
-                if signature.verify(&pubkey.to_bytes(), &ts_msg) {
-                    println!("Client: {addr} connected with pubkey {pubkey}.");
-                    return Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, pubkey, app_state, client_channel)));
-                } else {
-                    return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
-                }
-            } else {
-                return Err((StatusCode::UNAUTHORIZED, "Invalid signature"));
-            }
+            return Err((StatusCode::UNAUTHORIZED, "Invalid signature"));
         }
     } else {
         return Err((StatusCode::UNAUTHORIZED, "Invalid pubkey"));
