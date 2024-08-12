@@ -1,6 +1,6 @@
 CREATE TABLE txns (
   id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  type ENUM('mine', 'claim'),
+  txn_type ENUM('mine', 'claim') NOT NULL,
   signature VARCHAR(200) NOT NULL,
   priority_fee INT UNSIGNED DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,

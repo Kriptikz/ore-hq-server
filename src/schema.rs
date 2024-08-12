@@ -3,7 +3,7 @@
 pub mod sql_types {
     #[derive(diesel::query_builder::QueryId, Clone, diesel::sql_types::SqlType)]
     #[diesel(mysql_type(name = "Enum"))]
-    pub struct TxnsTypeEnum;
+    pub struct TxnsTxnTypeEnum;
 }
 
 diesel::table! {
@@ -68,13 +68,12 @@ diesel::table! {
 
 diesel::table! {
     use diesel::sql_types::*;
-    use super::sql_types::TxnsTypeEnum;
+    use super::sql_types::TxnsTxnTypeEnum;
 
     txns (id) {
         id -> Integer,
-        #[sql_name = "type"]
         #[max_length = 5]
-        type_ -> Nullable<TxnsTypeEnum>,
+        txn_type -> TxnsTxnTypeEnum,
         #[max_length = 200]
         signature -> Varchar,
         priority_fee -> Nullable<Unsigned<Integer>>,
