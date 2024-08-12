@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Mul}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::StatusCode, response::IntoResponse, routing::get, Extension, Router};
+use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::get, Extension, Router};
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use clap::Parser;
 use drillx::Solution;
@@ -500,6 +500,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_shared_state = shared_state.clone();
     let app = Router::new()
         .route("/", get(ws_handler))
+        .route("/signup", get(signup_handler))
         .with_state(app_shared_state)
         .layer(Extension(config))
         .layer(Extension(wallet_extension))
@@ -529,6 +530,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
 
     Ok(())
+}
+
+async fn signup_handler() -> impl IntoResponse {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/text")
+        .body("Signup unavailable".to_string())
+        .unwrap()
 }
 
 #[derive(Deserialize)]
