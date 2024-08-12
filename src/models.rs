@@ -28,9 +28,8 @@ pub struct Claim {
 #[diesel(table_name = crate::schema::miners)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Miner {
-    pub id: i32,
     pub pubkey: String,
-    pub enabled: bool,
+    pub enabled: bool
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]

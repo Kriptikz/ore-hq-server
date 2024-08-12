@@ -1,8 +1,11 @@
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Mul}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::get, Extension, Router};
+use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Router};
 use axum_extra::{headers::authorization::Basic, TypedHeader};
+use base64::{prelude::BASE64_STANDARD, Engine};
 use clap::Parser;
+use deadpool_diesel::mysql::{Manager, Pool};
+use diesel::{query_dsl::methods::FilterDsl, sql_types::{Bool, Text}, ExpressionMethods, MysqlConnection, QueryDsl, RunQueryDsl, SelectableHelper};
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
@@ -10,11 +13,12 @@ use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_c
 use rand::Rng;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Signature}, signer::Signer, transaction::Transaction};
+use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction};
 use tokio::{io::AsyncReadExt, sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock}};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use self::models::*;
 
 mod models;
 mod schema;
@@ -79,6 +83,14 @@ struct Args {
         global = true
     )]
     whitelist: Option<String>,
+    #[arg(
+        long,
+        value_name = "signup cost",
+        help = "Amount of sol users must send to sign up for the pool",
+        default_value = "0",
+        global = true
+    )]
+    signup_cost: u64,
 }
 
 
@@ -98,6 +110,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
+
+    let manager = Manager::new(
+        database_url,
+        deadpool_diesel::Runtime::Tokio1,
+    );
+
+    let pool = Pool::builder(manager).build().unwrap();
+
+    let database_pool = Arc::new(pool);
 
     let whitelist = if let Some(whitelist) = args.whitelist {
         let file = Path::new(&whitelist);
@@ -302,7 +324,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_wallet = wallet_extension.clone();
     let app_nonce = nonce_ext.clone();
     let app_prio_fee = priority_fee.clone();
+    let app_rpc_client = rpc_client.clone();
     tokio::spawn(async move {
+        let rpc_client = app_rpc_client;
         loop {
             let mut proof = {
                 app_proof.lock().await.clone()
@@ -500,11 +524,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_shared_state = shared_state.clone();
     let app = Router::new()
         .route("/", get(ws_handler))
-        .route("/signup", get(signup_handler))
+        .route("/latest-blockhash", get(get_latest_blockhash))
+        .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
+        .route("/signup", post(post_signup))
         .with_state(app_shared_state)
+        .layer(Extension(database_pool))
         .layer(Extension(config))
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
+        .layer(Extension(rpc_client))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -532,12 +560,200 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn signup_handler() -> impl IntoResponse {
+async fn get_pool_authority_pubkey(
+    Extension(wallet): Extension<Arc<Keypair>>,
+) -> impl IntoResponse {
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/text")
-        .body("Signup unavailable".to_string())
+        .body(wallet.pubkey().to_string())
         .unwrap()
+}
+
+async fn get_latest_blockhash(
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+) -> impl IntoResponse {
+
+    let latest_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+
+    let serialized_blockhash = bincode::serialize(&latest_blockhash).unwrap();
+
+    let encoded_blockhash = BASE64_STANDARD.encode(serialized_blockhash);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/text")
+        .body(encoded_blockhash)
+        .unwrap()
+}
+
+#[derive(Deserialize)]
+struct SignupParams {
+    pubkey: String,
+}
+
+async fn post_signup(
+    query_params: Query<SignupParams>,
+    Extension(database_pool): Extension<Arc<Pool>>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<Keypair>>,
+    Extension(app_config): Extension<Arc<Mutex<Config>>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let db_conn = if let Ok(db_conn) = database_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT pubkey, enabled FROM miners WHERE miners.pubkey = ?")
+                .bind::<Text, _>(user_pubkey.to_string())
+                .get_result::<Miner>(conn)
+            }).await;
+
+            match res {
+                Ok(Ok(miner)) => {
+                    if miner.enabled {
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "text/text")
+                            .body("SUCCESS".to_string())
+                            .unwrap();
+                    }
+                },
+                Ok(Err(_)) => {
+                    println!("No miner accounts exists. Signing up new user.");
+
+                }
+                _ => {
+                    println!("Error selecting miner account");
+                }
+            }
+            db_conn
+        } else {
+            error!("Failed to get database pool connection");
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Failed to get db pool connection".to_string())
+                .unwrap();
+        };
+
+        if let Some(whitelist) = &app_config.lock().await.whitelist {
+            if whitelist.contains(&user_pubkey) {
+                let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("INSERT INTO miners (pubkey, enabled) VALUES (?, ?)")
+                    .bind::<Text, _>(user_pubkey.to_string())
+                    .bind::<Bool, _>(true)
+                    .execute(conn)
+                    .expect("Failed to insert miner into database!")
+                }).await;
+
+                if res.is_ok() {
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "text/text")
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                } else {
+                    error!("Failed to add miner to database");
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to add user to database".to_string())
+                        .unwrap();
+                }
+            } 
+        }
+
+
+
+        let serialized_tx =  BASE64_STANDARD.decode(body.clone()).unwrap();
+        let tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!("Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+
+        };
+
+        if !tx.is_signed() {
+            error!("Tx missing signer");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!("Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        let base_ix = system_instruction::transfer(&user_pubkey, &wallet.pubkey(), 1_000_000);
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if accts.len() != 2 {
+            error!("too many accts");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!("data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            println!("Valid signup tx, submitting.");
+
+            if let Ok(sig) = rpc_client.send_and_confirm_transaction(&tx).await {
+                // add user to db
+
+            } else {
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to send tx".to_string())
+                    .unwrap();
+            }
+
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("INSERT INTO miners (pubkey, enabled) VALUES (?, ?)")
+                .bind::<Text, _>(user_pubkey.to_string())
+                .bind::<Bool, _>(true)
+                .execute(conn)
+                .expect("Failed to insert miner into database!")
+            }).await;
+
+            if res.is_ok() {
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "text/text")
+                    .body("SUCCESS".to_string())
+                    .unwrap();
+            } else {
+                error!("Failed to add miner to database");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to add user to database".to_string())
+                    .unwrap();
+            }
+        }
+    } else {
+        error!("Signup with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
 }
 
 #[derive(Deserialize)]
