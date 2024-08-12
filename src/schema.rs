@@ -43,8 +43,8 @@ diesel::table! {
         proof_pubkey -> Varchar,
         #[max_length = 44]
         authority_pubkey -> Varchar,
-        total_rewards -> Nullable<Unsigned<Bigint>>,
-        claimed_rewards -> Nullable<Unsigned<Bigint>>,
+        total_rewards -> Unsigned<Bigint>,
+        claimed_rewards -> Unsigned<Bigint>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }

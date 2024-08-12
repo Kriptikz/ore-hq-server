@@ -36,11 +36,10 @@ pub struct Miner {
 #[diesel(table_name = crate::schema::pools)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Pool {
-    pub id: i32,
     pub proof_pubkey: String,
     pub authority_pubkey: String,
-    pub total_rewards: Option<u64>,
-    pub claimed_rewards: Option<u64>,
+    pub total_rewards: u64,
+    pub claimed_rewards: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
