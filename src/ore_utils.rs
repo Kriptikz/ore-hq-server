@@ -1,13 +1,9 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crossbeam_channel::{Receiver, Sender};
-use drillx::{equix, Hash, Solution};
+use drillx::Solution;
 use ore_api::{
-    ID as ORE_ID,
-    instruction,
-    state::{Proof, Treasury},
     consts::{BUS_ADDRESSES, CONFIG_ADDRESS, EPOCH_DURATION, MINT_ADDRESS, PROOF,
-    TOKEN_DECIMALS, TREASURY_ADDRESS }
+    TOKEN_DECIMALS, TREASURY_ADDRESS }, instruction, state::{Config, Proof, Treasury}, ID as ORE_ID
 };
 pub use ore_utils::AccountDeserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -15,14 +11,8 @@ use solana_sdk::{
     account::ReadableAccount, clock::Clock, instruction::Instruction, pubkey::Pubkey, sysvar,
 };
 use spl_associated_token_account::get_associated_token_address;
-use tracing::error;
 
 pub const ORE_TOKEN_DECIMALS: u8 = TOKEN_DECIMALS;
-
-#[derive(Debug)]
-pub enum MiningDataChannelMessage {
-    Stop,
-}
 
 pub fn get_auth_ix(signer: Pubkey, ) -> Instruction {
     let proof = proof_pubkey(signer);
@@ -62,17 +52,32 @@ pub fn get_ore_decimals() -> u8 {
     TOKEN_DECIMALS
 }
 
-pub async fn get_proof_and_treasury_with_busses(
+pub async fn get_config(
+    client: &RpcClient,
+) -> Result<ore_api::state::Config, String> {
+    let data = client.get_account_data(&CONFIG_ADDRESS).await;
+    match data {
+        Ok(data) => {
+            let config = Config::try_from_bytes(&data);
+            if let Ok(config) = config {
+                return Ok(*config)
+            } else {
+                return Err("Failed to parse config account".to_string())
+            }
+        }
+        Err(_) => return Err("Failed to get config account".to_string()),
+    }
+}
+
+pub async fn get_proof_and_config_with_busses(
     client: &RpcClient,
     authority: Pubkey,
 ) -> (
     Result<Proof, ()>,
-    Result<Treasury, ()>,
     Result<ore_api::state::Config, ()>,
     Result<Vec<Result<ore_api::state::Bus, ()>>, ()>,
 ) {
     let account_pubkeys = vec![
-        TREASURY_ADDRESS,
         proof_pubkey(authority),
         CONFIG_ADDRESS,
         BUS_ADDRESSES[0],
@@ -86,85 +91,70 @@ pub async fn get_proof_and_treasury_with_busses(
     ];
     let datas = client.get_multiple_accounts(&account_pubkeys).await;
     if let Ok(datas) = datas {
-        let treasury = if let Some(data) = &datas[0] {
-            Ok(*Treasury::try_from_bytes(data.data()).expect("Failed to parse treasury account"))
-        } else {
-            Err(())
-        };
-
-        let proof = if let Some(data) = &datas[1] {
+        let proof = if let Some(data) = &datas[0] {
             Ok(*Proof::try_from_bytes(data.data()).expect("Failed to parse treasury account"))
         } else {
             Err(())
         };
 
-        let treasury_config = if let Some(data) = &datas[2] {
+        let treasury_config = if let Some(data) = &datas[1] {
             Ok(*ore_api::state::Config::try_from_bytes(data.data())
                 .expect("Failed to parse config account"))
         } else {
             Err(())
         };
-        let bus_1 = if let Some(data) = &datas[3] {
+        let bus_1 = if let Some(data) = &datas[2] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus1 account"))
         } else {
             Err(())
         };
-        let bus_2 = if let Some(data) = &datas[4] {
+        let bus_2 = if let Some(data) = &datas[3] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus2 account"))
         } else {
             Err(())
         };
-        let bus_3 = if let Some(data) = &datas[5] {
+        let bus_3 = if let Some(data) = &datas[4] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus3 account"))
         } else {
             Err(())
         };
-        let bus_4 = if let Some(data) = &datas[6] {
+        let bus_4 = if let Some(data) = &datas[5] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus4 account"))
         } else {
             Err(())
         };
-        let bus_5 = if let Some(data) = &datas[7] {
+        let bus_5 = if let Some(data) = &datas[6] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus5 account"))
         } else {
             Err(())
         };
-        let bus_6 = if let Some(data) = &datas[8] {
+        let bus_6 = if let Some(data) = &datas[7] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus6 account"))
         } else {
             Err(())
         };
-        let bus_7 = if let Some(data) = &datas[9] {
+        let bus_7 = if let Some(data) = &datas[8] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus7 account"))
         } else {
             Err(())
         };
-        let bus_8 = if let Some(data) = &datas[10] {
+        let bus_8 = if let Some(data) = &datas[9] {
             Ok(*ore_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus1 account"))
         } else {
             Err(())
         };
 
-        (proof, treasury, treasury_config, Ok(vec![bus_1, bus_2, bus_3, bus_4, bus_5, bus_6, bus_7, bus_8]))
+        (proof, treasury_config, Ok(vec![bus_1, bus_2, bus_3, bus_4, bus_5, bus_6, bus_7, bus_8]))
     } else {
-        (Err(()), Err(()), Err(()), Err(()))
-    }
-}
-
-pub async fn get_treasury(client: &RpcClient) -> Result<Treasury, ()> {
-    let data = client.get_account_data(&TREASURY_ADDRESS).await;
-    if let Ok(data) = data {
-        Ok(*Treasury::try_from_bytes(&data).expect("Failed to parse treasury account"))
-    } else {
-        Err(())
+        (Err(()), Err(()), Err(()))
     }
 }
 
@@ -214,92 +204,4 @@ pub fn get_cutoff(proof: Proof, buffer_time: u64) -> i64 {
         .saturating_add(60)
         .saturating_sub(buffer_time as i64)
         .saturating_sub(now)
-}
-
-pub fn find_hash_par(proof: Proof, cutoff_time: u64, threads: u64, min_difficulty: u32, mining_messages_reciever: Receiver<MiningDataChannelMessage>, mining_messages_sender: Sender<MiningDataChannelMessage>) -> (Solution, u32, Hash, u64) {
-    let handles = (0..threads)
-        .map(|i| {
-            std::thread::spawn({
-                let proof = proof.clone();
-                let message_receiver = mining_messages_reciever.clone();
-                let message_sender = mining_messages_sender.clone();
-                let mut memory = equix::SolverMemory::new();
-                move || {
-                    let timer = Instant::now();
-                    let first_nonce = u64::MAX.saturating_div(threads).saturating_mul(i);
-                    let mut nonce = first_nonce;
-                    let mut best_nonce = nonce;
-                    let mut best_difficulty = 0;
-                    let mut best_hash = Hash::default();
-                    let mut total_hashes: u64 = 0;
-                    loop {
-                        // Create hash
-                        if let Ok(hash) = drillx::hash_with_memory(
-                            &mut memory,
-                            &proof.challenge,
-                            &nonce.to_le_bytes(),
-                        ) {
-                            total_hashes += 1;
-                            let difficulty = hash.difficulty();
-                            if difficulty.gt(&best_difficulty) {
-                                    best_nonce = nonce;
-                                    best_difficulty = difficulty;
-                                    best_hash = hash;
-                            }
-                        }
-
-
-
-                        if let Ok(message) = message_receiver.try_recv() {
-                            match message {
-                                MiningDataChannelMessage::Stop => {
-                                    // messages are only received by one receiver. 
-                                    // try to send another message for any remaining receivers.
-                                    let _ = message_sender.try_send(MiningDataChannelMessage::Stop);
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Exit if time has elapsed
-                        if nonce % 100 == 0 {
-                            if timer.elapsed().as_secs().ge(&cutoff_time) {
-                                if best_difficulty.gt(&min_difficulty) {
-                                    // Mine until min difficulty has been met
-                                    // Stop all other threads since time has elapsed and the minimum difficulty has been found
-                                    let _ = message_sender.try_send(MiningDataChannelMessage::Stop);
-                                    break;
-                                }
-                            } 
-                        }
-
-                        // Increment nonce
-                        nonce += 1;
-                    }
-                    
-                    // Return the best nonce
-                    Some((best_nonce, best_difficulty, best_hash, total_hashes))
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-
-    // Join handles and return best nonce
-    let mut best_nonce: u64 = 0;
-    let mut best_difficulty = 0;
-    let mut best_hash = Hash::default();
-    let mut total_nonces_checked = 0;
-    for h in handles {
-        if let Ok(Some((nonce, difficulty, hash, nonces_checked))) = h.join() {
-            total_nonces_checked += nonces_checked;
-            if difficulty > best_difficulty {
-                best_difficulty = difficulty;
-                best_nonce = nonce;
-                best_hash = hash;
-            }
-        } else {
-            error!("Failed to join a thread handle!");
-        }
-    }
-    (Solution::new(best_hash.d, best_nonce.to_le_bytes()), best_difficulty, best_hash, total_nonces_checked)
 }

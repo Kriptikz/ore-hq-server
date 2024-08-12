@@ -6,7 +6,7 @@ use clap::Parser;
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
-use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_register_ix, ORE_TOKEN_DECIMALS};
+use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS};
 use rand::Rng;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -304,7 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_prio_fee = priority_fee.clone();
     tokio::spawn(async move {
         loop {
-            let proof = {
+            let mut proof = {
                 app_proof.lock().await.clone()
             };
 
@@ -322,6 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app_prio_fee.lock().await.clone()
                     };
 
+
                     let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
                     ixs.push(cu_limit_ix);
 
@@ -331,22 +332,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let noop_ix = get_auth_ix(signer.pubkey());
                     ixs.push(noop_ix);
 
-                    // TODO: choose the highest balance bus
-                    let bus = rand::thread_rng().gen_range(0..BUS_COUNT);
+
+
+                    let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
+                    if let (Ok(l_proof), Ok(config), Ok(busses)) = get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await {
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+                        
+                        proof = l_proof;
+
+                        let mut best_bus = 0;
+                        for (i, bus) in busses.iter().enumerate() {
+                            if let Ok(bus) = bus {
+                                if bus.rewards > busses[best_bus].unwrap().rewards {
+                                    best_bus = i;
+                                }
+                            }
+                        }
+                        bus = best_bus;
+
+                        let time_until_reset = (config.last_reset_at + 60) - now as i64;
+                        if time_until_reset <= 5 {
+                            let reset_ix = get_reset_ix(signer.pubkey());
+                            ixs.push(reset_ix);
+                        }
+                    }
+
                     let difficulty = solution.to_hash().difficulty();
 
                     let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
                     ixs.push(ix_mine);
                     info!("Starting mine submission attempts with difficulty {}.", difficulty);
-                    if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
-                        let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
-
-                        tx.sign(&[&signer], hash);
                         
-                        for i in 0..3 {
+                    for i in 0..3 {
+                        if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+                            let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
+
+                            tx.sign(&[&signer], hash);
                             info!("Sending signed tx...");
                             info!("attempt: {}", i + 1);
-                            let sig = rpc_client.send_and_confirm_transaction(&tx).await;
+                            let sig = rpc_client.send_and_confirm_transaction_with_spinner(&tx).await;
                             if let Ok(sig) = sig {
                                 // success
                                 info!("Success!!");
@@ -424,11 +448,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             tokio::time::sleep(Duration::from_millis(500)).await;
+                        } else {
+                            error!("Failed to get latest blockhash. retrying...");
+                            tokio::time::sleep(Duration::from_millis(1000)).await;
                         }
-                    } else {
-                        error!("Failed to get latest blockhash. retrying...");
-                        tokio::time::sleep(Duration::from_millis(1000)).await;
-                    }
+                    } 
                 }
             } else {
                 tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
