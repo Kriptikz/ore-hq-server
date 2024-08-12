@@ -16,6 +16,9 @@ use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod models;
+mod schema;
+
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;

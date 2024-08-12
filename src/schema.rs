@@ -13,7 +13,7 @@ diesel::table! {
         submission_id -> Nullable<Integer>,
         #[max_length = 32]
         challenge -> Binary,
-        rewards_earned -> Nullable<Bigint>,
+        rewards_earned -> Nullable<Unsigned<Bigint>>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -25,7 +25,7 @@ diesel::table! {
         miner_id -> Integer,
         pool_id -> Integer,
         txn_id -> Integer,
-        amount -> Tinyint,
+        amount -> Unsigned<Bigint>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -36,7 +36,7 @@ diesel::table! {
         id -> Integer,
         #[max_length = 44]
         pubkey -> Varchar,
-        enabled -> Nullable<Bool>,
+        enabled -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -47,8 +47,8 @@ diesel::table! {
         id -> Integer,
         #[max_length = 44]
         proof_pubkey -> Varchar,
-        total_rewards -> Nullable<Bigint>,
-        claimed_rewards -> Nullable<Bigint>,
+        total_rewards -> Nullable<Unsigned<Bigint>>,
+        claimed_rewards -> Nullable<Unsigned<Bigint>>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
@@ -60,7 +60,7 @@ diesel::table! {
         miner_id -> Integer,
         challenge_id -> Integer,
         difficulty -> Tinyint,
-        nonce -> Bigint,
+        nonce -> Unsigned<Bigint>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
