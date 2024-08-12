@@ -1,11 +1,5 @@
 // @generated automatically by Diesel CLI.
 
-pub mod sql_types {
-    #[derive(diesel::query_builder::QueryId, Clone, diesel::sql_types::SqlType)]
-    #[diesel(mysql_type(name = "Enum"))]
-    pub struct TxnsTxnTypeEnum;
-}
-
 diesel::table! {
     challenges (id) {
         id -> Integer,
@@ -47,6 +41,8 @@ diesel::table! {
         id -> Integer,
         #[max_length = 44]
         proof_pubkey -> Varchar,
+        #[max_length = 44]
+        authority_pubkey -> Varchar,
         total_rewards -> Nullable<Unsigned<Bigint>>,
         claimed_rewards -> Nullable<Unsigned<Bigint>>,
         created_at -> Timestamp,
@@ -67,16 +63,13 @@ diesel::table! {
 }
 
 diesel::table! {
-    use diesel::sql_types::*;
-    use super::sql_types::TxnsTxnTypeEnum;
-
     txns (id) {
         id -> Integer,
-        #[max_length = 5]
-        txn_type -> TxnsTxnTypeEnum,
+        #[max_length = 15]
+        txn_type -> Varchar,
         #[max_length = 200]
         signature -> Varchar,
-        priority_fee -> Nullable<Unsigned<Integer>>,
+        priority_fee -> Unsigned<Integer>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
