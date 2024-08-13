@@ -40,7 +40,7 @@ pub struct MessageInternalMineSuccess {
     total_balance: f64,
     rewards: f64,
     total_hashpower: u64,
-    submissions: HashMap<Pubkey, (u32, u64)>
+    submissions: HashMap<Pubkey, (i32, u32, u64)>
 }
 
 #[derive(Debug)]
@@ -52,7 +52,7 @@ pub enum ClientMessage {
 
 pub struct EpochHashes {
     best_hash: BestHash,
-    submissions: HashMap<Pubkey, (u32, u64)>,
+    submissions: HashMap<Pubkey, (i32, u32, u64)>,
 }
 
 pub struct BestHash {
@@ -469,7 +469,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             let mut total_hashpower: u64 = 0;
                                             for submission in submissions.iter() {
-                                                total_hashpower += submission.1.1
+                                                total_hashpower += submission.1.2
                                             }
 
                                             let _ = mine_success_sender.send(MessageInternalMineSuccess {
@@ -556,7 +556,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     let app_shared_state = shared_state.clone();
+    let app_app_database = app_database.clone();
     tokio::spawn(async move {
+        let app_database = app_app_database;
         loop {
             while let Some(msg) = mine_success_receiver.recv().await {
                 {
@@ -564,18 +566,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
                         let pubkey = socket_sender.0;
 
-                        if let Some((supplied_diff, pubkey_hashpower)) = msg.submissions.get(&pubkey) {
+                        if let Some((miner_id, supplied_diff, pubkey_hashpower)) = msg.submissions.get(&pubkey) {
                             let hashpower_percent = (*pubkey_hashpower as f64).div(msg.total_hashpower as f64);
 
                             // TODO: handle overflow/underflow and float imprecision issues
                             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                            let earned_rewards = hashpower_percent.mul(msg.rewards).mul(decimals).floor().div(decimals);
+                            let earned_rewards = hashpower_percent.mul(msg.rewards).mul(decimals).floor();
+                            let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
+                            let earned_rewards_dec = earned_rewards.div(decimals);
+
                             let message = format!(
                                 "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}",
                                 msg.difficulty,
                                 msg.rewards,
                                 msg.total_balance,
-                                earned_rewards,
+                                earned_rewards_dec,
                                 supplied_diff
                             );
                             if let Ok(_) = socket_sender.1.lock().await.send(Message::Text(message)).await {
@@ -789,8 +794,40 @@ async fn post_signup(
         } else {
             println!("Valid signup tx, submitting.");
 
-            if let Ok(sig) = rpc_client.send_and_confirm_transaction(&tx).await {
-                // add user to db
+            if let Ok(_sig) = rpc_client.send_and_confirm_transaction(&tx).await {
+                let res = app_database.add_new_miner(user_pubkey.to_string(), true).await;
+                let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
+
+                let wallet_pubkey = wallet.pubkey();
+                let pool = app_database.get_pool_by_authority_pubkey(wallet_pubkey.to_string()).await.unwrap();
+
+                if res.is_ok() {
+                    let new_reward = InsertReward {
+                        miner_id: miner.id,
+                        pool_id: pool.id,
+                    };
+                    let result = app_database.add_new_reward(new_reward).await;
+
+                    if result.is_ok() {
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "text/text")
+                            .body("SUCCESS".to_string())
+                            .unwrap();
+                    } else {
+                        error!("Failed to add miner rewards tracker to database");
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("Failed to add miner rewards tracker to database".to_string())
+                            .unwrap();
+                    }
+                } else {
+                    error!("Failed to add miner to database");
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to add user to database".to_string())
+                        .unwrap();
+                }
 
             } else {
                 return Response::builder()
@@ -799,39 +836,6 @@ async fn post_signup(
                     .unwrap();
             }
 
-            let res = app_database.add_new_miner(user_pubkey.to_string(), true).await;
-            let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
-
-            let wallet_pubkey = wallet.pubkey();
-            let pool = app_database.get_pool_by_authority_pubkey(wallet_pubkey.to_string()).await.unwrap();
-
-            if res.is_ok() {
-                let new_reward = InsertReward {
-                    miner_id: miner.id,
-                    pool_id: pool.id,
-                };
-                let result = app_database.add_new_reward(new_reward).await;
-
-                if result.is_ok() {
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "text/text")
-                        .body("SUCCESS".to_string())
-                        .unwrap();
-                } else {
-                    error!("Failed to add miner rewards tracker to database");
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to add miner rewards tracker to database".to_string())
-                        .unwrap();
-                }
-            } else {
-                error!("Failed to add miner to database");
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body("Failed to add user to database".to_string())
-                    .unwrap();
-            }
         }
     } else {
         error!("Signup with invalid pubkey");
@@ -1125,7 +1129,7 @@ async fn client_message_handler_system(
 
                         {
                             let mut epoch_hashes = epoch_hashes.write().await;
-                            epoch_hashes.submissions.insert(pubkey, (diff, hashpower));
+                            epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
                             if diff > epoch_hashes.best_hash.difficulty {
                                 epoch_hashes.best_hash.difficulty = diff;
                                 epoch_hashes.best_hash.solution = Some(solution);

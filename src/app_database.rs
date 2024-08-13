@@ -70,6 +70,26 @@ impl AppDatabase {
         };
     }
 
+    pub async fn update_miner_reward(&self, miner_id: i32, rewards_to_add: u64) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("UPDATE rewards SET balance = balance + ? WHERE miner_id = ?")
+                .bind::<Unsigned<BigInt>, _>(rewards_to_add)
+                .bind::<Integer, _>(miner_id)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(());
+            } else {
+                return Err(AppDatabaseError::FailedToUpdateEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
     pub async fn add_new_submission(&self, submission: models::InsertSubmission) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
