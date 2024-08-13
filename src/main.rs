@@ -389,27 +389,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 if let Some(solution) = solution {
                     let signer = app_wallet.clone();
-                    let mut ixs = vec![];
-                    // TODO: set cu's
-                    let prio_fee = {
-                        app_prio_fee.lock().await.clone()
-                    };
-
-
-                    let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
-                    ixs.push(cu_limit_ix);
-
-                    let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
-                    ixs.push(prio_fee_ix);
-
-                    let noop_ix = get_auth_ix(signer.pubkey());
-                    ixs.push(noop_ix);
-
 
 
                     let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
+                    let mut loaded_config = None;
                     if let (Ok(l_proof), Ok(config), Ok(busses)) = get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await {
-                        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
                         
                         proof = l_proof;
 
@@ -422,21 +406,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         bus = best_bus;
-
-                        let time_until_reset = (config.last_reset_at + 60) - now as i64;
-                        if time_until_reset <= 5 {
-                            let reset_ix = get_reset_ix(signer.pubkey());
-                            ixs.push(reset_ix);
-                        }
+                        loaded_config = Some(config);
                     }
 
                     let difficulty = solution.to_hash().difficulty();
 
-                    let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
-                    ixs.push(ix_mine);
                     info!("Starting mine submission attempts with difficulty {}.", difficulty);
                         
                     for i in 0..3 {
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+                        let mut ixs = vec![];
+                        let prio_fee = {
+                            app_prio_fee.lock().await.clone()
+                        };
+
+                        info!("using priority fee of {}", prio_fee);
+
+                        let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
+                        ixs.push(cu_limit_ix);
+
+                        let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
+                        ixs.push(prio_fee_ix);
+
+                        let noop_ix = get_auth_ix(signer.pubkey());
+                        ixs.push(noop_ix);
+
+                        if let Some(config) = loaded_config {
+                            let time_until_reset = (config.last_reset_at + 60) - now as i64;
+                            if time_until_reset <= 5 {
+                                let reset_ix = get_reset_ix(signer.pubkey());
+                                ixs.push(reset_ix);
+                            }
+                        }
+
+                        let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
+                        ixs.push(ix_mine);
+
                         if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
                             let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
@@ -507,6 +512,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         tokio::time::sleep(Duration::from_millis(500)).await;
                                     }
                                 }
+                                {
+                                    let mut prio_fee = app_prio_fee.lock().await;
+                                    if *prio_fee >=  5_000 {
+                                        *prio_fee = prio_fee.saturating_sub(5_000);
+                                    }
+                                }
                                 // reset nonce
                                 {
                                     let mut nonce = app_nonce.lock().await;
@@ -522,6 +533,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 break;
                             } else {
+                                {
+                                    let mut prio_fee = app_prio_fee.lock().await;
+                                    if *prio_fee < 1_000_000 {
+                                        *prio_fee += 10000;
+                                    }
+                                }
                                 // sent error
                                 if i >= 2 {
                                     info!("Failed to send after 3 attempts. Discarding and refreshing data.");
