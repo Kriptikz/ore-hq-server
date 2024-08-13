@@ -38,7 +38,7 @@ struct AppState {
 pub struct MessageInternalMineSuccess {
     difficulty: u32,
     total_balance: f64,
-    rewards: f64,
+    rewards: u64,
     total_hashpower: u64,
     submissions: HashMap<Pubkey, (i32, u32, u64)>
 }
@@ -480,7 +480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let _ = mine_success_sender.send(MessageInternalMineSuccess {
                                                 difficulty,
                                                 total_balance: balance,
-                                                rewards: dec_rewards,
+                                                rewards,
                                                 total_hashpower,
                                                 submissions,
                                             });
@@ -584,18 +584,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let pubkey = socket_sender.0;
 
                         if let Some((miner_id, supplied_diff, pubkey_hashpower)) = msg.submissions.get(&pubkey) {
-                            let hashpower_percent = (*pubkey_hashpower as f64).div(msg.total_hashpower as f64);
+                            let hashpower_percent = (*pubkey_hashpower as u128).saturating_mul(1_000_000).saturating_div(msg.total_hashpower as u128);
 
                             // TODO: handle overflow/underflow and float imprecision issues
                             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                            let earned_rewards = hashpower_percent.mul(msg.rewards).mul(decimals).floor();
+                            let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
                             let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
-                            let earned_rewards_dec = earned_rewards.div(decimals);
+                            let earned_rewards_dec = (earned_rewards as f64).div(decimals);
+                            let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
                             let message = format!(
                                 "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}",
                                 msg.difficulty,
-                                msg.rewards,
+                                pool_rewards_dec,
                                 msg.total_balance,
                                 earned_rewards_dec,
                                 supplied_diff
