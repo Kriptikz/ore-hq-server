@@ -217,6 +217,25 @@ impl AppDatabase {
 
     }
 
+    pub async fn update_pool_rewards(&self, pool_authority_pubkey: String, earned_rewards: u64) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("UPDATE pools SET total_rewards = total_rewards + ? WHERE authority_pubkey = ?")
+                .bind::<Unsigned<BigInt>, _>(earned_rewards)
+                .bind::<Text, _>(pool_authority_pubkey)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(());
+            } else {
+                return Err(AppDatabaseError::FailedToUpdateEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
     pub async fn add_new_miner(&self, miner_pubkey: String, is_enabled: bool) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
