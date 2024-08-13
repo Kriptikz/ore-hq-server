@@ -51,6 +51,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    rewards (id) {
+        id -> Integer,
+        miner_id -> Integer,
+        pool_id -> Integer,
+        balance -> Unsigned<Bigint>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     submissions (id) {
         id -> Integer,
         miner_id -> Integer,
@@ -80,6 +91,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     claims,
     miners,
     pools,
+    rewards,
     submissions,
     txns,
 );

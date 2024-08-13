@@ -12,6 +12,7 @@ use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
 use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
 use rand::Rng;
+use schema::submissions::challenge_id;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction};
@@ -61,7 +62,8 @@ pub struct BestHash {
 
 pub struct Config {
     password: String,
-    whitelist: Option<HashSet<Pubkey>>
+    whitelist: Option<HashSet<Pubkey>>,
+    pool_id: i32,
 }
 
 mod ore_utils;
@@ -211,9 +213,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("Validating pool exists in db");
-    let result = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await;
+    let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await;
 
-    match result {
+    match db_pool {
         Ok(_) => {}
         Err(AppDatabaseError::EntityDoesNotExist) => {
             println!("Pool missing from database. Inserting...");
@@ -229,10 +231,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let config = Arc::new(Mutex::new(Config {
+    let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await.unwrap();
+
+
+    println!("Validating current challenge for pool exists in db");
+    let result = app_database.get_challenge_by_challenge(proof.challenge.to_vec()).await;
+
+    match result {
+        Ok(_) => {}
+        Err(AppDatabaseError::EntityDoesNotExist) => {
+            println!("Challenge missing from database. Inserting...");
+            let new_challenge = models::InsertChallenge {
+                pool_id: db_pool.id,
+                challenge: proof.challenge.to_vec(),
+                rewards_earned: None,
+            };
+            let result = app_database.add_new_challenge(new_challenge).await;
+
+            if result.is_err() {
+                panic!("Failed to create pool in database");
+            }
+        },
+        Err(_) => {
+            panic!("Failed to get database pool connection");
+        }
+    }
+
+    let config = Arc::new(Config {
         password,
-        whitelist
-    }));
+        whitelist,
+        pool_id: db_pool.id,
+    });
 
     let epoch_hashes = Arc::new(RwLock::new(EpochHashes {
         best_hash: BestHash {
@@ -342,8 +371,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_nonce = nonce_ext.clone();
     let app_prio_fee = priority_fee.clone();
     let app_rpc_client = rpc_client.clone();
+    let app_config = config.clone();
+    let app_app_database = app_database.clone();
     tokio::spawn(async move {
         let rpc_client = app_rpc_client;
+        let app_database = app_app_database;
         loop {
             let mut proof = {
                 app_proof.lock().await.clone()
@@ -424,8 +456,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let balance = (loaded_proof.balance as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                             info!("New balance: {}", balance);
                                             let rewards = loaded_proof.balance - proof.balance;
-                                            let rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                            info!("Earned: {} ORE", rewards);
+                                            let dec_rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                            info!("Earned: {} ORE", dec_rewards);
+
+                                            let submission_id = app_database.get_submission_id_with_nonce(u64::from_le_bytes(solution.n)).await.unwrap();
+
+                                            let _ = app_database.update_challenge_rewards(proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
 
                                             let submissions = {
                                                 app_epoch_hashes.read().await.submissions.clone()
@@ -439,10 +475,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let _ = mine_success_sender.send(MessageInternalMineSuccess {
                                                 difficulty,
                                                 total_balance: balance,
-                                                rewards,
+                                                rewards: dec_rewards,
                                                 total_hashpower,
                                                 submissions,
                                             });
+                                            println!("Adding new challenge to db");
+                                            let new_challenge = InsertChallenge {
+                                                pool_id: app_config.pool_id,
+                                                challenge: loaded_proof.challenge.to_vec(),
+                                                rewards_earned: None,
+                                            };
+                                            let result = app_database.add_new_challenge(new_challenge).await;
+
+                                            match result {
+                                                Ok(_) => {}
+                                                Err(AppDatabaseError::FailedToInsertNewEntity) => {
+                                                    panic!("Failed to create new challenge in database");
+                                                },
+                                                Err(_) => {
+                                                    panic!("AppDatabase query failed");
+                                                }
+                                            }
 
                                             {
                                                 let mut mut_proof = app_proof.lock().await;
@@ -613,7 +666,7 @@ async fn post_signup(
     Extension(app_database): Extension<Arc<AppDatabase>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<Keypair>>,
-    Extension(app_config): Extension<Arc<Mutex<Config>>>,
+    Extension(app_config): Extension<Arc<Config>>,
     body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
@@ -642,16 +695,35 @@ async fn post_signup(
             }
         }
 
-        if let Some(whitelist) = &app_config.lock().await.whitelist {
+        if let Some(whitelist) = &app_config.whitelist {
             if whitelist.contains(&user_pubkey) {
                 let result = app_database.add_new_miner(user_pubkey.to_string(), true).await;
+                let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
+
+                let wallet_pubkey = wallet.pubkey();
+                let pool = app_database.get_pool_by_authority_pubkey(wallet_pubkey.to_string()).await.unwrap();
 
                 if result.is_ok() {
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "text/text")
-                        .body("SUCCESS".to_string())
-                        .unwrap();
+
+                    let new_reward = InsertReward {
+                        miner_id: miner.id,
+                        pool_id: pool.id,
+                    };
+                    let result = app_database.add_new_reward(new_reward).await;
+
+                    if result.is_ok() {
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "text/text")
+                            .body("SUCCESS".to_string())
+                            .unwrap();
+                    } else {
+                        error!("Failed to add miner rewards tracker to database");
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("Failed to add miner rewards tracker to database".to_string())
+                            .unwrap();
+                    }
                 } else {
                     error!("Failed to add miner to database");
                     return Response::builder()
@@ -728,13 +800,31 @@ async fn post_signup(
             }
 
             let res = app_database.add_new_miner(user_pubkey.to_string(), true).await;
+            let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
+
+            let wallet_pubkey = wallet.pubkey();
+            let pool = app_database.get_pool_by_authority_pubkey(wallet_pubkey.to_string()).await.unwrap();
 
             if res.is_ok() {
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header("Content-Type", "text/text")
-                    .body("SUCCESS".to_string())
-                    .unwrap();
+                let new_reward = InsertReward {
+                    miner_id: miner.id,
+                    pool_id: pool.id,
+                };
+                let result = app_database.add_new_reward(new_reward).await;
+
+                if result.is_ok() {
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "text/text")
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                } else {
+                    error!("Failed to add miner rewards tracker to database");
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to add miner rewards tracker to database".to_string())
+                        .unwrap();
+                }
             } else {
                 error!("Failed to add miner to database");
                 return Response::builder()
@@ -762,7 +852,7 @@ async fn ws_handler(
     TypedHeader(auth_header): TypedHeader<axum_extra::headers::Authorization<Basic>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(app_state): State<Arc<RwLock<AppState>>>,
-    Extension(app_config): Extension<Arc<Mutex<Config>>>,
+    //Extension(app_config): Extension<Arc<Config>>,
     Extension(client_channel): Extension<UnboundedSender<ClientMessage>>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
     query_params: Query<WsQueryParams>
@@ -772,9 +862,6 @@ async fn ws_handler(
 
     let pubkey = auth_header.username();
     let signed_msg = auth_header.password();
-
-    // TODO: Store pubkey data in db
-
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
 
@@ -1023,6 +1110,19 @@ async fn client_message_handler_system(
                     if diff >= MIN_DIFF {
                         // calculate rewards
                         let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
+                        let challenge = app_database.get_challenge_by_challenge(challenge.to_vec()).await.unwrap();
+
+                        let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
+
+                        let new_submission = InsertSubmission {
+                            miner_id: miner.id,
+                            challenge_id: challenge.id,
+                            nonce: u64::from_le_bytes(solution.n),
+                            difficulty: diff as i8,
+                        };
+
+                        let _ = app_database.add_new_submission(new_submission).await.unwrap();
+
                         {
                             let mut epoch_hashes = epoch_hashes.write().await;
                             epoch_hashes.submissions.insert(pubkey, (diff, hashpower));
