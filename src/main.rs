@@ -514,8 +514,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 {
                                     let mut prio_fee = app_prio_fee.lock().await;
-                                    if *prio_fee >=  2_500 {
-                                        *prio_fee = prio_fee.saturating_sub(2_500);
+                                    if *prio_fee >=  1_000 {
+                                        *prio_fee = prio_fee.saturating_sub(1_000);
                                     }
                                 }
                                 // reset nonce
