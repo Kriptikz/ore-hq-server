@@ -10,11 +10,13 @@ use diesel::{query_dsl::methods::FilterDsl, sql_types::{Bool, Text}, ExpressionM
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
+use ::ore_utils::AccountDeserialize;
 use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
 use rand::Rng;
 use schema::submissions::challenge_id;
 use serde::Deserialize;
-use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_account_decoder::UiAccountEncoding;
+use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}};
 use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction};
 use spl_associated_token_account::get_associated_token_address;
 use tokio::{io::AsyncReadExt, sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock}};
@@ -124,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
+    let rpc_ws_url = std::env::var("RPC_WS_URL").expect("RPC_WS_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
 
@@ -176,6 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
+
 
     println!("loading sol balance...");
     let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
@@ -291,6 +295,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
     let ready_clients = Arc::new(Mutex::new(HashSet::new()));
 
+    let app_wallet = wallet_extension.clone();
+    let app_proof = proof_ext.clone();
+    // Establish webocket connection for tracking pool proof changes.
+    tokio::spawn(async move {
+        proof_tracking_system(rpc_ws_url, app_wallet, app_proof).await;
+    });
+
     let (client_message_sender, client_message_receiver) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
 
     // Handle client messages
@@ -388,7 +399,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rpc_client = app_rpc_client;
         let app_database = app_app_database;
         loop {
-            let mut proof = {
+            let mut old_proof = {
                 app_proof.lock().await.clone()
             };
 
@@ -404,10 +415,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
                     let mut loaded_config = None;
-                    if let (Ok(l_proof), Ok(config), Ok(busses)) = get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await {
+                    if let (Ok(_), Ok(config), Ok(busses)) = get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await {
                         
-                        proof = l_proof;
-
                         let mut best_bus = 0;
                         for (i, bus) in busses.iter().enumerate() {
                             if let Ok(bus) = bus {
@@ -453,7 +462,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
                         ixs.push(ix_mine);
 
-                        let proof = get_proof(&rpc_client, signer.pubkey()).await.unwrap();
                         if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
                             let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
@@ -473,12 +481,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let _ = app_database.add_new_txn(itxn).await.unwrap();
                                 // update proof
                                 loop {
-                                    if let Ok(loaded_proof) = get_proof(&rpc_client, signer.pubkey()).await {
-                                        if proof != loaded_proof {
-                                            info!("Got new proof.");
-                                            let balance = (loaded_proof.balance as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                    info!("Waiting for proof hash update");
+                                    let latest_proof = {
+                                        app_proof.lock().await.clone()
+                                    };
+
+                                    if old_proof.challenge.eq(&latest_proof.challenge) {
+                                        info!("Proof challenge not updated yet..");
+                                        old_proof = latest_proof;
+                                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                                        continue;
+                                    } else {
+                                        info!("Proof challenge updated! Checking rewards earned.");
+                                            let balance = (latest_proof.balance as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                             info!("New balance: {}", balance);
-                                            let rewards = loaded_proof.balance - proof.balance;
+                                            let rewards = latest_proof.balance - old_proof.balance;
                                             let dec_rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                             info!("Earned: {} ORE", dec_rewards);
 
@@ -506,7 +523,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             println!("Adding new challenge to db");
                                             let new_challenge = InsertChallenge {
                                                 pool_id: app_config.pool_id,
-                                                challenge: loaded_proof.challenge.to_vec(),
+                                                challenge: latest_proof.challenge.to_vec(),
                                                 rewards_earned: None,
                                             };
                                             let result = app_database.add_new_challenge(new_challenge).await;
@@ -520,36 +537,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     panic!("AppDatabase query failed");
                                                 }
                                             }
-
                                             {
-                                                let mut mut_proof = app_proof.lock().await;
-                                                *mut_proof = loaded_proof;
-                                                break;
+                                                let mut prio_fee = app_prio_fee.lock().await;
+                                                if *prio_fee >=  1_000 {
+                                                    *prio_fee = prio_fee.saturating_sub(1_000);
+                                                }
                                             }
-                                        }
-                                    } else {
-                                        tokio::time::sleep(Duration::from_millis(500)).await;
+                                            // reset nonce
+                                            {
+                                                let mut nonce = app_nonce.lock().await;
+                                                *nonce = 0;
+                                            }
+                                            // reset epoch hashes
+                                            {
+                                                info!("reset epoch hashes");
+                                                let mut mut_epoch_hashes = app_epoch_hashes.write().await;
+                                                mut_epoch_hashes.best_hash.solution = None;
+                                                mut_epoch_hashes.best_hash.difficulty = 0;
+                                                mut_epoch_hashes.submissions = HashMap::new();
+                                            }
+                                            break;
                                     }
                                 }
-                                {
-                                    let mut prio_fee = app_prio_fee.lock().await;
-                                    if *prio_fee >=  1_000 {
-                                        *prio_fee = prio_fee.saturating_sub(1_000);
-                                    }
-                                }
-                                // reset nonce
-                                {
-                                    let mut nonce = app_nonce.lock().await;
-                                    *nonce = 0;
-                                }
-                                // reset epoch hashes
-                                {
-                                    info!("reset epoch hashes");
-                                    let mut mut_epoch_hashes = app_epoch_hashes.write().await;
-                                    mut_epoch_hashes.best_hash.solution = None;
-                                    mut_epoch_hashes.best_hash.difficulty = 0;
-                                    mut_epoch_hashes.submissions = HashMap::new();
-                                }
+
                                 break;
                             } else {
                                 {
@@ -1405,6 +1415,75 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
     }
 
     ControlFlow::Continue(())
+}
+
+async fn proof_tracking_system(
+    ws_url: String,
+    wallet: Arc<Keypair>,
+    proof: Arc<Mutex<Proof>>,
+) { 
+    loop {
+        println!("Establishing rpc websocket connection...");
+        let mut ps_client = PubsubClient::new(&ws_url).await;
+        let mut attempts = 0;
+        
+        while ps_client.is_err() && attempts < 3 {
+            error!("Failed to connect to websocket, retrying...");
+            ps_client = PubsubClient::new(&ws_url).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            attempts += 1;
+        }
+        info!("RPC WS connection established!");
+
+        let app_wallet = wallet.clone();
+        if let Ok(ps_client) = ps_client {
+            let ps_client = Arc::new(ps_client);
+            // let sender_c = sender.clone();
+            let ps_client_c = ps_client.clone();
+            let app_proof = proof.clone();
+            let _ = tokio::spawn(async move {
+                let ps_client = ps_client_c;
+                // let sender = sender_c;
+                let account_pubkey = proof_pubkey(app_wallet.pubkey());
+                let pubsub =
+                    ps_client.account_subscribe(
+                        &account_pubkey,
+                        Some(RpcAccountInfoConfig {
+                            encoding: Some(UiAccountEncoding::Base64),
+                            data_slice: None,
+                            commitment: Some(CommitmentConfig::confirmed()),
+                            min_context_slot: None,
+                        })
+                    ).await;
+
+                    info!("Tracking pool proof updates with websocket");
+                    if let Ok((mut account_sub_notifications, _account_unsub)) = pubsub {
+                        loop {
+                            if let Some(response) = account_sub_notifications.next().await {
+
+                                let data = response.value.data.decode();
+                                if let Some(data_bytes) = data {
+                                    // if let Ok(bus) = Bus::try_from_bytes(&data_bytes) {
+                                    //     let _ = sender.send(AccountUpdatesData::BusData(*bus));
+                                    // }
+                                    // if let Ok(ore_config) = ore_api::state::Config::try_from_bytes(&data_bytes) {
+                                    //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
+                                    // }
+                                    if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
+                                        // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
+                                        //
+                                        {
+                                            let mut app_proof = app_proof.lock().await;
+                                            *app_proof = *new_proof;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+            }).await;
+        }
+    }
 }
 
 async fn client_message_handler_system(

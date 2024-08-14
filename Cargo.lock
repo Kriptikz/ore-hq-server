@@ -2773,6 +2773,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "solana-account-decoder",
  "solana-client",
  "solana-sdk",
  "spl-associated-token-account",
