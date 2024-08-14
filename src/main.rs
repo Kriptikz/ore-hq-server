@@ -1318,50 +1318,41 @@ async fn proof_tracking_system(
         let app_wallet = wallet.clone();
         if let Ok(ps_client) = ps_client {
             let ps_client = Arc::new(ps_client);
-            // let sender_c = sender.clone();
-            let ps_client_c = ps_client.clone();
             let app_proof = proof.clone();
-            let _ = tokio::spawn(async move {
-                let ps_client = ps_client_c;
-                // let sender = sender_c;
-                let account_pubkey = proof_pubkey(app_wallet.pubkey());
-                let pubsub =
-                    ps_client.account_subscribe(
-                        &account_pubkey,
-                        Some(RpcAccountInfoConfig {
-                            encoding: Some(UiAccountEncoding::Base64),
-                            data_slice: None,
-                            commitment: Some(CommitmentConfig::confirmed()),
-                            min_context_slot: None,
-                        })
-                    ).await;
+            let account_pubkey = proof_pubkey(app_wallet.pubkey());
+            let pubsub =
+                ps_client.account_subscribe(
+                    &account_pubkey,
+                    Some(RpcAccountInfoConfig {
+                        encoding: Some(UiAccountEncoding::Base64),
+                        data_slice: None,
+                        commitment: Some(CommitmentConfig::confirmed()),
+                        min_context_slot: None,
+                    })
+                ).await;
 
-                    info!("Tracking pool proof updates with websocket");
-                    if let Ok((mut account_sub_notifications, _account_unsub)) = pubsub {
-                        loop {
-                            if let Some(response) = account_sub_notifications.next().await {
-
-                                let data = response.value.data.decode();
-                                if let Some(data_bytes) = data {
-                                    // if let Ok(bus) = Bus::try_from_bytes(&data_bytes) {
-                                    //     let _ = sender.send(AccountUpdatesData::BusData(*bus));
-                                    // }
-                                    // if let Ok(ore_config) = ore_api::state::Config::try_from_bytes(&data_bytes) {
-                                    //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
-                                    // }
-                                    if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
-                                        // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
-                                        //
-                                        {
-                                            let mut app_proof = app_proof.lock().await;
-                                            *app_proof = *new_proof;
-                                        }
-                                    }
+                info!("Tracking pool proof updates with websocket");
+                if let Ok((mut account_sub_notifications, _account_unsub)) = pubsub {
+                    while let Some(response) = account_sub_notifications.next().await {
+                        let data = response.value.data.decode();
+                        if let Some(data_bytes) = data {
+                            // if let Ok(bus) = Bus::try_from_bytes(&data_bytes) {
+                            //     let _ = sender.send(AccountUpdatesData::BusData(*bus));
+                            // }
+                            // if let Ok(ore_config) = ore_api::state::Config::try_from_bytes(&data_bytes) {
+                            //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
+                            // }
+                            if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
+                                // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
+                                //
+                                {
+                                    let mut app_proof = app_proof.lock().await;
+                                    *app_proof = *new_proof;
                                 }
                             }
                         }
                     }
-            }).await;
+                }
         }
     }
 }
