@@ -33,7 +33,16 @@ pub struct UpdateChallengeRewards {
 #[diesel(table_name = crate::schema::claims)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Claim {
-    pub id: i32,
+    pub miner_id: i32,
+    pub pool_id: i32,
+    pub txn_id: i32,
+    pub amount: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::claims)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct InsertClaim {
     pub miner_id: i32,
     pub pool_id: i32,
     pub txn_id: i32,
@@ -101,10 +110,27 @@ pub struct Txn {
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::txns)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct InsertTxn {
+    pub txn_type: String,
+    pub signature: String,
+    pub priority_fee: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::rewards)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertReward {
     pub miner_id: i32,
     pub pool_id: i32,
 }
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::rewards)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct Reward {
+    pub balance: u64,
+}
+
 

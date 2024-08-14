@@ -51,6 +51,28 @@ impl AppDatabase {
 
     }
 
+    pub async fn get_miner_rewards(&self, miner_pubkey: String) -> Result<models::Reward, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT r.balance FROM miners m JOIN rewards r ON m.id = r.miner_id WHERE m.pubkey = ?")
+                .bind::<Text, _>(miner_pubkey)
+                .get_result::<models::Reward>(conn)
+            }).await;
+
+            match res {
+                Ok(Ok(reward)) => {
+                    return Ok(reward)
+                },
+                _ => {
+                    return Err(AppDatabaseError::EntityDoesNotExist);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
     pub async fn add_new_reward(&self, reward: InsertReward) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
@@ -89,6 +111,27 @@ impl AppDatabase {
         };
 
     }
+
+    pub async fn decrease_miner_reward(&self, miner_id: i32, rewards_to_decrease: u64) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("UPDATE rewards SET balance = balance - ? WHERE miner_id = ?")
+                .bind::<Unsigned<BigInt>, _>(rewards_to_decrease)
+                .bind::<Integer, _>(miner_id)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(());
+            } else {
+                return Err(AppDatabaseError::FailedToUpdateEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
 
     pub async fn add_new_submission(&self, submission: models::InsertSubmission) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
@@ -236,6 +279,25 @@ impl AppDatabase {
         };
     }
 
+    pub async fn update_pool_claimed(&self, pool_authority_pubkey: String, claimed_rewards: u64) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("UPDATE pools SET claimed_rewards = claimed_rewards + ? WHERE authority_pubkey = ?")
+                .bind::<Unsigned<BigInt>, _>(claimed_rewards)
+                .bind::<Text, _>(pool_authority_pubkey)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(());
+            } else {
+                return Err(AppDatabaseError::FailedToUpdateEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
     pub async fn add_new_miner(&self, miner_pubkey: String, is_enabled: bool) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
@@ -271,6 +333,49 @@ impl AppDatabase {
                 _ => {
                     return Err(AppDatabaseError::EntityDoesNotExist);
                 }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
+    pub async fn add_new_claim(&self, claim: models::InsertClaim) -> Result<i32, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("INSERT INTO claims (miner_id, pool_id, txn_id, amount) VALUES (?, ?, ?, ?)")
+                .bind::<Integer, _>(claim.miner_id)
+                .bind::<Integer, _>(claim.pool_id)
+                .bind::<Integer, _>(claim.txn_id)
+                .bind::<Unsigned<BigInt>, _>(claim.amount)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(res.unwrap().unwrap() as i32);
+            } else {
+                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
+    pub async fn add_new_txn(&self, txn: models::InsertTxn) -> Result<i32, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("INSERT INTO txns (txn_type, signature, priority_fee) VALUES (?, ?, ?)")
+                .bind::<Text, _>(txn.txn_type)
+                .bind::<Text, _>(txn.signature)
+                .bind::<Unsigned<Integer>, _>(txn.priority_fee)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(res.unwrap().unwrap() as i32);
+            } else {
+                return Err(AppDatabaseError::FailedToInsertNewEntity);
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);

@@ -10,12 +10,13 @@ use diesel::{query_dsl::methods::FilterDsl, sql_types::{Bool, Text}, ExpressionM
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
-use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
+use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
 use rand::Rng;
 use schema::submissions::challenge_id;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction};
+use spl_associated_token_account::get_associated_token_address;
 use tokio::{io::AsyncReadExt, sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock}};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info};
@@ -41,6 +42,16 @@ pub struct MessageInternalMineSuccess {
     rewards: u64,
     total_hashpower: u64,
     submissions: HashMap<Pubkey, (i32, u32, u64)>
+}
+
+pub struct MessageInternalQueueClaim {
+    pubkey: Pubkey,
+    amount: u64,
+}
+
+pub struct QueuedClaim {
+    pubkey: Pubkey,
+    amount: u64,
 }
 
 #[derive(Debug)]
@@ -442,6 +453,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
                         ixs.push(ix_mine);
 
+                        let proof = get_proof(&rpc_client, signer.pubkey()).await.unwrap();
                         if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
                             let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
@@ -453,6 +465,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // success
                                 info!("Success!!");
                                 info!("Sig: {}", sig);
+                                let itxn = InsertTxn {
+                                    txn_type: "mine".to_string(),
+                                    signature: sig.to_string(),
+                                    priority_fee: prio_fee as u32,
+                                };
+                                let _ = app_database.add_new_txn(itxn).await.unwrap();
                                 // update proof
                                 loop {
                                     if let Ok(loaded_proof) = get_proof(&rpc_client, signer.pubkey()).await {
@@ -613,6 +631,117 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    
+    let claims_queue = Arc::new(RwLock::new(HashMap::<Pubkey, u64>::new()));
+
+    let app_claims_queue = claims_queue.clone();
+    let app_proof = proof_ext.clone();
+    let app_rpc_client = rpc_client.clone();
+    let app_wallet = wallet_extension.clone();
+    tokio::spawn(async move {
+        loop {
+            let proof = {
+                app_proof.lock().await.clone()
+            };
+            let l_claims = {
+                app_claims_queue.read().await.clone()
+            };
+
+            let mut queued_amount = 0;
+            for (_pubkey, claim_amount) in l_claims.iter() {
+                queued_amount += claim_amount;
+            }
+
+            if queued_amount > 0 {
+                let cutoff = get_cutoff(proof, 0);
+                if cutoff >= 30 && l_claims.len() >= 1 {
+                    info!("Cutoff time long enough, claiming to pool");
+                    // check token balance
+                    let ore_mint = get_ore_mint();
+                    let token_account = get_associated_token_address(&app_wallet.pubkey(), &ore_mint);
+
+                    let ore_balance =
+                        if let Ok(response) = app_rpc_client.get_token_account_balance(&token_account).await {
+                            if let Some(amount) = response.ui_amount {
+                                amount
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            // Create the token account
+                            info!("Creating pool token account for claim");
+                            let ix = spl_associated_token_account::instruction::create_associated_token_account(
+                                &app_wallet.pubkey(),
+                                &app_wallet.pubkey(),
+                                &ore_api::consts::MINT_ADDRESS,
+                                &spl_token::id(),
+                            );
+                            if let Ok((hash, _slot)) = app_rpc_client
+                                .get_latest_blockhash_with_commitment(app_rpc_client.commitment()).await {
+                                let mut tx = Transaction::new_with_payer(&[ix], Some(&app_wallet.pubkey()));
+
+                                tx.sign(&[&app_wallet], hash);
+
+                                let result = app_rpc_client
+                                    .send_and_confirm_transaction_with_spinner_and_commitment(
+                                        &tx, app_rpc_client.commitment()
+                                    ).await;
+
+                                if let Ok(sig) = result {
+                                    info!("Successfully created pool ore token account.\n Sig: {}\n", sig);
+                                } else {
+                                    error!("Failed to create pool ore token account.");
+                                }
+                            }
+
+                            0.0
+                        };
+
+                        let grains_balance = (ore_balance * 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64)) as u64;
+                        let difference = grains_balance.saturating_sub(queued_amount);
+
+                        if difference <= 0 {
+                            info!("Claiming {} to pool account for miner claims...", queued_amount);
+                            let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(1000);
+                            let ix = ore_api::instruction::claim(app_wallet.pubkey(), token_account, queued_amount);
+                            if let Ok((hash, _slot)) = app_rpc_client
+                                .get_latest_blockhash_with_commitment(app_rpc_client.commitment()).await {
+                                let mut tx = Transaction::new_with_payer(&[prio_fee_ix, ix], Some(&app_wallet.pubkey()));
+
+                                tx.sign(&[&app_wallet], hash);
+
+                                let result = app_rpc_client
+                                    .send_and_confirm_transaction_with_spinner_and_commitment(
+                                        &tx, app_rpc_client.commitment()
+                                    ).await;
+
+                                if let Ok(sig) = result {
+                                    info!("Successfully claimed to pool account.\nSig: {}\n", sig.to_string());
+                                    {
+                                        let mut claims_queue = app_claims_queue.write().await;
+                                        *claims_queue = HashMap::new();
+                                    };
+                                } else {
+                                    error!("Failed to claim to pool account!");
+                                }
+                            }
+                        } else {
+                            info!("Miner wallet balance has enough for queued claims already.");
+                            {
+                                let mut claims_queue = app_claims_queue.write().await;
+                                *claims_queue = HashMap::new();
+                            };
+                            tokio::time::sleep(Duration::from_millis(5000)).await;
+                        }
+                } else {
+                    info!("Claims queued, waiting to claim to pool balance");
+                    tokio::time::sleep(Duration::from_millis(5000)).await;
+                }
+            } else {
+                tokio::time::sleep(Duration::from_millis(5000)).await;
+            }
+        }
+    });
 
     let client_channel = client_message_sender.clone();
     let app_shared_state = shared_state.clone();
@@ -621,12 +750,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/latest-blockhash", get(get_latest_blockhash))
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/signup", post(post_signup))
+        .route("/claim", post(post_claim))
+        .route("/miner/balance", get(get_miner_balance))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
         .layer(Extension(config))
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
         .layer(Extension(rpc_client))
+        .layer(Extension(claims_queue))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -858,6 +990,182 @@ async fn post_signup(
         }
     } else {
         error!("Signup with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct BalanceParams {
+    pubkey: String,
+}
+
+async fn get_miner_balance(
+    query_params: Query<BalanceParams>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let res = app_database.get_miner_rewards(user_pubkey.to_string()).await;
+
+        match res {
+            Ok(rewards) => {
+                let decimal_bal = rewards.balance as f64 / 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64);
+                let response = format!("{}", decimal_bal);
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .body(response)
+                    .unwrap();
+            },
+            Err(_) => {
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to get balance".to_string())
+                    .unwrap();
+            }
+        }
+    } else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid public key".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct ClaimParams {
+    pubkey: String,
+    amount: u64,
+}
+
+async fn post_claim(
+    query_params: Query<ClaimParams>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<Keypair>>,
+    Extension(claims_queue): Extension<Arc<RwLock<HashMap<Pubkey, u64>>>>
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+
+        let amount = query_params.amount;
+
+        let ore_mint = get_ore_mint();
+        let pool_token_account = get_associated_token_address(&wallet.pubkey(), &ore_mint);
+        let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
+
+        let mut ixs = Vec::new();
+        if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
+                if let Some(amount) = response.ui_amount {
+                    info!("miner has valid token account.");
+                } else {
+                    ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
+                        &wallet.pubkey(),
+                        &user_pubkey,
+                        &ore_api::consts::MINT_ADDRESS,
+                        &spl_token::id(),
+                    ))
+                }
+
+        } else {
+            info!("Adding create ata ix for miner claim");
+            ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
+                &wallet.pubkey(),
+                &user_pubkey,
+                &ore_api::consts::MINT_ADDRESS,
+                &spl_token::id(),
+            ))
+        }
+
+        let ore_balance =
+            if let Ok(response) = rpc_client.get_token_account_balance(&pool_token_account).await {
+                if let Some(amount) = response.ui_amount {
+                    amount
+                } else {
+                    0.0
+                }
+            } else {
+                    0.0
+            };
+        let grains_balance = (ore_balance * 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64)) as i64;
+        let difference = grains_balance.saturating_sub(amount as i64);
+
+        if difference >= 0 {
+            // there is enough in balance to claim
+            println!("Balance is good, sending ore to miner for claim");
+            let ix = spl_token::instruction::transfer(&spl_token::id(), &pool_token_account, &miner_token_account, &wallet.pubkey(), &[&wallet.pubkey()], amount).unwrap();
+            ixs.push(ix);
+
+            if let Ok((hash, _slot)) = rpc_client
+                .get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+                let mut tx = Transaction::new_with_payer(&ixs, Some(&wallet.pubkey()));
+
+                tx.sign(&[&wallet], hash);
+
+                let result = rpc_client
+                    .send_and_confirm_transaction_with_spinner_and_commitment(
+                        &tx,
+                        rpc_client.commitment(),
+                    ).await;
+
+                match result {
+                    Ok(sig) => {
+                        info!("Miner successfully claimed.\nSig: {}", sig.to_string());
+
+                        // TODO: use transacions, or at least put them into one query
+                        let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
+                        let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await.unwrap();
+                        let _ = app_database.decrease_miner_reward(miner.id, amount).await.unwrap();
+                        let _ = app_database.update_pool_claimed(wallet.pubkey().to_string(), amount).await.unwrap();
+
+                        let itxn = InsertTxn {
+                            txn_type: "claim".to_string(),
+                            signature: sig.to_string(),
+                            priority_fee: 0,
+                        };
+                        let txn_id = app_database.add_new_txn(itxn).await.unwrap();
+
+                        let iclaim = InsertClaim {
+                            miner_id: miner.id,
+                            pool_id: db_pool.id,
+                            txn_id,
+                            amount,
+                        };
+                        let _ = app_database.add_new_claim(iclaim).await.unwrap();
+
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .body("SUCCESS".to_string())
+                            .unwrap();
+                    },
+                    Err(e) => {
+                        println!("ERROR: {:?}", e);
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("FAILED".to_string())
+                            .unwrap();
+                    }
+                }
+            } else {
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("FAILED".to_string())
+                    .unwrap();
+            }
+        } else {
+            // there is not enough in balance to claim queue a pool claim
+            info!("Balance is too low");
+            info!("Sending claim to queue");
+            {
+                claims_queue.write().await.insert(user_pubkey, amount);
+            }
+            return Response::builder()
+                .status(StatusCode::ACCEPTED)
+                .body("QUEUED".to_string())
+                .unwrap();
+        }
+    } else {
+        error!("Claim with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())

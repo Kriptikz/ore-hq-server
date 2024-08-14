@@ -30,3 +30,4 @@ diesel = { version = "2.2.2", features = ["mysql", "chrono"] }
 chrono = "0.4.38"
 deadpool-diesel = { version = "0.6.1", features = ["mysql"] }
 base64 = "0.22.1"
+spl-token = { version = "^4", features = ["no-entrypoint"] }
