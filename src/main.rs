@@ -539,9 +539,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             {
                                                 let mut prio_fee = app_prio_fee.lock().await;
+                                                let mut decrease_amount = 0;
                                                 if *prio_fee >=  1_000 {
-                                                    *prio_fee = prio_fee.saturating_sub(1_000);
+                                                    decrease_amount = 1_000;
                                                 }
+                                                if *prio_fee >=  50_000 {
+                                                    decrease_amount = 5_000;
+                                                }
+                                                if *prio_fee >=  100_000 {
+                                                    decrease_amount = 10_000;
+                                                }
+                                                
+                                                *prio_fee = prio_fee.saturating_sub(decrease_amount);
                                             }
                                             // reset nonce
                                             {
@@ -565,7 +574,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 {
                                     let mut prio_fee = app_prio_fee.lock().await;
                                     if *prio_fee < 1_000_000 {
-                                        *prio_fee += 10000;
+                                        *prio_fee += 10_000;
                                     }
                                 }
                                 // sent error
