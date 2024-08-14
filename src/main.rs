@@ -395,7 +395,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app_proof.lock().await.clone()
             };
 
-            let cutoff = get_cutoff(proof, 0);
+            let cutoff = get_cutoff(old_proof, 0);
             if cutoff <= 0 {
                 // process solutions
                 let solution = {
