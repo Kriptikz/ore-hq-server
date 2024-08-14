@@ -1039,12 +1039,15 @@ async fn post_claim(
                             signature: sig.to_string(),
                             priority_fee: 0,
                         };
-                        let txn_id = app_database.add_new_txn(itxn).await.unwrap();
+                        let _ = app_database.add_new_txn(itxn).await.unwrap();
+
+                        let ntxn = app_database.get_txn_by_sig(sig.to_string()).await.unwrap();
+
 
                         let iclaim = InsertClaim {
                             miner_id: miner.id,
                             pool_id: db_pool.id,
-                            txn_id,
+                            txn_id: ntxn.id,
                             amount,
                         };
                         let _ = app_database.add_new_claim(iclaim).await.unwrap();

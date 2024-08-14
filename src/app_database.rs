@@ -362,7 +362,7 @@ impl AppDatabase {
 
     }
 
-    pub async fn add_new_txn(&self, txn: models::InsertTxn) -> Result<i32, AppDatabaseError> {
+    pub async fn add_new_txn(&self, txn: models::InsertTxn) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
                 diesel::sql_query("INSERT INTO txns (txn_type, signature, priority_fee) VALUES (?, ?, ?)")
@@ -373,9 +373,31 @@ impl AppDatabase {
             }).await;
 
             if res.is_ok() {
-                return Ok(res.unwrap().unwrap() as i32);
+                return Ok(());
             } else {
                 return Err(AppDatabaseError::FailedToInsertNewEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
+    pub async fn get_txn_by_sig(&self, sig: String) -> Result<models::TxnId, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT id FROM txns WHERE signature = ?")
+                .bind::<Text, _>(sig)
+                .get_result::<models::TxnId>(conn)
+            }).await;
+
+            match res {
+                Ok(Ok(txn)) => {
+                    return Ok(txn)
+                },
+                _ => {
+                    return Err(AppDatabaseError::EntityDoesNotExist);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);

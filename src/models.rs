@@ -112,6 +112,13 @@ pub struct Txn {
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::txns)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct TxnId {
+    pub id: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::txns)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertTxn {
     pub txn_type: String,
     pub signature: String,
