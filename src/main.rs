@@ -651,6 +651,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/signup", post(post_signup))
         .route("/claim", post(post_claim))
+        .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/balance", get(get_miner_balance))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
@@ -898,12 +899,12 @@ async fn post_signup(
 }
 
 #[derive(Deserialize)]
-struct BalanceParams {
+struct PubkeyParam {
     pubkey: String,
 }
 
-async fn get_miner_balance(
-    query_params: Query<BalanceParams>,
+async fn get_miner_rewards(
+    query_params: Query<PubkeyParam>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
@@ -924,6 +925,31 @@ async fn get_miner_balance(
                     .body("Failed to get balance".to_string())
                     .unwrap();
             }
+        }
+    } else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid public key".to_string())
+            .unwrap();
+    }
+}
+
+async fn get_miner_balance(
+    query_params: Query<PubkeyParam>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let miner_token_account = get_associated_token_address(&user_pubkey, &get_ore_mint());
+        if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .body(response.ui_amount_string)
+                .unwrap();
+        } else {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Failed to get token account balance".to_string())
+                .unwrap();
         }
     } else {
         return Response::builder()
