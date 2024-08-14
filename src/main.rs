@@ -1050,6 +1050,15 @@ async fn post_claim(
 
         let amount = query_params.amount;
 
+        let miner_rewards = app_database.get_miner_rewards(user_pubkey.to_string()).await.unwrap();
+
+        if amount > miner_rewards.balance {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("claim amount exceeds miner rewards balance".to_string())
+                .unwrap();
+        }
+
         let ore_mint = get_ore_mint();
         let pool_token_account = get_associated_token_address(&wallet.pubkey(), &ore_mint);
         let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
