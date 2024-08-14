@@ -1,19 +1,16 @@
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Mul}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Mul, Range, RangeBounds}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 use app_database::{AppDatabase, AppDatabaseError};
 use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Router};
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use clap::Parser;
-use deadpool_diesel::mysql::{Manager, Pool};
-use diesel::{query_dsl::methods::FilterDsl, sql_types::{Bool, Text}, ExpressionMethods, MysqlConnection, QueryDsl, RunQueryDsl, SelectableHelper};
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
 use ::ore_utils::AccountDeserialize;
 use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
 use rand::Rng;
-use schema::submissions::challenge_id;
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}};
@@ -44,16 +41,6 @@ pub struct MessageInternalMineSuccess {
     rewards: u64,
     total_hashpower: u64,
     submissions: HashMap<Pubkey, (i32, u32, u64)>
-}
-
-pub struct MessageInternalQueueClaim {
-    pubkey: Pubkey,
-    amount: u64,
-}
-
-pub struct QueuedClaim {
-    pubkey: Pubkey,
-    amount: u64,
 }
 
 #[derive(Debug)]
@@ -290,6 +277,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proof_ext = Arc::new(Mutex::new(proof));
     let nonce_ext = Arc::new(Mutex::new(0u64));
 
+    let client_nonce_ranges = Arc::new(RwLock::new(HashMap::new()));
+
     let shared_state = Arc::new(RwLock::new(AppState {
         sockets: HashMap::new(),
     }));
@@ -310,8 +299,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_proof = proof_ext.clone();
     let app_epoch_hashes = epoch_hashes.clone();
     let app_app_database = app_database.clone();
+    let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
-        client_message_handler_system(client_message_receiver, &app_shared_state, app_app_database, app_ready_clients, app_proof, app_epoch_hashes).await;
+        client_message_handler_system(client_message_receiver, &app_shared_state, app_app_database, app_ready_clients, app_proof, app_epoch_hashes, app_client_nonce_ranges).await;
     });
 
     // Handle ready clients
@@ -319,6 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_proof = proof_ext.clone();
     let app_epoch_hashes = epoch_hashes.clone();
     let app_nonce = nonce_ext.clone();
+    let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
         loop {
 
@@ -375,6 +366,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(sender) = shared_state.sockets.get(&client) {
                             let _ = sender.1.lock().await.send(Message::Binary(bin_data.to_vec())).await;
                             let _ = ready_clients.lock().await.remove(&client);
+                            let _ = app_client_nonce_ranges.write().await.insert(sender.0, nonce_range);
                         }
                     }
                 }
@@ -666,6 +658,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
         .layer(Extension(rpc_client))
+        .layer(Extension(client_nonce_ranges))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -1365,7 +1358,8 @@ async fn client_message_handler_system(
     app_database: Arc<AppDatabase>,
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
-    epoch_hashes: Arc<RwLock<EpochHashes>>
+    epoch_hashes: Arc<RwLock<EpochHashes>>,
+    client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>
 ) {
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
@@ -1396,6 +1390,22 @@ async fn client_message_handler_system(
                     proof.challenge
                 };
 
+                let nonce_range: Range<u64> = {
+                    if let Some(nr) = client_nonce_ranges.read().await.get(&pubkey) {
+                        nr.clone()
+                    } else {
+                        error!("Client nonce range not set!");
+                        continue;
+                    }
+                };
+
+                let nonce = u64::from_le_bytes(solution.n);
+
+                if !nonce_range.contains(&nonce) {
+                    error!("Client submitted nonce out of assigned range");
+                    continue;
+                }
+
                 if solution.is_valid(&challenge) {
                     let diff = solution.to_hash().difficulty();
                     println!("{} found diff: {}", pubkey_str, diff);
@@ -1409,7 +1419,7 @@ async fn client_message_handler_system(
                         let new_submission = InsertSubmission {
                             miner_id: miner.id,
                             challenge_id: challenge.id,
-                            nonce: u64::from_le_bytes(solution.n),
+                            nonce,
                             difficulty: diff as i8,
                         };
 
