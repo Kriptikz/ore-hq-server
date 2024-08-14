@@ -642,117 +642,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     
-    let claims_queue = Arc::new(RwLock::new(HashMap::<Pubkey, u64>::new()));
-
-    let app_claims_queue = claims_queue.clone();
-    let app_proof = proof_ext.clone();
-    let app_rpc_client = rpc_client.clone();
-    let app_wallet = wallet_extension.clone();
-    tokio::spawn(async move {
-        loop {
-            let proof = {
-                app_proof.lock().await.clone()
-            };
-            let l_claims = {
-                app_claims_queue.read().await.clone()
-            };
-
-            let mut queued_amount = 0;
-            for (_pubkey, claim_amount) in l_claims.iter() {
-                queued_amount += claim_amount;
-            }
-
-            if queued_amount > 0 {
-                let cutoff = get_cutoff(proof, 0);
-                if cutoff >= 30 && l_claims.len() >= 1 {
-                    info!("Cutoff time long enough, claiming to pool");
-                    // check token balance
-                    let ore_mint = get_ore_mint();
-                    let token_account = get_associated_token_address(&app_wallet.pubkey(), &ore_mint);
-
-                    let ore_balance =
-                        if let Ok(response) = app_rpc_client.get_token_account_balance(&token_account).await {
-                            if let Some(amount) = response.ui_amount {
-                                amount
-                            } else {
-                                0.0
-                            }
-                        } else {
-                            // Create the token account
-                            info!("Creating pool token account for claim");
-                            let ix = spl_associated_token_account::instruction::create_associated_token_account(
-                                &app_wallet.pubkey(),
-                                &app_wallet.pubkey(),
-                                &ore_api::consts::MINT_ADDRESS,
-                                &spl_token::id(),
-                            );
-                            if let Ok((hash, _slot)) = app_rpc_client
-                                .get_latest_blockhash_with_commitment(app_rpc_client.commitment()).await {
-                                let mut tx = Transaction::new_with_payer(&[ix], Some(&app_wallet.pubkey()));
-
-                                tx.sign(&[&app_wallet], hash);
-
-                                let result = app_rpc_client
-                                    .send_and_confirm_transaction_with_spinner_and_commitment(
-                                        &tx, app_rpc_client.commitment()
-                                    ).await;
-
-                                if let Ok(sig) = result {
-                                    info!("Successfully created pool ore token account.\n Sig: {}\n", sig);
-                                } else {
-                                    error!("Failed to create pool ore token account.");
-                                }
-                            }
-
-                            0.0
-                        };
-
-                        let grains_balance = (ore_balance * 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64)) as u64;
-                        let difference = grains_balance.saturating_sub(queued_amount);
-
-                        if difference <= 0 {
-                            info!("Claiming {} to pool account for miner claims...", queued_amount);
-                            let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(1000);
-                            let ix = ore_api::instruction::claim(app_wallet.pubkey(), token_account, queued_amount);
-                            if let Ok((hash, _slot)) = app_rpc_client
-                                .get_latest_blockhash_with_commitment(app_rpc_client.commitment()).await {
-                                let mut tx = Transaction::new_with_payer(&[prio_fee_ix, ix], Some(&app_wallet.pubkey()));
-
-                                tx.sign(&[&app_wallet], hash);
-
-                                let result = app_rpc_client
-                                    .send_and_confirm_transaction_with_spinner_and_commitment(
-                                        &tx, app_rpc_client.commitment()
-                                    ).await;
-
-                                if let Ok(sig) = result {
-                                    info!("Successfully claimed to pool account.\nSig: {}\n", sig.to_string());
-                                    {
-                                        let mut claims_queue = app_claims_queue.write().await;
-                                        *claims_queue = HashMap::new();
-                                    };
-                                } else {
-                                    error!("Failed to claim to pool account!");
-                                }
-                            }
-                        } else {
-                            info!("Miner wallet balance has enough for queued claims already.");
-                            {
-                                let mut claims_queue = app_claims_queue.write().await;
-                                *claims_queue = HashMap::new();
-                            };
-                            tokio::time::sleep(Duration::from_millis(5000)).await;
-                        }
-                } else {
-                    info!("Claims queued, waiting to claim to pool balance");
-                    tokio::time::sleep(Duration::from_millis(5000)).await;
-                }
-            } else {
-                tokio::time::sleep(Duration::from_millis(5000)).await;
-            }
-        }
-    });
-
     let client_channel = client_message_sender.clone();
     let app_shared_state = shared_state.clone();
     let app = Router::new()
@@ -768,7 +657,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
         .layer(Extension(rpc_client))
-        .layer(Extension(claims_queue))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -1054,65 +942,47 @@ async fn post_claim(
     Extension(app_database): Extension<Arc<AppDatabase>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<Keypair>>,
-    Extension(claims_queue): Extension<Arc<RwLock<HashMap<Pubkey, u64>>>>
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-
         let amount = query_params.amount;
+        if let Ok(miner_rewards) = app_database.get_miner_rewards(user_pubkey.to_string()).await {
+            if amount > miner_rewards.balance {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("claim amount exceeds miner rewards balance".to_string())
+                    .unwrap();
+            }
 
-        let miner_rewards = app_database.get_miner_rewards(user_pubkey.to_string()).await.unwrap();
+            let ore_mint = get_ore_mint();
+            let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
 
-        if amount > miner_rewards.balance {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("claim amount exceeds miner rewards balance".to_string())
-                .unwrap();
-        }
+            let mut ixs = Vec::new();
+            // let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(10000);
+            // ixs.push(prio_fee_ix);
+            if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
+                    if let Some(_amount) = response.ui_amount {
+                        info!("miner has valid token account.");
+                    } else {
+                        info!("will create token account for miner");
+                        ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
+                            &wallet.pubkey(),
+                            &user_pubkey,
+                            &ore_api::consts::MINT_ADDRESS,
+                            &spl_token::id(),
+                        ))
+                    }
 
-        let ore_mint = get_ore_mint();
-        let pool_token_account = get_associated_token_address(&wallet.pubkey(), &ore_mint);
-        let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
-
-        let mut ixs = Vec::new();
-        if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
-                if let Some(amount) = response.ui_amount {
-                    info!("miner has valid token account.");
-                } else {
-                    ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
-                        &wallet.pubkey(),
-                        &user_pubkey,
-                        &ore_api::consts::MINT_ADDRESS,
-                        &spl_token::id(),
-                    ))
-                }
-
-        } else {
-            info!("Adding create ata ix for miner claim");
-            ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
-                &wallet.pubkey(),
-                &user_pubkey,
-                &ore_api::consts::MINT_ADDRESS,
-                &spl_token::id(),
-            ))
-        }
-
-        let ore_balance =
-            if let Ok(response) = rpc_client.get_token_account_balance(&pool_token_account).await {
-                if let Some(amount) = response.ui_amount {
-                    amount
-                } else {
-                    0.0
-                }
             } else {
-                    0.0
-            };
-        let grains_balance = (ore_balance * 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64)) as i64;
-        let difference = grains_balance.saturating_sub(amount as i64);
+                info!("Adding create ata ix for miner claim");
+                ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
+                    &wallet.pubkey(),
+                    &user_pubkey,
+                    &ore_api::consts::MINT_ADDRESS,
+                    &spl_token::id(),
+                ))
+            }
 
-        if difference >= 0 {
-            // there is enough in balance to claim
-            println!("Balance is good, sending ore to miner for claim");
-            let ix = spl_token::instruction::transfer(&spl_token::id(), &pool_token_account, &miner_token_account, &wallet.pubkey(), &[&wallet.pubkey()], amount).unwrap();
+            let ix = ore_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client
@@ -1126,7 +996,6 @@ async fn post_claim(
                         &tx,
                         rpc_client.commitment(),
                     ).await;
-
                 match result {
                     Ok(sig) => {
                         info!("Miner successfully claimed.\nSig: {}", sig.to_string());
@@ -1171,16 +1040,11 @@ async fn post_claim(
                     .body("FAILED".to_string())
                     .unwrap();
             }
+
         } else {
-            // there is not enough in balance to claim queue a pool claim
-            info!("Balance is too low");
-            info!("Sending claim to queue");
-            {
-                claims_queue.write().await.insert(user_pubkey, amount);
-            }
             return Response::builder()
-                .status(StatusCode::ACCEPTED)
-                .body("QUEUED".to_string())
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("failed to get miner account from database".to_string())
                 .unwrap();
         }
     } else {
