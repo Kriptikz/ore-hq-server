@@ -1086,8 +1086,22 @@ async fn ws_handler(
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
     }
 
+
     // verify client
     if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
+        {
+            let mut already_connected = false;
+            for (_, (socket_pubkey, _)) in app_state.read().await.sockets.iter() {
+                if user_pubkey == *socket_pubkey {
+                    already_connected = true;
+                    break;
+                }
+            }
+            if already_connected {
+                return Err((StatusCode::TOO_MANY_REQUESTS, "A client is already connected with that wallet"));
+            }
+        };
+
         let db_miner = app_database.get_miner_by_pubkey_str(pubkey.to_string()).await;
 
         let miner;
