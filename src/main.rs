@@ -1455,28 +1455,29 @@ async fn client_message_handler_system(
                     if diff >= MIN_DIFF {
                         // calculate rewards
                         let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
-                        let challenge = app_database.get_challenge_by_challenge(challenge.to_vec()).await.unwrap();
+                        if let Ok(challenge) = app_database.get_challenge_by_challenge(challenge.to_vec()).await {
+                            let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
 
-                        let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
+                            let new_submission = InsertSubmission {
+                                miner_id: miner.id,
+                                challenge_id: challenge.id,
+                                nonce,
+                                difficulty: diff as i8,
+                            };
 
-                        let new_submission = InsertSubmission {
-                            miner_id: miner.id,
-                            challenge_id: challenge.id,
-                            nonce,
-                            difficulty: diff as i8,
-                        };
+                            let _ = app_database.add_new_submission(new_submission).await.unwrap();
 
-                        let _ = app_database.add_new_submission(new_submission).await.unwrap();
-
-                        {
-                            let mut epoch_hashes = epoch_hashes.write().await;
-                            epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
-                            if diff > epoch_hashes.best_hash.difficulty {
-                                epoch_hashes.best_hash.difficulty = diff;
-                                epoch_hashes.best_hash.solution = Some(solution);
+                            {
+                                let mut epoch_hashes = epoch_hashes.write().await;
+                                epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
+                                if diff > epoch_hashes.best_hash.difficulty {
+                                    epoch_hashes.best_hash.difficulty = diff;
+                                    epoch_hashes.best_hash.solution = Some(solution);
+                                }
                             }
+                        } else {
+                            error!("Challenge not found in db, :(");
                         }
-
                     } else {
                         println!("Diff to low, skipping");
                     }
