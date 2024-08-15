@@ -717,7 +717,7 @@ async fn post_signup(
                     return Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "text/text")
-                        .body("SUCCESS".to_string())
+                        .body("EXISTS".to_string())
                         .unwrap();
                 }
             }
