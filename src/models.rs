@@ -1,6 +1,6 @@
-use diesel::prelude::*;
-use serde::{Serialize, Deserialize};
 use chrono::NaiveDateTime;
+use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::challenges)]
@@ -55,7 +55,7 @@ pub struct InsertClaim {
 pub struct Miner {
     pub id: i32,
     pub pubkey: String,
-    pub enabled: bool
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
@@ -90,7 +90,6 @@ pub struct InsertSubmission {
     pub nonce: u64,
     pub difficulty: i8,
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::submissions)]
@@ -157,5 +156,3 @@ pub struct InsertEarning {
     pub challenge_id: i32,
     pub amount: u64,
 }
-
-

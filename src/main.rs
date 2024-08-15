@@ -1,38 +1,75 @@
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Range}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    ops::{ControlFlow, Div, Range},
+    path::Path,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
+use self::models::*;
+use ::ore_utils::AccountDeserialize;
 use app_database::{AppDatabase, AppDatabaseError};
-use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Router};
+use axum::{
+    extract::{
+        ws::{Message, WebSocket},
+        ConnectInfo, Query, State, WebSocketUpgrade,
+    },
+    http::{Response, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+    Extension, Router,
+};
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use clap::Parser;
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, state::Proof};
-use ::ore_utils::AccountDeserialize;
-use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey, ORE_TOKEN_DECIMALS};
+use ore_utils::{
+    get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof,
+    get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey,
+    ORE_TOKEN_DECIMALS,
+};
 use rand::Rng;
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
-use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig}};
-use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction};
+use solana_client::{
+    nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
+    rpc_config::RpcAccountInfoConfig,
+};
+use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
+    native_token::LAMPORTS_PER_SOL,
+    pubkey::Pubkey,
+    signature::{read_keypair_file, Keypair, Signature},
+    signer::Signer,
+    system_instruction,
+    transaction::Transaction,
+};
 use spl_associated_token_account::get_associated_token_address;
-use tokio::{io::AsyncReadExt, sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock}};
+use tokio::{
+    io::AsyncReadExt,
+    sync::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        Mutex, RwLock,
+    },
+};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use self::models::*;
 
-mod models;
 mod app_database;
+mod models;
 mod schema;
-
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
-
 struct AppState {
-    sockets: HashMap<SocketAddr, (Pubkey, Mutex<SplitSink<WebSocket, Message>>)>
+    sockets: HashMap<SocketAddr, (Pubkey, Mutex<SplitSink<WebSocket, Message>>)>,
 }
 
 pub struct MessageInternalMineSuccess {
@@ -41,14 +78,14 @@ pub struct MessageInternalMineSuccess {
     rewards: u64,
     challenge_id: i32,
     total_hashpower: u64,
-    submissions: HashMap<Pubkey, (i32, u32, u64)>
+    submissions: HashMap<Pubkey, (i32, u32, u64)>,
 }
 
 #[derive(Debug)]
 pub enum ClientMessage {
     Ready(SocketAddr),
     Mining(SocketAddr),
-    BestSolution(SocketAddr, Solution, Pubkey)
+    BestSolution(SocketAddr, Solution, Pubkey),
 }
 
 pub struct EpochHashes {
@@ -98,7 +135,6 @@ struct Args {
     signup_cost: u64,
 }
 
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
@@ -120,7 +156,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_database = Arc::new(AppDatabase::new(database_url));
 
-
     let whitelist = if let Some(whitelist) = args.whitelist {
         let file = Path::new(&whitelist);
         if file.exists() {
@@ -128,17 +163,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut pubkeys = HashSet::new();
             if let Ok(mut file) = tokio::fs::File::open(file).await {
                 let mut file_contents = String::new();
-                file.read_to_string(&mut file_contents).await.ok().expect("Failed to read whitelist file");
+                file.read_to_string(&mut file_contents)
+                    .await
+                    .ok()
+                    .expect("Failed to read whitelist file");
                 drop(file);
 
                 for (i, line) in file_contents.lines().enumerate() {
                     if let Ok(pubkey) = Pubkey::from_str(line) {
                         pubkeys.insert(pubkey);
                     } else {
-                        let err = format!("Failed to create pubkey from line {} with value: {}", i, line);
+                        let err = format!(
+                            "Failed to create pubkey from line {} with value: {}",
+                            i, line
+                        );
                         error!(err);
                     }
-
                 }
             } else {
                 return Err("Failed to open whitelist file".into());
@@ -161,13 +201,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Failed to find wallet path.".into());
     }
 
-    let wallet = read_keypair_file(wallet_path).expect("Failed to load keypair from file: {wallet_path_str}");
+    let wallet = read_keypair_file(wallet_path)
+        .expect("Failed to load keypair from file: {wallet_path_str}");
     println!("loaded wallet {}", wallet.pubkey().to_string());
-
 
     println!("establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
-
 
     println!("loading sol balance...");
     let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
@@ -191,15 +230,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ix = get_register_ix(wallet.pubkey());
 
         if let Ok((hash, _slot)) = rpc_client
-            .get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+            .get_latest_blockhash_with_commitment(rpc_client.commitment())
+            .await
+        {
             let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
 
             tx.sign(&[&wallet], hash);
 
             let result = rpc_client
                 .send_and_confirm_transaction_with_spinner_and_commitment(
-                    &tx, rpc_client.commitment()
-                ).await;
+                    &tx,
+                    rpc_client.commitment(),
+                )
+                .await;
 
             if let Ok(sig) = result {
                 println!("Sig: {}", sig.to_string());
@@ -216,17 +259,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("Validating pool exists in db");
-    let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await;
+    let db_pool = app_database
+        .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
+        .await;
 
     match db_pool {
         Ok(_) => {}
         Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
             panic!("Failed to get database pool connection");
-        },
+        }
         Err(_) => {
             println!("Pool missing from database. Inserting...");
             let proof_pubkey = proof_pubkey(wallet.pubkey());
-            let result = app_database.add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string()).await;
+            let result = app_database
+                .add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string())
+                .await;
 
             if result.is_err() {
                 panic!("Failed to create pool in database");
@@ -234,17 +281,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await.unwrap();
-
+    let db_pool = app_database
+        .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
+        .await
+        .unwrap();
 
     println!("Validating current challenge for pool exists in db");
-    let result = app_database.get_challenge_by_challenge(proof.challenge.to_vec()).await;
+    let result = app_database
+        .get_challenge_by_challenge(proof.challenge.to_vec())
+        .await;
 
     match result {
         Ok(_) => {}
         Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
             panic!("Failed to get database pool connection");
-        },
+        }
         Err(_) => {
             println!("Challenge missing from database. Inserting...");
             let new_challenge = models::InsertChallenge {
@@ -292,7 +343,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof_tracking_system(rpc_ws_url, app_wallet, app_proof).await;
     });
 
-    let (client_message_sender, client_message_receiver) = tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
+    let (client_message_sender, client_message_receiver) =
+        tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
 
     // Handle client messages
     let app_shared_state = shared_state.clone();
@@ -302,7 +354,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_app_database = app_database.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
-        client_message_handler_system(client_message_receiver, &app_shared_state, app_app_database, app_ready_clients, app_proof, app_epoch_hashes, app_client_nonce_ranges).await;
+        client_message_handler_system(
+            client_message_receiver,
+            &app_shared_state,
+            app_app_database,
+            app_ready_clients,
+            app_proof,
+            app_epoch_hashes,
+            app_client_nonce_ranges,
+        )
+        .await;
     });
 
     // Handle ready clients
@@ -313,7 +374,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
         loop {
-
             let mut clients = Vec::new();
             {
                 let ready_clients_lock = ready_clients.lock().await;
@@ -322,9 +382,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let proof = {
-                app_proof.lock().await.clone()
-            };
+            let proof = { app_proof.lock().await.clone() };
 
             let cutoff = get_cutoff(proof, 5);
             let mut should_mine = true;
@@ -363,11 +421,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bin_data[41..49].copy_from_slice(&nonce_range.start.to_le_bytes());
                         bin_data[49..57].copy_from_slice(&nonce_range.end.to_le_bytes());
 
-
                         if let Some(sender) = shared_state.sockets.get(&client) {
-                            let _ = sender.1.lock().await.send(Message::Binary(bin_data.to_vec())).await;
+                            let _ = sender
+                                .1
+                                .lock()
+                                .await
+                                .send(Message::Binary(bin_data.to_vec()))
+                                .await;
                             let _ = ready_clients.lock().await.remove(&client);
-                            let _ = app_client_nonce_ranges.write().await.insert(sender.0, nonce_range);
+                            let _ = app_client_nonce_ranges
+                                .write()
+                                .await
+                                .insert(sender.0, nonce_range);
                         }
                     }
                 }
@@ -377,7 +442,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let (mine_success_sender, mut mine_success_receiver) = tokio::sync::mpsc::unbounded_channel::<MessageInternalMineSuccess>();
+    let (mine_success_sender, mut mine_success_receiver) =
+        tokio::sync::mpsc::unbounded_channel::<MessageInternalMineSuccess>();
 
     let rpc_client = Arc::new(rpc_client);
     let app_proof = proof_ext.clone();
@@ -392,24 +458,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rpc_client = app_rpc_client;
         let app_database = app_app_database;
         loop {
-            let mut old_proof = {
-                app_proof.lock().await.clone()
-            };
+            let mut old_proof = { app_proof.lock().await.clone() };
 
             let cutoff = get_cutoff(old_proof, 0);
             if cutoff <= 0 {
                 // process solutions
-                let solution = {
-                    app_epoch_hashes.read().await.best_hash.solution.clone()
-                };
+                let solution = { app_epoch_hashes.read().await.best_hash.solution.clone() };
                 if let Some(solution) = solution {
                     let signer = app_wallet.clone();
 
-
                     let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
                     let mut loaded_config = None;
-                    if let (Ok(_), Ok(config), Ok(busses)) = get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await {
-                        
+                    if let (Ok(_), Ok(config), Ok(busses)) =
+                        get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await
+                    {
                         let mut best_bus = 0;
                         for (i, bus) in busses.iter().enumerate() {
                             if let Ok(bus) = bus {
@@ -424,21 +486,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let difficulty = solution.to_hash().difficulty();
 
-                    info!("Starting mine submission attempts with difficulty {}.", difficulty);
-                        
+                    info!(
+                        "Starting mine submission attempts with difficulty {}.",
+                        difficulty
+                    );
+
                     for i in 0..3 {
-                        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("Time went backwards")
+                            .as_secs();
                         let mut ixs = vec![];
-                        let prio_fee = {
-                            app_prio_fee.lock().await.clone()
-                        };
+                        let prio_fee = { app_prio_fee.lock().await.clone() };
 
                         info!("using priority fee of {}", prio_fee);
 
                         let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
                         ixs.push(cu_limit_ix);
 
-                        let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
+                        let prio_fee_ix =
+                            ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
                         ixs.push(prio_fee_ix);
 
                         let noop_ix = get_auth_ix(signer.pubkey());
@@ -455,13 +522,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
                         ixs.push(ix_mine);
 
-                        if let Ok((hash, _slot)) = rpc_client.get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+                        if let Ok((hash, _slot)) = rpc_client
+                            .get_latest_blockhash_with_commitment(rpc_client.commitment())
+                            .await
+                        {
                             let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
                             tx.sign(&[&signer], hash);
                             info!("Sending signed tx...");
                             info!("attempt: {}", i + 1);
-                            let sig = rpc_client.send_and_confirm_transaction_with_spinner(&tx).await;
+                            let sig = rpc_client
+                                .send_and_confirm_transaction_with_spinner(&tx)
+                                .await;
                             if let Ok(sig) = sig {
                                 // success
                                 info!("Success!!");
@@ -475,9 +547,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // update proof
                                 loop {
                                     info!("Waiting for proof hash update");
-                                    let latest_proof = {
-                                        app_proof.lock().await.clone()
-                                    };
+                                    let latest_proof = { app_proof.lock().await.clone() };
 
                                     if old_proof.challenge.eq(&latest_proof.challenge) {
                                         info!("Proof challenge not updated yet..");
@@ -486,40 +556,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         continue;
                                     } else {
                                         info!("Proof challenge updated! Checking rewards earned.");
-                                            let balance = (latest_proof.balance as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                            info!("New balance: {}", balance);
-                                            let rewards = latest_proof.balance - old_proof.balance;
-                                            let dec_rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                            info!("Earned: {} ORE", dec_rewards);
-                                            println!("Adding new challenge to db");
-                                            let new_challenge = InsertChallenge {
-                                                pool_id: app_config.pool_id,
-                                                challenge: latest_proof.challenge.to_vec(),
-                                                rewards_earned: None,
-                                            };
-                                            let _result = app_database.add_new_challenge(new_challenge).await;
+                                        let balance = (latest_proof.balance as f64)
+                                            / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                        info!("New balance: {}", balance);
+                                        let rewards = latest_proof.balance - old_proof.balance;
+                                        let dec_rewards = (rewards as f64)
+                                            / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                        info!("Earned: {} ORE", dec_rewards);
+                                        println!("Adding new challenge to db");
+                                        let new_challenge = InsertChallenge {
+                                            pool_id: app_config.pool_id,
+                                            challenge: latest_proof.challenge.to_vec(),
+                                            rewards_earned: None,
+                                        };
+                                        let _result =
+                                            app_database.add_new_challenge(new_challenge).await;
 
-                                            tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let submission_id = app_database.get_submission_id_with_nonce(u64::from_le_bytes(solution.n)).await.unwrap();
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+                                        let submission_id = app_database
+                                            .get_submission_id_with_nonce(u64::from_le_bytes(
+                                                solution.n,
+                                            ))
+                                            .await
+                                            .unwrap();
 
-                                            tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let _ = app_database.update_challenge_rewards(old_proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
-                                            tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let _ = app_database.update_pool_rewards(app_wallet.pubkey().to_string(), rewards).await.unwrap();
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+                                        let _ = app_database
+                                            .update_challenge_rewards(
+                                                old_proof.challenge.to_vec(),
+                                                submission_id,
+                                                rewards,
+                                            )
+                                            .await
+                                            .unwrap();
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+                                        let _ = app_database
+                                            .update_pool_rewards(
+                                                app_wallet.pubkey().to_string(),
+                                                rewards,
+                                            )
+                                            .await
+                                            .unwrap();
 
-                                            tokio::time::sleep(Duration::from_millis(200)).await;
-                                           let challenge = app_database.get_challenge_by_challenge(old_proof.challenge.to_vec()).await.unwrap();
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+                                        let challenge = app_database
+                                            .get_challenge_by_challenge(
+                                                old_proof.challenge.to_vec(),
+                                            )
+                                            .await
+                                            .unwrap();
 
-                                            let submissions = {
-                                                app_epoch_hashes.read().await.submissions.clone()
-                                            };
+                                        let submissions =
+                                            { app_epoch_hashes.read().await.submissions.clone() };
 
-                                            let mut total_hashpower: u64 = 0;
-                                            for submission in submissions.iter() {
-                                                total_hashpower += submission.1.2
-                                            }
+                                        let mut total_hashpower: u64 = 0;
+                                        for submission in submissions.iter() {
+                                            total_hashpower += submission.1 .2
+                                        }
 
-                                            let _ = mine_success_sender.send(MessageInternalMineSuccess {
+                                        let _ =
+                                            mine_success_sender.send(MessageInternalMineSuccess {
                                                 difficulty,
                                                 total_balance: balance,
                                                 rewards,
@@ -528,35 +624,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 submissions,
                                             });
 
-                                            {
-                                                let mut prio_fee = app_prio_fee.lock().await;
-                                                let mut decrease_amount = 0;
-                                                if *prio_fee >=  1_000 {
-                                                    decrease_amount = 1_000;
-                                                }
-                                                if *prio_fee >=  50_000 {
-                                                    decrease_amount = 5_000;
-                                                }
-                                                if *prio_fee >=  100_000 {
-                                                    decrease_amount = 10_000;
-                                                }
-                                                
-                                                *prio_fee = prio_fee.saturating_sub(decrease_amount);
+                                        {
+                                            let mut prio_fee = app_prio_fee.lock().await;
+                                            let mut decrease_amount = 0;
+                                            if *prio_fee >= 1_000 {
+                                                decrease_amount = 1_000;
                                             }
-                                            // reset nonce
-                                            {
-                                                let mut nonce = app_nonce.lock().await;
-                                                *nonce = 0;
+                                            if *prio_fee >= 50_000 {
+                                                decrease_amount = 5_000;
                                             }
-                                            // reset epoch hashes
-                                            {
-                                                info!("reset epoch hashes");
-                                                let mut mut_epoch_hashes = app_epoch_hashes.write().await;
-                                                mut_epoch_hashes.best_hash.solution = None;
-                                                mut_epoch_hashes.best_hash.difficulty = 0;
-                                                mut_epoch_hashes.submissions = HashMap::new();
+                                            if *prio_fee >= 100_000 {
+                                                decrease_amount = 10_000;
                                             }
-                                            break;
+
+                                            *prio_fee = prio_fee.saturating_sub(decrease_amount);
+                                        }
+                                        // reset nonce
+                                        {
+                                            let mut nonce = app_nonce.lock().await;
+                                            *nonce = 0;
+                                        }
+                                        // reset epoch hashes
+                                        {
+                                            info!("reset epoch hashes");
+                                            let mut mut_epoch_hashes =
+                                                app_epoch_hashes.write().await;
+                                            mut_epoch_hashes.best_hash.solution = None;
+                                            mut_epoch_hashes.best_hash.difficulty = 0;
+                                            mut_epoch_hashes.submissions = HashMap::new();
+                                        }
+                                        break;
                                     }
                                 }
 
@@ -592,14 +689,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             error!("Failed to get latest blockhash. retrying...");
                             tokio::time::sleep(Duration::from_millis(1000)).await;
                         }
-                    } 
+                    }
                 }
             } else {
                 tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
             };
         }
     });
-
 
     let app_shared_state = shared_state.clone();
     let app_app_database = app_database.clone();
@@ -615,15 +711,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
                         let pubkey = socket_sender.0;
 
-                        if let Some((miner_id, supplied_diff, pubkey_hashpower)) = msg.submissions.get(&pubkey) {
-                            let hashpower_percent = (*pubkey_hashpower as u128).saturating_mul(1_000_000).saturating_div(msg.total_hashpower as u128);
+                        if let Some((miner_id, supplied_diff, pubkey_hashpower)) =
+                            msg.submissions.get(&pubkey)
+                        {
+                            let hashpower_percent = (*pubkey_hashpower as u128)
+                                .saturating_mul(1_000_000)
+                                .saturating_div(msg.total_hashpower as u128);
 
                             // TODO: handle overflow/underflow and float imprecision issues
                             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                            let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
+                            let earned_rewards = hashpower_percent
+                                .saturating_mul(msg.rewards as u128)
+                                .saturating_div(1_000_000)
+                                as u64;
 
                             let new_earning = InsertEarning {
-                                miner_id: *miner_id, 
+                                miner_id: *miner_id,
                                 pool_id: app_config.pool_id,
                                 challenge_id: msg.challenge_id,
                                 amount: earned_rewards,
@@ -631,7 +734,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             let new_reward = UpdateReward {
                                 miner_id: *miner_id,
-                                balance: earned_rewards
+                                balance: earned_rewards,
                             };
 
                             i_earnings.push(new_earning);
@@ -649,15 +752,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 earned_rewards_dec,
                                 supplied_diff
                             );
-                            if let Ok(_) = socket_sender.1.lock().await.send(Message::Text(message)).await {
+                            if let Ok(_) = socket_sender
+                                .1
+                                .lock()
+                                .await
+                                .send(Message::Text(message))
+                                .await
+                            {
                             } else {
                                 println!("Failed to send client text");
                             }
                         }
-
                     }
                     if i_earnings.len() > 0 {
-                        if let Ok(_) = app_database.add_new_earnings_batch(i_earnings.clone()).await {
+                        if let Ok(_) = app_database
+                            .add_new_earnings_batch(i_earnings.clone())
+                            .await
+                        {
                             debug!("Successfully added earnings batch");
                         } else {
                             error!("Failed to insert earnings batch");
@@ -674,7 +785,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    
+
     let client_channel = client_message_sender.clone();
     let app_shared_state = shared_state.clone();
     let app = Router::new()
@@ -695,13 +806,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Logging
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::default().include_headers(true))
+                .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         );
 
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
 
@@ -709,11 +817,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         ping_check_system(&app_shared_state).await;
     });
-    
+
     axum::serve(
         listener,
-        app.into_make_service_with_connect_info::<SocketAddr>()
-    ).await
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
     .unwrap();
 
     Ok(())
@@ -732,7 +841,6 @@ async fn get_pool_authority_pubkey(
 async fn get_latest_blockhash(
     Extension(rpc_client): Extension<Arc<RpcClient>>,
 ) -> impl IntoResponse {
-
     let latest_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
     let serialized_blockhash = bincode::serialize(&latest_blockhash).unwrap();
@@ -759,7 +867,9 @@ async fn post_signup(
     body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        let db_miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await;
+        let db_miner = app_database
+            .get_miner_by_pubkey_str(user_pubkey.to_string())
+            .await;
 
         match db_miner {
             Ok(miner) => {
@@ -778,7 +888,7 @@ async fn post_signup(
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to get db pool connection".to_string())
                     .unwrap();
-            },
+            }
             Err(_) => {
                 println!("No miner account exists. Signing up new user.");
             }
@@ -786,14 +896,21 @@ async fn post_signup(
 
         if let Some(whitelist) = &app_config.whitelist {
             if whitelist.contains(&user_pubkey) {
-                let result = app_database.add_new_miner(user_pubkey.to_string(), true).await;
-                let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
+                let result = app_database
+                    .add_new_miner(user_pubkey.to_string(), true)
+                    .await;
+                let miner = app_database
+                    .get_miner_by_pubkey_str(user_pubkey.to_string())
+                    .await
+                    .unwrap();
 
                 let wallet_pubkey = wallet.pubkey();
-                let pool = app_database.get_pool_by_authority_pubkey(wallet_pubkey.to_string()).await.unwrap();
+                let pool = app_database
+                    .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
+                    .await
+                    .unwrap();
 
                 if result.is_ok() {
-
                     let new_reward = InsertReward {
                         miner_id: miner.id,
                         pool_id: pool.id,
@@ -820,12 +937,10 @@ async fn post_signup(
                         .body("Failed to add miner to database".to_string())
                         .unwrap();
                 }
-            } 
+            }
         }
 
-
-
-        let serialized_tx =  BASE64_STANDARD.decode(body.clone()).unwrap();
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
         let tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
             tx
         } else {
@@ -834,7 +949,6 @@ async fn post_signup(
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
                 .unwrap();
-
         };
 
         if !tx.is_signed() {
@@ -879,11 +993,19 @@ async fn post_signup(
             println!("Valid signup tx, submitting.");
 
             if let Ok(_sig) = rpc_client.send_and_confirm_transaction(&tx).await {
-                let res = app_database.add_new_miner(user_pubkey.to_string(), true).await;
-                let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
+                let res = app_database
+                    .add_new_miner(user_pubkey.to_string(), true)
+                    .await;
+                let miner = app_database
+                    .get_miner_by_pubkey_str(user_pubkey.to_string())
+                    .await
+                    .unwrap();
 
                 let wallet_pubkey = wallet.pubkey();
-                let pool = app_database.get_pool_by_authority_pubkey(wallet_pubkey.to_string()).await.unwrap();
+                let pool = app_database
+                    .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
+                    .await
+                    .unwrap();
 
                 if res.is_ok() {
                     let new_reward = InsertReward {
@@ -912,14 +1034,12 @@ async fn post_signup(
                         .body("Failed to add user to database".to_string())
                         .unwrap();
                 }
-
             } else {
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to send tx".to_string())
                     .unwrap();
             }
-
         }
     } else {
         error!("Signup with invalid pubkey");
@@ -940,17 +1060,20 @@ async fn get_miner_rewards(
     Extension(app_database): Extension<Arc<AppDatabase>>,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        let res = app_database.get_miner_rewards(user_pubkey.to_string()).await;
+        let res = app_database
+            .get_miner_rewards(user_pubkey.to_string())
+            .await;
 
         match res {
             Ok(rewards) => {
-                let decimal_bal = rewards.balance as f64 / 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64);
+                let decimal_bal =
+                    rewards.balance as f64 / 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64);
                 let response = format!("{}", decimal_bal);
                 return Response::builder()
                     .status(StatusCode::OK)
                     .body(response)
                     .unwrap();
-            },
+            }
             Err(_) => {
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -972,7 +1095,10 @@ async fn get_miner_balance(
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let miner_token_account = get_associated_token_address(&user_pubkey, &get_ore_mint());
-        if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
+        if let Ok(response) = rpc_client
+            .get_token_account_balance(&miner_token_account)
+            .await
+        {
             return Response::builder()
                 .status(StatusCode::OK)
                 .body(response.ui_amount_string)
@@ -1005,7 +1131,10 @@ async fn post_claim(
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let amount = query_params.amount;
-        if let Ok(miner_rewards) = app_database.get_miner_rewards(user_pubkey.to_string()).await {
+        if let Ok(miner_rewards) = app_database
+            .get_miner_rewards(user_pubkey.to_string())
+            .await
+        {
             if amount > miner_rewards.balance {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
@@ -1021,34 +1150,42 @@ async fn post_claim(
             let mut ixs = Vec::new();
             let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
             ixs.push(prio_fee_ix);
-            if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
-                    if let Some(_amount) = response.ui_amount {
-                        info!("miner has valid token account.");
-                    } else {
-                        info!("will create token account for miner");
-                        ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
+            if let Ok(response) = rpc_client
+                .get_token_account_balance(&miner_token_account)
+                .await
+            {
+                if let Some(_amount) = response.ui_amount {
+                    info!("miner has valid token account.");
+                } else {
+                    info!("will create token account for miner");
+                    ixs.push(
+                        spl_associated_token_account::instruction::create_associated_token_account(
                             &wallet.pubkey(),
                             &user_pubkey,
                             &ore_api::consts::MINT_ADDRESS,
                             &spl_token::id(),
-                        ))
-                    }
-
+                        ),
+                    )
+                }
             } else {
                 info!("Adding create ata ix for miner claim");
-                ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
-                    &wallet.pubkey(),
-                    &user_pubkey,
-                    &ore_api::consts::MINT_ADDRESS,
-                    &spl_token::id(),
-                ))
+                ixs.push(
+                    spl_associated_token_account::instruction::create_associated_token_account(
+                        &wallet.pubkey(),
+                        &user_pubkey,
+                        &ore_api::consts::MINT_ADDRESS,
+                        &spl_token::id(),
+                    ),
+                )
             }
 
             let ix = ore_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client
-                .get_latest_blockhash_with_commitment(rpc_client.commitment()).await {
+                .get_latest_blockhash_with_commitment(rpc_client.commitment())
+                .await
+            {
                 let mut tx = Transaction::new_with_payer(&ixs, Some(&wallet.pubkey()));
 
                 tx.sign(&[&wallet], hash);
@@ -1057,16 +1194,29 @@ async fn post_claim(
                     .send_and_confirm_transaction_with_spinner_and_commitment(
                         &tx,
                         rpc_client.commitment(),
-                    ).await;
+                    )
+                    .await;
                 match result {
                     Ok(sig) => {
                         info!("Miner successfully claimed.\nSig: {}", sig.to_string());
 
                         // TODO: use transacions, or at least put them into one query
-                        let miner = app_database.get_miner_by_pubkey_str(user_pubkey.to_string()).await.unwrap();
-                        let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await.unwrap();
-                        let _ = app_database.decrease_miner_reward(miner.id, amount).await.unwrap();
-                        let _ = app_database.update_pool_claimed(wallet.pubkey().to_string(), amount).await.unwrap();
+                        let miner = app_database
+                            .get_miner_by_pubkey_str(user_pubkey.to_string())
+                            .await
+                            .unwrap();
+                        let db_pool = app_database
+                            .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
+                            .await
+                            .unwrap();
+                        let _ = app_database
+                            .decrease_miner_reward(miner.id, amount)
+                            .await
+                            .unwrap();
+                        let _ = app_database
+                            .update_pool_claimed(wallet.pubkey().to_string(), amount)
+                            .await
+                            .unwrap();
 
                         let itxn = InsertTxn {
                             txn_type: "claim".to_string(),
@@ -1076,7 +1226,6 @@ async fn post_claim(
                         let _ = app_database.add_new_txn(itxn).await.unwrap();
 
                         let ntxn = app_database.get_txn_by_sig(sig.to_string()).await.unwrap();
-
 
                         let iclaim = InsertClaim {
                             miner_id: miner.id,
@@ -1090,7 +1239,7 @@ async fn post_claim(
                             .status(StatusCode::OK)
                             .body("SUCCESS".to_string())
                             .unwrap();
-                    },
+                    }
                     Err(e) => {
                         println!("ERROR: {:?}", e);
                         return Response::builder()
@@ -1105,7 +1254,6 @@ async fn post_claim(
                     .body("FAILED".to_string())
                     .unwrap();
             }
-
         } else {
             return Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1123,7 +1271,7 @@ async fn post_claim(
 
 #[derive(Deserialize)]
 struct WsQueryParams {
-    timestamp: u64
+    timestamp: u64,
 }
 
 async fn ws_handler(
@@ -1134,21 +1282,22 @@ async fn ws_handler(
     //Extension(app_config): Extension<Arc<Config>>,
     Extension(client_channel): Extension<UnboundedSender<ClientMessage>>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
-    query_params: Query<WsQueryParams>
+    query_params: Query<WsQueryParams>,
 ) -> impl IntoResponse {
-
     let msg_timestamp = query_params.timestamp;
 
     let pubkey = auth_header.username();
     let signed_msg = auth_header.password();
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs();
 
     // Signed authentication message is only valid for 30 seconds
     if (now - query_params.timestamp) >= 30 {
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
     }
-
 
     // verify client
     if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
@@ -1161,11 +1310,16 @@ async fn ws_handler(
                 }
             }
             if already_connected {
-                return Err((StatusCode::TOO_MANY_REQUESTS, "A client is already connected with that wallet"));
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "A client is already connected with that wallet",
+                ));
             }
         };
 
-        let db_miner = app_database.get_miner_by_pubkey_str(pubkey.to_string()).await;
+        let db_miner = app_database
+            .get_miner_by_pubkey_str(pubkey.to_string())
+            .await;
 
         let miner;
         match db_miner {
@@ -1173,11 +1327,17 @@ async fn ws_handler(
                 miner = db_miner;
             }
             Err(AppDatabaseError::QueryFailed) => {
-                return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine. please sign up."));
-            },
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "pubkey is not authorized to mine. please sign up.",
+                ));
+            }
             Err(AppDatabaseError::InteractionFailed) => {
-                return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine. please sign up."));
-            },
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "pubkey is not authorized to mine. please sign up.",
+                ));
+            }
             Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
                 error!("Failed to get database pool connection.");
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
@@ -1194,10 +1354,12 @@ async fn ws_handler(
 
         if let Ok(signature) = Signature::from_str(signed_msg) {
             let ts_msg = msg_timestamp.to_le_bytes();
-            
+
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
                 println!("Client: {addr} connected with pubkey {pubkey}.");
-                return Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, user_pubkey, app_state, client_channel)));
+                return Ok(ws.on_upgrade(move |socket| {
+                    handle_socket(socket, addr, user_pubkey, app_state, client_channel)
+                }));
             } else {
                 return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
             }
@@ -1207,11 +1369,20 @@ async fn ws_handler(
     } else {
         return Err((StatusCode::UNAUTHORIZED, "Invalid pubkey"));
     }
-
 }
 
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubkey, rw_app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
-    if socket.send(axum::extract::ws::Message::Ping(vec![1, 2, 3])).await.is_ok() {
+async fn handle_socket(
+    mut socket: WebSocket,
+    who: SocketAddr,
+    who_pubkey: Pubkey,
+    rw_app_state: Arc<RwLock<AppState>>,
+    client_channel: UnboundedSender<ClientMessage>,
+) {
+    if socket
+        .send(axum::extract::ws::Message::Ping(vec![1, 2, 3]))
+        .await
+        .is_ok()
+    {
         println!("Pinged {who}...");
     } else {
         println!("could not ping {who}");
@@ -1226,7 +1397,9 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
         println!("Socket addr: {who} already has an active connection");
         return;
     } else {
-        app_state.sockets.insert(who, (who_pubkey, Mutex::new(sender)));
+        app_state
+            .sockets
+            .insert(who, (who_pubkey, Mutex::new(sender)));
     }
     drop(app_state);
 
@@ -1236,7 +1409,8 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
                 break;
             }
         }
-    }).await;
+    })
+    .await;
 
     let mut app_state = rw_app_state.write().await;
     app_state.sockets.remove(&who);
@@ -1245,11 +1419,15 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
     info!("Client: {} disconnected!", who_pubkey.to_string());
 }
 
-fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSender<ClientMessage>) -> ControlFlow<(), ()> {
+fn process_message(
+    msg: Message,
+    who: SocketAddr,
+    client_channel: UnboundedSender<ClientMessage>,
+) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
             println!(">>> {who} sent str: {t:?}");
-        },
+        }
         Message::Binary(d) => {
             // first 8 bytes are message type
             let message_type = d[0];
@@ -1271,8 +1449,10 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
                     let ts = u64::from_le_bytes(ts);
 
-                    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
-
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards")
+                        .as_secs();
 
                     let time_since = now - ts;
                     if time_since > 30 {
@@ -1282,11 +1462,11 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
                     let msg = ClientMessage::Ready(who);
                     let _ = client_channel.send(msg);
-                },
+                }
                 1 => {
                     let msg = ClientMessage::Mining(who);
                     let _ = client_channel.send(msg);
-                },
+                }
                 2 => {
                     // parse solution from message data
                     let mut solution_bytes = [0u8; 16];
@@ -1328,23 +1508,18 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
                             } else {
                                 error!("Client submission sig verification failed.");
                             }
-
                         } else {
                             error!("Failed to parse into Signature.");
                         }
-
-
                     } else {
                         error!("Failed to parse signed message from client.");
                     }
-
-                },
+                }
                 _ => {
                     println!(">>> {} sent an invalid message", who);
                 }
             }
-
-        },
+        }
         Message::Close(c) => {
             if let Some(cf) = c {
                 println!(
@@ -1354,29 +1529,25 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
             } else {
                 println!(">>> {who} somehow sent close message without CloseFrame");
             }
-            return ControlFlow::Break(())
-        },
+            return ControlFlow::Break(());
+        }
         Message::Pong(_v) => {
             //println!(">>> {who} sent pong with {v:?}");
-        },
+        }
         Message::Ping(_v) => {
             //println!(">>> {who} sent ping with {v:?}");
-        },
+        }
     }
 
     ControlFlow::Continue(())
 }
 
-async fn proof_tracking_system(
-    ws_url: String,
-    wallet: Arc<Keypair>,
-    proof: Arc<Mutex<Proof>>,
-) { 
+async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<Mutex<Proof>>) {
     loop {
         println!("Establishing rpc websocket connection...");
         let mut ps_client = PubsubClient::new(&ws_url).await;
         let mut attempts = 0;
-        
+
         while ps_client.is_err() && attempts < 3 {
             error!("Failed to connect to websocket, retrying...");
             ps_client = PubsubClient::new(&ws_url).await;
@@ -1390,39 +1561,40 @@ async fn proof_tracking_system(
             let ps_client = Arc::new(ps_client);
             let app_proof = proof.clone();
             let account_pubkey = proof_pubkey(app_wallet.pubkey());
-            let pubsub =
-                ps_client.account_subscribe(
+            let pubsub = ps_client
+                .account_subscribe(
                     &account_pubkey,
                     Some(RpcAccountInfoConfig {
                         encoding: Some(UiAccountEncoding::Base64),
                         data_slice: None,
                         commitment: Some(CommitmentConfig::confirmed()),
                         min_context_slot: None,
-                    })
-                ).await;
+                    }),
+                )
+                .await;
 
-                info!("Tracking pool proof updates with websocket");
-                if let Ok((mut account_sub_notifications, _account_unsub)) = pubsub {
-                    while let Some(response) = account_sub_notifications.next().await {
-                        let data = response.value.data.decode();
-                        if let Some(data_bytes) = data {
-                            // if let Ok(bus) = Bus::try_from_bytes(&data_bytes) {
-                            //     let _ = sender.send(AccountUpdatesData::BusData(*bus));
-                            // }
-                            // if let Ok(ore_config) = ore_api::state::Config::try_from_bytes(&data_bytes) {
-                            //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
-                            // }
-                            if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
-                                // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
-                                //
-                                {
-                                    let mut app_proof = app_proof.lock().await;
-                                    *app_proof = *new_proof;
-                                }
+            info!("Tracking pool proof updates with websocket");
+            if let Ok((mut account_sub_notifications, _account_unsub)) = pubsub {
+                while let Some(response) = account_sub_notifications.next().await {
+                    let data = response.value.data.decode();
+                    if let Some(data_bytes) = data {
+                        // if let Ok(bus) = Bus::try_from_bytes(&data_bytes) {
+                        //     let _ = sender.send(AccountUpdatesData::BusData(*bus));
+                        // }
+                        // if let Ok(ore_config) = ore_api::state::Config::try_from_bytes(&data_bytes) {
+                        //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
+                        // }
+                        if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
+                            // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
+                            //
+                            {
+                                let mut app_proof = app_proof.lock().await;
+                                *app_proof = *new_proof;
                             }
                         }
                     }
                 }
+            }
         }
     }
 }
@@ -1434,7 +1606,7 @@ async fn client_message_handler_system(
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
     epoch_hashes: Arc<RwLock<EpochHashes>>,
-    client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>
+    client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>,
 ) {
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
@@ -1448,16 +1620,22 @@ async fn client_message_handler_system(
                             ready_clients.insert(addr);
                         }
 
-                        if let Ok(_) = sender.1.lock().await.send(Message::Text(String::from("Client successfully added."))).await {
+                        if let Ok(_) = sender
+                            .1
+                            .lock()
+                            .await
+                            .send(Message::Text(String::from("Client successfully added.")))
+                            .await
+                        {
                         } else {
                             println!("Failed notify client they were readied up!");
                         }
                     }
                 }
-            },
+            }
             ClientMessage::Mining(addr) => {
                 println!("Client {} has started mining!", addr.to_string());
-            },
+            }
             ClientMessage::BestSolution(_addr, solution, pubkey) => {
                 let app_epoch_hashes = epoch_hashes.clone();
                 let app_app_database = app_database.clone();
@@ -1498,9 +1676,15 @@ async fn client_message_handler_system(
                             // calculate rewards
                             let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
                             tokio::time::sleep(Duration::from_millis(100)).await;
-                            if let Ok(challenge) = app_database.get_challenge_by_challenge(challenge.to_vec()).await {
+                            if let Ok(challenge) = app_database
+                                .get_challenge_by_challenge(challenge.to_vec())
+                                .await
+                            {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
-                                let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
+                                let miner = app_database
+                                    .get_miner_by_pubkey_str(pubkey_str)
+                                    .await
+                                    .unwrap();
 
                                 let new_submission = InsertSubmission {
                                     miner_id: miner.id,
@@ -1510,11 +1694,16 @@ async fn client_message_handler_system(
                                 };
 
                                 tokio::time::sleep(Duration::from_millis(100)).await;
-                                let _ = app_database.add_new_submission(new_submission).await.unwrap();
+                                let _ = app_database
+                                    .add_new_submission(new_submission)
+                                    .await
+                                    .unwrap();
 
                                 {
                                     let mut epoch_hashes = epoch_hashes.write().await;
-                                    epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
+                                    epoch_hashes
+                                        .submissions
+                                        .insert(pubkey, (miner.id, diff, hashpower));
                                     if diff > epoch_hashes.best_hash.difficulty {
                                         epoch_hashes.best_hash.difficulty = diff;
                                         epoch_hashes.best_hash.solution = Some(solution);
@@ -1535,16 +1724,21 @@ async fn client_message_handler_system(
     }
 }
 
-async fn ping_check_system(
-    shared_state: &Arc<RwLock<AppState>>,
-) {
+async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
     loop {
         // send ping to all sockets
         let mut failed_sockets = Vec::new();
         let app_state = shared_state.read().await;
         // I don't like doing all this work while holding this lock...
         for (who, socket) in app_state.sockets.iter() {
-            if socket.1.lock().await.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
+            if socket
+                .1
+                .lock()
+                .await
+                .send(Message::Ping(vec![1, 2, 3]))
+                .await
+                .is_ok()
+            {
                 //println!("Pinged: {who}...");
             } else {
                 failed_sockets.push(who.clone());
@@ -1555,7 +1749,7 @@ async fn ping_check_system(
         // remove any sockets where ping failed
         let mut app_state = shared_state.write().await;
         for address in failed_sockets {
-             app_state.sockets.remove(&address);
+            app_state.sockets.remove(&address);
         }
         drop(app_state);
 
