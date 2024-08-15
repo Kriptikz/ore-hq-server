@@ -491,12 +491,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let rewards = latest_proof.balance - old_proof.balance;
                                             let dec_rewards = (rewards as f64) / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                             info!("Earned: {} ORE", dec_rewards);
+                                            println!("Adding new challenge to db");
+                                            let new_challenge = InsertChallenge {
+                                                pool_id: app_config.pool_id,
+                                                challenge: latest_proof.challenge.to_vec(),
+                                                rewards_earned: None,
+                                            };
+                                            let _result = app_database.add_new_challenge(new_challenge).await;
 
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
                                             let submission_id = app_database.get_submission_id_with_nonce(u64::from_le_bytes(solution.n)).await.unwrap();
 
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
                                             let _ = app_database.update_challenge_rewards(old_proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
                                             let _ = app_database.update_pool_rewards(app_wallet.pubkey().to_string(), rewards).await.unwrap();
 
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
                                            let challenge = app_database.get_challenge_by_challenge(old_proof.challenge.to_vec()).await.unwrap();
 
                                             let submissions = {
@@ -516,13 +527,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 total_hashpower,
                                                 submissions,
                                             });
-                                            println!("Adding new challenge to db");
-                                            let new_challenge = InsertChallenge {
-                                                pool_id: app_config.pool_id,
-                                                challenge: latest_proof.challenge.to_vec(),
-                                                rewards_earned: None,
-                                            };
-                                            let _result = app_database.add_new_challenge(new_challenge).await;
 
                                             {
                                                 let mut prio_fee = app_prio_fee.lock().await;
@@ -1478,9 +1482,9 @@ async fn client_message_handler_system(
                     if diff >= MIN_DIFF {
                         // calculate rewards
                         let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
-                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                         if let Ok(challenge) = app_database.get_challenge_by_challenge(challenge.to_vec()).await {
-                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                             let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
 
                             let new_submission = InsertSubmission {
@@ -1490,7 +1494,7 @@ async fn client_message_handler_system(
                                 difficulty: diff as i8,
                             };
 
-                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                             let _ = app_database.add_new_submission(new_submission).await.unwrap();
 
                             {
