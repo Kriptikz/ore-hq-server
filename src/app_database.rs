@@ -1,4 +1,4 @@
-use diesel::{insert_into, sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
+use diesel::{connection::SimpleConnection, insert_into, sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
 use deadpool_diesel::{mysql::{Manager, Pool}, PoolConfig};
 use tracing::{error, info};
 
@@ -123,9 +123,45 @@ impl AppDatabase {
         };
     }
 
+    pub async fn update_rewards(&self, rewards: Vec<models::UpdateReward>) -> Result<(), AppDatabaseError> {
+        let mut query = String::new();
+        for reward in rewards {
+            query.push_str(&format!("UPDATE rewards SET balance = balance + {} WHERE miner_id = {};", reward.balance, reward.miner_id));
+        }
+
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                conn.batch_execute(&query)
+            }).await;
+
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
+
     pub async fn update_miner_reward(&self, miner_id: i32, rewards_to_add: u64) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                conn.batch_execute(query)
                 diesel::sql_query("UPDATE rewards SET balance = balance + ? WHERE miner_id = ?")
                 .bind::<Unsigned<BigInt>, _>(rewards_to_add)
                 .bind::<Integer, _>(miner_id)

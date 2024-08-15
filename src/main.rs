@@ -663,12 +663,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             error!("Failed to insert earnings batch");
                         }
                     }
-
-                    for earning in i_earnings.iter() {
-                        if let Ok(_) = app_database.update_miner_reward(earning.miner_id, earning.amount).await {
-                            tokio::time::sleep(Duration::from_millis(10)).await;
+                    if i_rewards.len() > 0 {
+                        if let Ok(_) = app_database.update_rewards(i_rewards).await {
+                            debug!("Successfully updated rewards");
                         } else {
-                            error!("Failed to update miner rewards: {} : {}", earning.miner_id, earning.amount);
+                            error!("Failed to bulk update rewards");
                         }
                     }
                 }
