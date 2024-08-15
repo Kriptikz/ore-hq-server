@@ -1,14 +1,14 @@
 use diesel::{sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
 use deadpool_diesel::{mysql::{Manager, Pool}, PoolConfig};
+use tracing::{error, info};
 
 use crate::{models, InsertReward, Miner, SubmissionWithId};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
     FailedToGetConnectionFromPool,
-    FailedToUpdateEntity,
-    EntityDoesNotExist,
-    FailedToInsertNewEntity,
+    InteractionFailed,
+    QueryFailed,
 }
 
 pub struct AppDatabase {
@@ -38,11 +38,20 @@ impl AppDatabase {
             }).await;
 
             match res {
-                Ok(Ok(challenge)) => {
-                    return Ok(challenge)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -60,11 +69,20 @@ impl AppDatabase {
             }).await;
 
             match res {
-                Ok(Ok(reward)) => {
-                    return Ok(reward)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -82,10 +100,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -101,10 +131,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToUpdateEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -121,10 +163,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToUpdateEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -144,10 +198,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -164,11 +230,20 @@ impl AppDatabase {
             }).await;
 
             match res {
-                Ok(Ok(submission)) => {
-                    return Ok(submission.id)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query.id);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -186,10 +261,23 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToUpdateEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            info!("Updated challenge rewards!");
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -207,10 +295,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -227,11 +327,20 @@ impl AppDatabase {
             }).await;
 
             match res {
-                Ok(Ok(pool)) => {
-                    return Ok(pool)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -249,10 +358,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -269,10 +390,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToUpdateEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -288,10 +421,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToUpdateEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -307,10 +452,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -325,13 +482,21 @@ impl AppDatabase {
                 .bind::<Text, _>(miner_pubkey)
                 .get_result::<Miner>(conn)
             }).await;
-
             match res {
-                Ok(Ok(miner)) => {
-                    return Ok(miner)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -340,7 +505,7 @@ impl AppDatabase {
 
     }
 
-    pub async fn add_new_claim(&self, claim: models::InsertClaim) -> Result<i32, AppDatabaseError> {
+    pub async fn add_new_claim(&self, claim: models::InsertClaim) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
                 diesel::sql_query("INSERT INTO claims (miner_id, pool_id, txn_id, amount) VALUES (?, ?, ?, ?)")
@@ -351,10 +516,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(res.unwrap().unwrap() as i32);
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -372,10 +549,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -392,11 +581,20 @@ impl AppDatabase {
             }).await;
 
             match res {
-                Ok(Ok(txn)) => {
-                    return Ok(txn)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -416,10 +614,22 @@ impl AppDatabase {
                 .execute(conn)
             }).await;
 
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);

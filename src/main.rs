@@ -220,7 +220,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match db_pool {
         Ok(_) => {}
-        Err(AppDatabaseError::EntityDoesNotExist) => {
+        Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
+            panic!("Failed to get database pool connection");
+        },
+        Err(_) => {
             println!("Pool missing from database. Inserting...");
             let proof_pubkey = proof_pubkey(wallet.pubkey());
             let result = app_database.add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string()).await;
@@ -228,9 +231,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if result.is_err() {
                 panic!("Failed to create pool in database");
             }
-        },
-        Err(_) => {
-            panic!("Failed to get database pool connection");
         }
     }
 
@@ -242,7 +242,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match result {
         Ok(_) => {}
-        Err(AppDatabaseError::EntityDoesNotExist) => {
+        Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
+            panic!("Failed to get database pool connection");
+        },
+        Err(_) => {
             println!("Challenge missing from database. Inserting...");
             let new_challenge = models::InsertChallenge {
                 pool_id: db_pool.id,
@@ -254,9 +257,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if result.is_err() {
                 panic!("Failed to create pool in database");
             }
-        },
-        Err(_) => {
-            panic!("Failed to get database pool connection");
         }
     }
 
@@ -522,17 +522,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 challenge: latest_proof.challenge.to_vec(),
                                                 rewards_earned: None,
                                             };
-                                            let result = app_database.add_new_challenge(new_challenge).await;
+                                            let _result = app_database.add_new_challenge(new_challenge).await;
 
-                                            match result {
-                                                Ok(_) => {}
-                                                Err(AppDatabaseError::FailedToInsertNewEntity) => {
-                                                    panic!("Failed to create new challenge in database");
-                                                },
-                                                Err(_) => {
-                                                    panic!("AppDatabase query failed");
-                                                }
-                                            }
                                             {
                                                 let mut prio_fee = app_prio_fee.lock().await;
                                                 let mut decrease_amount = 0;
@@ -755,15 +746,15 @@ async fn post_signup(
                         .unwrap();
                 }
             }
-            Err(AppDatabaseError::EntityDoesNotExist) => {
-                println!("No miner account exists. Signing up new user.");
-            },
-            Err(_) => {
+            Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
                 error!("Failed to get database pool connection");
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to get db pool connection".to_string())
                     .unwrap();
+            },
+            Err(_) => {
+                println!("No miner account exists. Signing up new user.");
             }
         }
 
@@ -1153,10 +1144,13 @@ async fn ws_handler(
             Ok(db_miner) => {
                 miner = db_miner;
             }
-            Err(AppDatabaseError::EntityDoesNotExist) => {
+            Err(AppDatabaseError::QueryFailed) => {
                 return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine. please sign up."));
             },
-            Err(_) => {
+            Err(AppDatabaseError::InteractionFailed) => {
+                return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine. please sign up."));
+            },
+            Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
                 error!("Failed to get database pool connection.");
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
             }
