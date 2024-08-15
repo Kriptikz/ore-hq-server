@@ -69,7 +69,8 @@ const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
 struct AppState {
-    sockets: HashMap<SocketAddr, (Pubkey, Mutex<SplitSink<WebSocket, Message>>)>,
+    sockets: HashMap<SocketAddr, (Pubkey, Arc<Mutex<SplitSink<WebSocket, Message>>>)>,
+}
 
 pub struct MessageInternalAllClients {
     text: String,
@@ -350,7 +351,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
 
     // Handle client messages
-    let app_shared_state = shared_state.clone();
     let app_ready_clients = ready_clients.clone();
     let app_proof = proof_ext.clone();
     let app_epoch_hashes = epoch_hashes.clone();
@@ -359,7 +359,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         client_message_handler_system(
             client_message_receiver,
-            &app_shared_state,
             app_app_database,
             app_ready_clients,
             app_proof,
@@ -760,16 +759,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 earned_rewards_dec,
                                 supplied_diff
                             );
-                            if let Ok(_) = socket_sender
-                                .1
-                                .lock()
-                                .await
-                                .send(Message::Text(message))
-                                .await
-                            {
-                            } else {
-                                println!("Failed to send client text");
-                            }
+                            let socket_sender = socket_sender.clone();
+                            tokio::spawn(async move {
+                                if let Ok(_) = socket_sender
+                                    .1
+                                    .lock()
+                                    .await
+                                    .send(Message::Text(message))
+                                    .await
+                                {
+                                } else {
+                                    println!("Failed to send client text");
+                                }
+                            });
                         }
                     }
                     if i_earnings.len() > 0 {
@@ -820,6 +822,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+
     let client_channel = client_message_sender.clone();
     let app_shared_state = shared_state.clone();
     let app = Router::new()
@@ -1433,7 +1436,7 @@ async fn handle_socket(
     } else {
         app_state
             .sockets
-            .insert(who, (who_pubkey, Mutex::new(sender)));
+            .insert(who, (who_pubkey, Arc::new(Mutex::new(sender))));
     }
     drop(app_state);
 
@@ -1635,7 +1638,6 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
 
 async fn client_message_handler_system(
     mut receiver_channel: UnboundedReceiver<ClientMessage>,
-    shared_state: &Arc<RwLock<AppState>>,
     app_database: Arc<AppDatabase>,
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
@@ -1645,27 +1647,12 @@ async fn client_message_handler_system(
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
             ClientMessage::Ready(addr) => {
-                println!("Client {} is ready!", addr.to_string());
-                {
-                    let shared_state = shared_state.read().await;
-                    if let Some(sender) = shared_state.sockets.get(&addr) {
-                        {
-                            let mut ready_clients = ready_clients.lock().await;
-                            ready_clients.insert(addr);
-                        }
-
-                        if let Ok(_) = sender
-                            .1
-                            .lock()
-                            .await
-                            .send(Message::Text(String::from("Client successfully added.")))
-                            .await
-                        {
-                        } else {
-                            println!("Failed notify client they were readied up!");
-                        }
-                    }
-                }
+                let ready_clients = ready_clients.clone();
+                tokio::spawn(async move {
+                    println!("Client {} is ready!", addr.to_string());
+                    let mut ready_clients = ready_clients.lock().await;
+                    ready_clients.insert(addr);
+                });
             }
             ClientMessage::Mining(addr) => {
                 println!("Client {} has started mining!", addr.to_string());
@@ -1761,32 +1748,44 @@ async fn client_message_handler_system(
 async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
     loop {
         // send ping to all sockets
-        let mut failed_sockets = Vec::new();
         let app_state = shared_state.read().await;
-        // I don't like doing all this work while holding this lock...
+
+        let mut handles = Vec::new();
         for (who, socket) in app_state.sockets.iter() {
-            if socket
-                .1
-                .lock()
-                .await
-                .send(Message::Ping(vec![1, 2, 3]))
-                .await
-                .is_ok()
-            {
-                //println!("Pinged: {who}...");
-            } else {
-                failed_sockets.push(who.clone());
-            }
+            let who = who.clone();
+            let socket = socket.clone();
+            handles.push(tokio::spawn(async move {
+                if socket
+                    .1
+                    .lock()
+                    .await
+                    .send(Message::Ping(vec![1, 2, 3]))
+                    .await
+                    .is_ok()
+                {
+                    return None;
+                } else {
+                    return Some(who.clone())
+                }
+            }));
         }
         drop(app_state);
 
         // remove any sockets where ping failed
         let mut app_state = shared_state.write().await;
-        for address in failed_sockets {
-            app_state.sockets.remove(&address);
+        for handle in handles {
+            match handle.await {
+                Ok(Some(who)) => {
+                    app_state.sockets.remove(&who);
+                },
+                Ok(None) => {}
+                Err(_) => {
+                    error!("Got error sending ping to client.");
+                }
+            }
         }
         drop(app_state);
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
