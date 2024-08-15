@@ -122,6 +122,40 @@ impl AppDatabase {
         };
     }
 
+    pub async fn update_rewards(&self, rewards: Vec<models::UpdateReward>) -> Result<(), AppDatabaseError> {
+        let mut query = String::new();
+        for reward in rewards {
+            query.push_str(&format!("UPDATE rewards SET balance = balance + {} WHERE miner_id = {}", reward.balance, reward.miner_id));
+        }
+
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query(query).execute(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
     pub async fn update_miner_reward(&self, miner_id: i32, rewards_to_add: u64) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {

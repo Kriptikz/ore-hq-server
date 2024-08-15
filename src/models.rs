@@ -136,6 +136,14 @@ pub struct InsertReward {
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::rewards)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct UpdateReward {
+    pub miner_id: i32,
+    pub balance: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::rewards)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Reward {
     pub balance: u64,
 }

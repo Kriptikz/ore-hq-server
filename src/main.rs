@@ -606,6 +606,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             while let Some(msg) = mine_success_receiver.recv().await {
                 {
                     let mut i_earnings = Vec::new();
+                    let mut i_rewards = Vec::new();
                     let shared_state = app_shared_state.read().await;
                     for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
                         let pubkey = socket_sender.0;
@@ -616,7 +617,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // TODO: handle overflow/underflow and float imprecision issues
                             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                             let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
-                            let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
+                            //let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
 
                             let new_earning = InsertEarning {
                                 miner_id: *miner_id, 
@@ -625,7 +626,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 amount: earned_rewards,
                             };
 
+                            let new_reward = UpdateReward {
+                                miner_id: *miner_id,
+                                balance: earned_rewards
+                            };
+
                             i_earnings.push(new_earning);
+                            i_rewards.push(new_reward);
                             //let _ = app_database.add_new_earning(new_earning).await.unwrap();
 
                             let earned_rewards_dec = (earned_rewards as f64).div(decimals);
@@ -651,6 +658,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             debug!("Successfully added earnings batch");
                         } else {
                             error!("Failed to insert earnings batch");
+                        }
+                    }
+                    if i_rewards.len() > 0 {
+                        if let Ok(_) = app_database.update_rewards(i_rewards).await {
+                            debug!("Successfully updated rewards");
+                        } else {
+                            error!("Failed to update rewards");
                         }
                     }
                 }
