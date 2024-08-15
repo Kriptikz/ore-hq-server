@@ -1243,7 +1243,7 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
 
                     let time_since = now - ts;
-                    if time_since > 5 {
+                    if time_since > 15 {
                         error!("Client tried to ready up with expired signed message");
                         return ControlFlow::Break(());
                     }
