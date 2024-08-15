@@ -501,6 +501,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 challenge: latest_proof.challenge.to_vec(),
                                                 rewards_earned: None,
                                             };
+
+                                            info!("NEW CHALLENGE: {:?}", new_challenge);
                                             let result = app_database.add_new_challenge(new_challenge).await;
 
                                             match result {
@@ -1429,6 +1431,7 @@ async fn client_message_handler_system(
                     if diff >= MIN_DIFF {
                         // calculate rewards
                         let challenge = app_database.get_challenge_by_challenge(challenge.to_vec()).await.unwrap();
+                        info!("CHALLENGE: {:?}", challenge);
 
                         let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
 
@@ -1440,6 +1443,7 @@ async fn client_message_handler_system(
                             difficulty: diff as i8,
                         };
 
+                        info!("NEW SUBMISSION: {:?}", new_submission);
                         let _ = app_database.add_new_submission(new_submission).await.unwrap();
                     } else {
                         error!("Diff to low, skipping");
