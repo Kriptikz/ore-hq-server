@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Mul, Range, RangeBounds}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, ops::{ControlFlow, Div, Range}, path::Path, str::FromStr, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 use app_database::{AppDatabase, AppDatabaseError};
 use axum::{extract::{ws::{Message, WebSocket}, ConnectInfo, Query, State, WebSocketUpgrade}, http::{Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Router};
@@ -13,7 +13,7 @@ use ore_utils::{get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof, g
 use rand::Rng;
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
-use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}};
+use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig}};
 use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction};
 use spl_associated_token_account::get_associated_token_address;
 use tokio::{io::AsyncReadExt, sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock}};
@@ -621,7 +621,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // TODO: handle overflow/underflow and float imprecision issues
                             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                             let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
-                            //let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
 
                             let new_earning = InsertEarning {
                                 miner_id: *miner_id, 
@@ -658,17 +657,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     }
                     if i_earnings.len() > 0 {
-                        if let Ok(_) = app_database.add_new_earnings_batch(i_earnings).await {
+                        if let Ok(_) = app_database.add_new_earnings_batch(i_earnings.clone()).await {
                             debug!("Successfully added earnings batch");
                         } else {
                             error!("Failed to insert earnings batch");
                         }
                     }
-                    if i_rewards.len() > 0 {
-                        if let Ok(_) = app_database.update_rewards(i_rewards).await {
-                            debug!("Successfully updated rewards");
+
+                    for earning in i_earnings.iter() {
+                        if let Ok(_) = app_database.update_miner_reward(earning.miner_id, earning.amount).await {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
                         } else {
-                            error!("Failed to update rewards");
+                            error!("Failed to update miner rewards: {} : {}", earning.miner_id, earning.amount);
                         }
                     }
                 }
@@ -1179,6 +1179,10 @@ async fn ws_handler(
             },
             Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
                 error!("Failed to get database pool connection.");
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
+            }
+            Err(_) => {
+                error!("DB Error: Catch all.");
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
             }
         }

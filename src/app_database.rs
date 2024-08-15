@@ -7,6 +7,7 @@ use crate::{models, InsertReward, Miner, SubmissionWithId};
 #[derive(Debug)]
 pub enum AppDatabaseError {
     FailedToGetConnectionFromPool,
+    FailedToUpdateRow,
     InteractionFailed,
     QueryFailed,
 }
@@ -122,42 +123,6 @@ impl AppDatabase {
         };
     }
 
-    pub async fn update_rewards(&self, rewards: Vec<models::UpdateReward>) -> Result<(), AppDatabaseError> {
-        let mut query = String::new();
-        query.push_str("BEGIN;\n");
-        for reward in rewards {
-            query.push_str(&format!("UPDATE rewards SET balance = balance + {} WHERE miner_id = {};\n", reward.balance, reward.miner_id));
-        }
-        query.push_str("COMMIT;");
-
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query(query).execute(conn)
-            }).await;
-
-            match res {
-                Ok(interaction) => {
-                    match interaction {
-                        Ok(_query) => {
-                            return Ok(());
-                        },
-                        Err(e) => {
-                            error!("{:?}", e);
-                            return Err(AppDatabaseError::QueryFailed);
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-
-    }
-
     pub async fn update_miner_reward(&self, miner_id: i32, rewards_to_add: u64) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
@@ -170,8 +135,12 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => {
                     match interaction {
-                        Ok(_query) => {
-                            return Ok(());
+                        Ok(query) => {
+                            if query == 1 {
+                                return Ok(());
+                            } else {
+                                return Err(AppDatabaseError::FailedToUpdateRow);
+                            }
                         },
                         Err(e) => {
                             error!("{:?}", e);
