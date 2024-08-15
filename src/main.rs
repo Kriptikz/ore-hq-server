@@ -494,10 +494,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             let submission_id = app_database.get_submission_id_with_nonce(u64::from_le_bytes(solution.n)).await.unwrap();
 
-                                            let _ = app_database.update_challenge_rewards(proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
+                                            let _ = app_database.update_challenge_rewards(old_proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
                                             let _ = app_database.update_pool_rewards(app_wallet.pubkey().to_string(), rewards).await.unwrap();
 
-                                           let challenge = app_database.get_challenge_by_challenge(proof.challenge.to_vec()).await.unwrap();
+                                           let challenge = app_database.get_challenge_by_challenge(old_proof.challenge.to_vec()).await.unwrap();
 
                                             let submissions = {
                                                 app_epoch_hashes.read().await.submissions.clone()
