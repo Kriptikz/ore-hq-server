@@ -1404,10 +1404,7 @@ async fn client_message_handler_system(
             },
             ClientMessage::BestSolution(_addr, solution, pubkey) => {
                 let pubkey_str = pubkey.to_string();
-                let challenge = {
-                    let proof = proof.lock().await;
-                    proof.challenge.clone()
-                };
+                let challenge = app_database.get_latest_challenge().await.unwrap();
 
                 let nonce_range: Range<u64> = {
                     if let Some(nr) = client_nonce_ranges.read().await.get(&pubkey) {
@@ -1425,12 +1422,11 @@ async fn client_message_handler_system(
                     continue;
                 }
 
-                if solution.is_valid(&challenge) {
+                if solution.is_valid(&challenge.challenge.clone().try_into().unwrap()) {
                     let diff = solution.to_hash().difficulty();
                     info!("{} found diff: {}", pubkey_str, diff);
                     if diff >= MIN_DIFF {
                         // calculate rewards
-                        let challenge = app_database.get_challenge_by_challenge(challenge.to_vec()).await.unwrap();
                         info!("CHALLENGE: {:?}", challenge);
 
                         let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
