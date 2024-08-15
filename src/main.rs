@@ -1117,7 +1117,7 @@ async fn ws_handler(
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
 
     // Signed authentication message is only valid for 5 seconds
-    if (now - query_params.timestamp) >= 5 {
+    if (now - query_params.timestamp) >= 15 {
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
     }
 
