@@ -308,14 +308,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let proof = {
+            let current_proof = {
                 app_proof.lock().await.clone()
             };
 
             let cutoff = get_cutoff(proof, 5);
             let mut should_mine = true;
             let cutoff = if cutoff <= 0 {
-                let solution = app_database.get_submission_id_with_challenge_id(proof.challenge.to_vec()).await;
+                let solution = app_database.get_submission_id_with_challenge_id(current_proof.challenge.to_vec()).await;
                 if solution.is_ok() {
                     should_mine = false;
                 }
@@ -325,7 +325,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if should_mine {
-                let challenge = proof.challenge;
+                let challenge = current_proof.challenge;
 
                 for client in clients {
                     let nonce_range = {
