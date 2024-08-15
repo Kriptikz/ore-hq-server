@@ -124,9 +124,11 @@ impl AppDatabase {
 
     pub async fn update_rewards(&self, rewards: Vec<models::UpdateReward>) -> Result<(), AppDatabaseError> {
         let mut query = String::new();
+        query.push_str("BEGIN;\n");
         for reward in rewards {
             query.push_str(&format!("UPDATE rewards SET balance = balance + {} WHERE miner_id = {};\n", reward.balance, reward.miner_id));
         }
+        query.push_str("COMMIT;");
 
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
