@@ -157,44 +157,6 @@ impl AppDatabase {
 
     }
 
-
-    pub async fn update_miner_reward(&self, miner_id: i32, rewards_to_add: u64) -> Result<(), AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                conn.batch_execute(query)
-                diesel::sql_query("UPDATE rewards SET balance = balance + ? WHERE miner_id = ?")
-                .bind::<Unsigned<BigInt>, _>(rewards_to_add)
-                .bind::<Integer, _>(miner_id)
-                .execute(conn)
-            }).await;
-
-            match res {
-                Ok(interaction) => {
-                    match interaction {
-                        Ok(query) => {
-                            if query == 1 {
-                                return Ok(());
-                            } else {
-                                return Err(AppDatabaseError::FailedToUpdateRow);
-                            }
-                        },
-                        Err(e) => {
-                            error!("{:?}", e);
-                            return Err(AppDatabaseError::QueryFailed);
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-
-    }
-
     pub async fn decrease_miner_reward(&self, miner_id: i32, rewards_to_decrease: u64) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
@@ -226,7 +188,6 @@ impl AppDatabase {
         };
 
     }
-
 
     pub async fn add_new_submission(&self, submission: models::InsertSubmission) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
