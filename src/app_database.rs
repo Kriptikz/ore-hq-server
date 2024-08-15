@@ -35,7 +35,7 @@ impl AppDatabase {
     pub async fn get_challenge_by_challenge(&self, challenge: Vec<u8>) -> Result<models::Challenge, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("SELECT id, pool_id, submission_id, challenge, rewards_earned FROM challenges WHERE challenges.challenge = ?")
+                diesel::sql_query("SELECT id, pool_id, submission_id, challenge, rewards_earned FROM challenges WHERE challenges.challenge = ? ORDER BY id DESC")
                 .bind::<Binary, _>(challenge)
                 .get_result::<models::Challenge>(conn)
             }).await;
