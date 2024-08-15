@@ -491,7 +491,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         difficulty
                     );
 
-                    for i in 0..3 {
+                    for i in 0..10 {
                         let now = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .expect("Time went backwards")
@@ -659,37 +659,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 break;
                             } else {
+                                info!("increasing prio fees");
                                 {
                                     let mut prio_fee = app_prio_fee.lock().await;
                                     if *prio_fee < 1_000_000 {
                                         *prio_fee += 10_000;
                                     }
                                 }
-                                // sent error
-                                if i >= 2 {
-                                    info!("Failed to send after 3 attempts. Discarding and refreshing data.");
-                                    // reset nonce
-                                    {
-                                        let mut nonce = app_nonce.lock().await;
-                                        *nonce = 0;
-                                    }
-                                    // reset epoch hashes
-                                    {
-                                        info!("reset epoch hashes");
-                                        let mut mut_epoch_hashes = app_epoch_hashes.write().await;
-                                        mut_epoch_hashes.best_hash.solution = None;
-                                        mut_epoch_hashes.best_hash.difficulty = 0;
-                                        mut_epoch_hashes.submissions = HashMap::new();
-                                    }
-                                    break;
-                                }
+                                tokio::time::sleep(Duration::from_millis(10_000)).await;
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
                         } else {
                             error!("Failed to get latest blockhash. retrying...");
-                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                            tokio::time::sleep(Duration::from_millis(1_000)).await;
                         }
                     }
+                    info!("Failed to send after 3 attempts. Discarding and refreshing data.");
+                    // reset nonce
+                    {
+                        let mut nonce = app_nonce.lock().await;
+                        *nonce = 0;
+                    }
+                    // reset epoch hashes
+                    {
+                        info!("reset epoch hashes");
+                        let mut mut_epoch_hashes = app_epoch_hashes.write().await;
+                        mut_epoch_hashes.best_hash.solution = None;
+                        mut_epoch_hashes.best_hash.difficulty = 0;
+                        mut_epoch_hashes.submissions = HashMap::new();
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             } else {
                 tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
