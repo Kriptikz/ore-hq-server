@@ -70,6 +70,9 @@ const MIN_HASHPOWER: u64 = 5;
 
 struct AppState {
     sockets: HashMap<SocketAddr, (Pubkey, Mutex<SplitSink<WebSocket, Message>>)>,
+
+pub struct MessageInternalAllClients {
+    text: String,
 }
 
 pub struct MessageInternalMineSuccess {
@@ -445,6 +448,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mine_success_sender, mut mine_success_receiver) =
         tokio::sync::mpsc::unbounded_channel::<MessageInternalMineSuccess>();
 
+    let (all_clients_sender, mut all_clients_receiver) =
+        tokio::sync::mpsc::unbounded_channel::<MessageInternalAllClients>();
+
     let rpc_client = Arc::new(rpc_client);
     let app_proof = proof_ext.clone();
     let app_epoch_hashes = epoch_hashes.clone();
@@ -454,6 +460,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_rpc_client = rpc_client.clone();
     let app_config = config.clone();
     let app_app_database = app_database.clone();
+    let app_all_clients_sender = all_clients_sender.clone();
     tokio::spawn(async move {
         let rpc_client = app_rpc_client;
         let app_database = app_app_database;
@@ -500,6 +507,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let prio_fee = { app_prio_fee.lock().await.clone() };
 
                         info!("using priority fee of {}", prio_fee);
+                        let _ = app_all_clients_sender.send(MessageInternalAllClients {
+                            text: String::from("Sending mine transaction...")
+                        });
 
                         let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
                         ixs.push(cu_limit_ix);
@@ -784,6 +794,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let app_shared_state = shared_state.clone();
+    tokio::spawn(async move {
+        loop {
+            while let Some(msg) = all_clients_receiver.recv().await {
+                {
+                    let shared_state = app_shared_state.read().await;
+                    for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
+                        let text = msg.text.clone();
+                        let socket = socket_sender.clone();
+                        tokio::spawn(async move {
+                            if let Ok(_) = socket
+                                .1
+                                .lock()
+                                .await
+                                .send(Message::Text(text))
+                                .await
+                            {
+                            } else {
+                                println!("Failed to send client text");
+                            }
+                       });
+                    }
+                }
+            }
+        }
+    });
     let client_channel = client_message_sender.clone();
     let app_shared_state = shared_state.clone();
     let app = Router::new()
