@@ -26,6 +26,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    earnings (id) {
+        id -> Integer,
+        miner_id -> Integer,
+        pool_id -> Integer,
+        challenge_id -> Integer,
+        amount -> Unsigned<Bigint>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     miners (id) {
         id -> Integer,
         #[max_length = 44]
@@ -70,6 +82,8 @@ diesel::table! {
         nonce -> Unsigned<Bigint>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        #[max_length = 16]
+        digest -> Nullable<Binary>,
     }
 }
 
@@ -89,6 +103,7 @@ diesel::table! {
 diesel::allow_tables_to_appear_in_same_query!(
     challenges,
     claims,
+    earnings,
     miners,
     pools,
     rewards,

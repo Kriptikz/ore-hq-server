@@ -140,4 +140,14 @@ pub struct Reward {
     pub balance: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::earnings)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct InsertEarning {
+    pub miner_id: i32,
+    pub pool_id: i32,
+    pub challenge_id: i32,
+    pub amount: u64,
+}
+
 

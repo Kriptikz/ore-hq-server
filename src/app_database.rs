@@ -404,4 +404,26 @@ impl AppDatabase {
         };
 
     }
+
+    pub async fn add_new_earning(&self, earning: models::InsertEarning) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("INSERT INTO earnings (miner_id, pool_id, challenge_id, amount) VALUES (?, ?, ?, ?)")
+                .bind::<Integer, _>(earning.miner_id)
+                .bind::<Integer, _>(earning.pool_id)
+                .bind::<Integer, _>(earning.challenge_id)
+                .bind::<Unsigned<BigInt>, _>(earning.amount)
+                .execute(conn)
+            }).await;
+
+            if res.is_ok() {
+                return Ok(());
+            } else {
+                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
 }

@@ -39,6 +39,7 @@ pub struct MessageInternalMineSuccess {
     difficulty: u32,
     total_balance: f64,
     rewards: u64,
+    challenge_id: i32,
     total_hashpower: u64,
     submissions: HashMap<Pubkey, (i32, u32, u64)>
 }
@@ -496,6 +497,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let _ = app_database.update_challenge_rewards(proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
                                             let _ = app_database.update_pool_rewards(app_wallet.pubkey().to_string(), rewards).await.unwrap();
 
+                                           let challenge = app_database.get_challenge_by_challenge(proof.challenge.to_vec()).await.unwrap();
+
                                             let submissions = {
                                                 app_epoch_hashes.read().await.submissions.clone()
                                             };
@@ -509,6 +512,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 difficulty,
                                                 total_balance: balance,
                                                 rewards,
+                                                challenge_id: challenge.id,
                                                 total_hashpower,
                                                 submissions,
                                             });
@@ -604,6 +608,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_shared_state = shared_state.clone();
     let app_app_database = app_database.clone();
+    let app_config = config.clone();
     tokio::spawn(async move {
         let app_database = app_app_database;
         loop {
@@ -620,6 +625,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                             let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
                             let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
+
+                            let new_earning = InsertEarning {
+                                miner_id: *miner_id, 
+                                pool_id: app_config.pool_id,
+                                challenge_id: msg.challenge_id,
+                                amount: earned_rewards,
+                            };
+
+                            let _ = app_database.add_new_earning(new_earning).await.unwrap();
+
                             let earned_rewards_dec = (earned_rewards as f64).div(decimals);
                             let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
