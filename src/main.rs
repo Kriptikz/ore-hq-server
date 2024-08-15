@@ -18,7 +18,7 @@ use solana_sdk::{commitment_config::CommitmentConfig, compute_budget::ComputeBud
 use spl_associated_token_account::get_associated_token_address;
 use tokio::{io::AsyncReadExt, sync::{mpsc::{UnboundedReceiver, UnboundedSender}, Mutex, RwLock}};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use self::models::*;
 
@@ -605,6 +605,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             while let Some(msg) = mine_success_receiver.recv().await {
                 {
+                    let mut i_earnings = Vec::new();
                     let shared_state = app_shared_state.read().await;
                     for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
                         let pubkey = socket_sender.0;
@@ -624,7 +625,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 amount: earned_rewards,
                             };
 
-                            let _ = app_database.add_new_earning(new_earning).await.unwrap();
+                            i_earnings.push(new_earning);
+                            //let _ = app_database.add_new_earning(new_earning).await.unwrap();
 
                             let earned_rewards_dec = (earned_rewards as f64).div(decimals);
                             let pool_rewards_dec = (msg.rewards as f64).div(decimals);
@@ -643,6 +645,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
 
+                    }
+                    if i_earnings.len() > 0 {
+                        if let Ok(_) = app_database.add_new_earnings_batch(i_earnings).await {
+                            debug!("Successfully added earnings batch");
+                        } else {
+                            error!("Failed to insert earnings batch");
+                        }
                     }
                 }
             }

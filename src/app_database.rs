@@ -1,4 +1,4 @@
-use diesel::{sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
+use diesel::{insert_into, sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
 use deadpool_diesel::{mysql::{Manager, Pool}, PoolConfig};
 use tracing::{error, info};
 
@@ -612,6 +612,35 @@ impl AppDatabase {
                 .bind::<Integer, _>(earning.challenge_id)
                 .bind::<Unsigned<BigInt>, _>(earning.amount)
                 .execute(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
+    pub async fn add_new_earnings_batch(&self, earnings: Vec<models::InsertEarning>) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                insert_into(crate::schema::earnings::dsl::earnings).values(&earnings).execute(conn)
             }).await;
 
             match res {
