@@ -1478,7 +1478,9 @@ async fn client_message_handler_system(
                     if diff >= MIN_DIFF {
                         // calculate rewards
                         let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
+                        tokio::time::sleep(Duration::from_millis(200)).await;
                         if let Ok(challenge) = app_database.get_challenge_by_challenge(challenge.to_vec()).await {
+                            tokio::time::sleep(Duration::from_millis(200)).await;
                             let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
 
                             let new_submission = InsertSubmission {
@@ -1488,6 +1490,7 @@ async fn client_message_handler_system(
                                 difficulty: diff as i8,
                             };
 
+                            tokio::time::sleep(Duration::from_millis(200)).await;
                             let _ = app_database.add_new_submission(new_submission).await.unwrap();
 
                             {
