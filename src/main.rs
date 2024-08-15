@@ -1016,9 +1016,11 @@ async fn post_claim(
             let ore_mint = get_ore_mint();
             let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
 
+            let prio_fee: u32 = 20_000;
+
             let mut ixs = Vec::new();
-            // let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(10000);
-            // ixs.push(prio_fee_ix);
+            let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
+            ixs.push(prio_fee_ix);
             if let Ok(response) = rpc_client.get_token_account_balance(&miner_token_account).await {
                     if let Some(_amount) = response.ui_amount {
                         info!("miner has valid token account.");
@@ -1069,7 +1071,7 @@ async fn post_claim(
                         let itxn = InsertTxn {
                             txn_type: "claim".to_string(),
                             signature: sig.to_string(),
-                            priority_fee: 0,
+                            priority_fee: prio_fee,
                         };
                         let _ = app_database.add_new_txn(itxn).await.unwrap();
 
