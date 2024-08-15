@@ -1,7 +1,8 @@
 use diesel::{sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
 use deadpool_diesel::mysql::{Manager, Pool};
+use tracing::error;
 
-use crate::{models, InsertReward, Miner, SubmissionWithId};
+use crate::{models, InsertReward, Miner, Submission, SubmissionForSolution, SubmissionWithId};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
@@ -9,6 +10,8 @@ pub enum AppDatabaseError {
     FailedToUpdateEntity,
     EntityDoesNotExist,
     FailedToInsertNewEntity,
+    InteractionFailed,
+    QueryFailed,
 }
 
 pub struct AppDatabase {
@@ -48,7 +51,6 @@ impl AppDatabase {
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
-
     }
 
     pub async fn get_miner_rewards(&self, miner_pubkey: String) -> Result<models::Reward, AppDatabaseError> {
@@ -136,9 +138,10 @@ impl AppDatabase {
     pub async fn add_new_submission(&self, submission: models::InsertSubmission) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("INSERT INTO submissions (miner_id, challenge_id, nonce, difficulty) VALUES (?, ?, ?, ?)")
+                diesel::sql_query("INSERT INTO submissions (miner_id, challenge_id, digest, nonce, difficulty) VALUES (?, ?, ?, ?, ?)")
                 .bind::<Integer, _>(submission.miner_id)
                 .bind::<Integer, _>(submission.challenge_id)
+                .bind::<Nullable<Binary>, _>(submission.digest)
                 .bind::<Unsigned<BigInt>, _>(submission.nonce)
                 .bind::<TinyInt, _>(submission.difficulty)
                 .execute(conn)
@@ -153,6 +156,69 @@ impl AppDatabase {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
 
+    }
+
+    pub async fn get_all_submission_for_challenge(&self, challenge: Vec<u8>) -> Result<Vec<Submission>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT s.id, s.miner_id, s.challenge_id, s.digest, s.nonce, s.difficulty FROM submissions s JOIN challenges c ON c.id = s.challenge_id WHERE c.challenge = ? ORDER BY s.difficulty DESC")
+                .bind::<Binary, _>(challenge)
+                .get_results::<Submission>(conn)
+            }).await;
+
+            match res {
+                Ok(Ok(submissions)) => {
+                    return Ok(submissions)
+                },
+                _ => {
+                    return Err(AppDatabaseError::EntityDoesNotExist);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_best_submission_for_challenge(&self, challenge: Vec<u8>) -> Result<SubmissionForSolution, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT s.id, s.digest, s.nonce, s.difficulty FROM submissions s JOIN challenges c ON c.id = s.challenge_id WHERE c.challenge = ? AND s.challenge_id IS NOT NULL ORDER BY s.difficulty DESC")
+                .bind::<Binary, _>(challenge)
+                .get_result::<SubmissionForSolution>(conn)
+            }).await;
+
+            match res {
+                Ok(Ok(submission)) => {
+                    return Ok(submission)
+                },
+                _ => {
+                    return Err(AppDatabaseError::EntityDoesNotExist);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+    
+    pub async fn get_submission_id_with_challenge_id(&self, challenge: Vec<u8>) -> Result<i32, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT s.id FROM submissions s JOIN challenges c ON c.id = s.challenge_id WHERE c.challenge = ?")
+                .bind::<Binary, _>(challenge)
+                .get_result::<SubmissionWithId>(conn)
+            }).await;
+
+            match res {
+                Ok(Ok(submission)) => {
+                    return Ok(submission.id)
+                },
+                _ => {
+                    return Err(AppDatabaseError::EntityDoesNotExist);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
     }
 
     pub async fn get_submission_id_with_nonce(&self, nonce: u64) -> Result<i32, AppDatabaseError> {
@@ -397,6 +463,71 @@ impl AppDatabase {
                 },
                 _ => {
                     return Err(AppDatabaseError::EntityDoesNotExist);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+    }
+
+    pub async fn add_new_earning(&self, earning: models::InsertEarning) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("INSERT INTO earnings (miner_id, pool_id, challenge_id, amount) VALUES (?, ?, ?, ?)")
+                .bind::<Integer, _>(earning.miner_id)
+                .bind::<Integer, _>(earning.pool_id)
+                .bind::<Integer, _>(earning.challenge_id)
+                .bind::<Unsigned<BigInt>, _>(earning.amount)
+                .execute(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {},
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                    return Ok(());
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_miner_earning(&self, challenge_id: i32, miner_id: i32, pool_id: i32) -> Result<models::EarningAmount, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT e.amount FROM earnings e WHERE e.miner_id = ? AND e.challenge_id = ? AND e.pool_id = ?")
+                .bind::<Integer, _>(miner_id)
+                .bind::<Integer, _>(challenge_id)
+                .bind::<Integer, _>(pool_id)
+                .get_result::<models::EarningAmount>(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {

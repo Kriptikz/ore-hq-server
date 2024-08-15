@@ -78,7 +78,6 @@ pub struct Submission {
     pub challenge_id: i32,
     pub nonce: u64,
     pub difficulty: i8,
-    pub created_at: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
@@ -87,6 +86,7 @@ pub struct Submission {
 pub struct InsertSubmission {
     pub miner_id: i32,
     pub challenge_id: i32,
+    pub digest: Option<Vec<u8>>,
     pub nonce: u64,
     pub difficulty: i8,
 }
@@ -97,6 +97,16 @@ pub struct InsertSubmission {
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct SubmissionWithId {
     pub id: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::submissions)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct SubmissionForSolution {
+    pub id: i32,
+    pub digest: Option<Vec<u8>>,
+    pub nonce: u64,
+    pub difficulty: i8,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
@@ -138,6 +148,24 @@ pub struct InsertReward {
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Reward {
     pub balance: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::earnings)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct EarningAmount {
+    pub amount: u64,
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::earnings)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct InsertEarning {
+    pub miner_id: i32,
+    pub pool_id: i32,
+    pub challenge_id: i32,
+    pub amount: u64,
 }
 
 

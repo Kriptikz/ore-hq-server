@@ -32,15 +32,17 @@ const MIN_HASHPOWER: u64 = 5;
 
 
 struct AppState {
-    sockets: HashMap<SocketAddr, (Pubkey, Mutex<SplitSink<WebSocket, Message>>)>
+    sockets: HashMap<SocketAddr, (Pubkey, Arc<Mutex<SplitSink<WebSocket, Message>>>)>,
+    miner_sockets: HashMap<i32, (Pubkey, Arc<Mutex<SplitSink<WebSocket, Message>>>)>
 }
 
 pub struct MessageInternalMineSuccess {
     difficulty: u32,
     total_balance: f64,
+    pool_id: i32,
     rewards: u64,
     total_hashpower: u64,
-    submissions: HashMap<Pubkey, (i32, u32, u64)>
+    submissions: Vec<Submission>,
 }
 
 #[derive(Debug)]
@@ -48,16 +50,6 @@ pub enum ClientMessage {
     Ready(SocketAddr),
     Mining(SocketAddr),
     BestSolution(SocketAddr, Solution, Pubkey)
-}
-
-pub struct EpochHashes {
-    best_hash: BestHash,
-    submissions: HashMap<Pubkey, (i32, u32, u64)>,
-}
-
-pub struct BestHash {
-    solution: Option<Solution>,
-    difficulty: u32,
 }
 
 pub struct Config {
@@ -175,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Failed to load balance".into());
     };
 
-    println!("Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
+    info!("Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
 
     if balance < 1_000_000 {
         return Err("Sol balance is too low!".into());
@@ -184,8 +176,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
         loaded_proof
     } else {
-        println!("Failed to load proof.");
-        println!("Creating proof account...");
+        info!("Failed to load proof.");
+        info!("Creating proof account...");
 
         let ix = get_register_ix(wallet.pubkey());
 
@@ -214,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
-    println!("Validating pool exists in db");
+    info!("Validating pool exists in db");
     let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await;
 
     match db_pool {
@@ -236,11 +228,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await.unwrap();
 
 
-    println!("Validating current challenge for pool exists in db");
+    info!("Validating current challenge for pool exists in db");
     let result = app_database.get_challenge_by_challenge(proof.challenge.to_vec()).await;
 
     match result {
-        Ok(_) => {}
+        Ok(_res) => {
+            info!("Challenge exists!");
+        }
         Err(AppDatabaseError::EntityDoesNotExist) => {
             println!("Challenge missing from database. Inserting...");
             let new_challenge = models::InsertChallenge {
@@ -265,14 +259,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool_id: db_pool.id,
     });
 
-    let epoch_hashes = Arc::new(RwLock::new(EpochHashes {
-        best_hash: BestHash {
-            solution: None,
-            difficulty: 0,
-        },
-        submissions: HashMap::new(),
-    }));
-
     let wallet_extension = Arc::new(wallet);
     let proof_ext = Arc::new(Mutex::new(proof));
     let nonce_ext = Arc::new(Mutex::new(0u64));
@@ -281,6 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let shared_state = Arc::new(RwLock::new(AppState {
         sockets: HashMap::new(),
+        miner_sockets: HashMap::new(),
     }));
     let ready_clients = Arc::new(Mutex::new(HashSet::new()));
 
@@ -297,20 +284,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_shared_state = shared_state.clone();
     let app_ready_clients = ready_clients.clone();
     let app_proof = proof_ext.clone();
-    let app_epoch_hashes = epoch_hashes.clone();
     let app_app_database = app_database.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
-        client_message_handler_system(client_message_receiver, &app_shared_state, app_app_database, app_ready_clients, app_proof, app_epoch_hashes, app_client_nonce_ranges).await;
+        client_message_handler_system(client_message_receiver, &app_shared_state, app_app_database, app_ready_clients, app_proof, app_client_nonce_ranges).await;
     });
 
     // Handle ready clients
     let app_shared_state = shared_state.clone();
     let app_proof = proof_ext.clone();
-    let app_epoch_hashes = epoch_hashes.clone();
     let app_nonce = nonce_ext.clone();
+    let app_app_database = app_database.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
+        let app_database = app_app_database;
         loop {
 
             let mut clients = Vec::new();
@@ -328,8 +315,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cutoff = get_cutoff(proof, 5);
             let mut should_mine = true;
             let cutoff = if cutoff <= 0 {
-                let solution = app_epoch_hashes.read().await.best_hash.solution;
-                if solution.is_some() {
+                let solution = app_database.get_submission_id_with_challenge_id(proof.challenge.to_vec()).await;
+                if solution.is_ok() {
                     should_mine = false;
                 }
                 0
@@ -380,7 +367,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rpc_client = Arc::new(rpc_client);
     let app_proof = proof_ext.clone();
-    let app_epoch_hashes = epoch_hashes.clone();
     let app_wallet = wallet_extension.clone();
     let app_nonce = nonce_ext.clone();
     let app_prio_fee = priority_fee.clone();
@@ -398,10 +384,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cutoff = get_cutoff(old_proof, 0);
             if cutoff <= 0 {
                 // process solutions
-                let solution = {
-                    app_epoch_hashes.read().await.best_hash.solution.clone()
-                };
-                if let Some(solution) = solution {
+                if let Ok(best_submission) = app_database.get_best_submission_for_challenge(old_proof.challenge.to_vec()).await {
+                    let solution = Solution::new(best_submission.digest.unwrap().try_into().unwrap(), best_submission.nonce.to_le_bytes());
                     let signer = app_wallet.clone();
 
 
@@ -493,26 +477,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             let submission_id = app_database.get_submission_id_with_nonce(u64::from_le_bytes(solution.n)).await.unwrap();
 
-                                            let _ = app_database.update_challenge_rewards(proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
+                                            let _ = app_database.update_challenge_rewards(old_proof.challenge.to_vec(), submission_id, rewards).await.unwrap();
                                             let _ = app_database.update_pool_rewards(app_wallet.pubkey().to_string(), rewards).await.unwrap();
 
-                                            let submissions = {
-                                                app_epoch_hashes.read().await.submissions.clone()
-                                            };
+                                            let submissions = app_database.get_all_submission_for_challenge(old_proof.challenge.to_vec()).await.unwrap();
 
                                             let mut total_hashpower: u64 = 0;
                                             for submission in submissions.iter() {
-                                                total_hashpower += submission.1.2
+                                                let hashpower = MIN_HASHPOWER * 2u64.pow(submission.difficulty as u32 - MIN_DIFF);
+                                                total_hashpower += hashpower;
                                             }
 
                                             let _ = mine_success_sender.send(MessageInternalMineSuccess {
                                                 difficulty,
                                                 total_balance: balance,
+                                                pool_id: app_config.pool_id,
                                                 rewards,
                                                 total_hashpower,
                                                 submissions,
                                             });
-                                            println!("Adding new challenge to db");
                                             let new_challenge = InsertChallenge {
                                                 pool_id: app_config.pool_id,
                                                 challenge: latest_proof.challenge.to_vec(),
@@ -549,14 +532,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let mut nonce = app_nonce.lock().await;
                                                 *nonce = 0;
                                             }
-                                            // reset epoch hashes
-                                            {
-                                                info!("reset epoch hashes");
-                                                let mut mut_epoch_hashes = app_epoch_hashes.write().await;
-                                                mut_epoch_hashes.best_hash.solution = None;
-                                                mut_epoch_hashes.best_hash.difficulty = 0;
-                                                mut_epoch_hashes.submissions = HashMap::new();
-                                            }
                                             break;
                                     }
                                 }
@@ -571,20 +546,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 // sent error
                                 if i >= 2 {
-                                    info!("Failed to send after 3 attempts. Discarding and refreshing data.");
-                                    // reset nonce
-                                    {
-                                        let mut nonce = app_nonce.lock().await;
-                                        *nonce = 0;
-                                    }
-                                    // reset epoch hashes
-                                    {
-                                        info!("reset epoch hashes");
-                                        let mut mut_epoch_hashes = app_epoch_hashes.write().await;
-                                        mut_epoch_hashes.best_hash.solution = None;
-                                        mut_epoch_hashes.best_hash.difficulty = 0;
-                                        mut_epoch_hashes.submissions = HashMap::new();
-                                    }
+                                    info!("Failed to send after 3 attempts. Retrying after loading new config data.");
                                     break;
                                 }
                             }
@@ -594,6 +556,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tokio::time::sleep(Duration::from_millis(1000)).await;
                         }
                     } 
+
+                } else {
+                    error!("no best submission");
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
             } else {
                 tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
@@ -604,24 +570,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_shared_state = shared_state.clone();
     let app_app_database = app_database.clone();
+    let app_rpc_client = rpc_client.clone();
+    let app_wallet = wallet_extension.clone();
     tokio::spawn(async move {
         let app_database = app_app_database;
         loop {
             while let Some(msg) = mine_success_receiver.recv().await {
                 {
+                    let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    let pool_rewards_dec = (msg.rewards as f64).div(decimals);
                     let shared_state = app_shared_state.read().await;
-                    for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
-                        let pubkey = socket_sender.0;
+                    for submission in msg.submissions {
+                        let hashpower = MIN_HASHPOWER * 2u64.pow(submission.difficulty as u32 - MIN_DIFF);
+                        let hashpower_percent = (hashpower as u128).saturating_mul(1_000_000).saturating_div(msg.total_hashpower as u128);
 
-                        if let Some((miner_id, supplied_diff, pubkey_hashpower)) = msg.submissions.get(&pubkey) {
-                            let hashpower_percent = (*pubkey_hashpower as u128).saturating_mul(1_000_000).saturating_div(msg.total_hashpower as u128);
+                        //let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                        let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
+                        let _ = app_database.update_miner_reward(submission.miner_id, earned_rewards as u64).await.unwrap();
+                        let earning = InsertEarning {
+                            miner_id: submission.miner_id,
+                            pool_id: msg.pool_id,
+                            challenge_id: submission.challenge_id,
+                            amount: earned_rewards
+                        };
+                        let _ = app_database.add_new_earning(earning).await.unwrap();
 
-                            // TODO: handle overflow/underflow and float imprecision issues
-                            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                            let earned_rewards = hashpower_percent.saturating_mul(msg.rewards as u128).saturating_div(1_000_000) as u64;
-                            let _ = app_database.update_miner_reward(*miner_id, earned_rewards as u64).await.unwrap();
+                        if let Some((_socket_pubkey, socket_sender)) = shared_state.miner_sockets.get(&submission.miner_id) {
                             let earned_rewards_dec = (earned_rewards as f64).div(decimals);
-                            let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
                             let message = format!(
                                 "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}",
@@ -629,9 +604,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 pool_rewards_dec,
                                 msg.total_balance,
                                 earned_rewards_dec,
-                                supplied_diff
+                                submission.difficulty
                             );
-                            if let Ok(_) = socket_sender.1.lock().await.send(Message::Text(message)).await {
+                            if let Ok(_) = socket_sender.lock().await.send(Message::Text(message)).await {
                             } else {
                                 println!("Failed to send client text");
                             }
@@ -639,6 +614,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     }
                 }
+                if let Ok(balance) = app_rpc_client.get_balance(&app_wallet.pubkey()).await {
+                    info!("Sol Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
+                } else {
+                    error!("Failed to load balance");
+                };
+
             }
         }
     });
@@ -1156,7 +1137,7 @@ async fn ws_handler(
             
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
                 println!("Client: {addr} connected with pubkey {pubkey}.");
-                return Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, user_pubkey, app_state, client_channel)));
+                return Ok(ws.on_upgrade(move |socket| handle_socket(socket, addr, user_pubkey, app_state, client_channel, miner.id)));
             } else {
                 return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
             }
@@ -1169,7 +1150,7 @@ async fn ws_handler(
 
 }
 
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubkey, rw_app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>) {
+async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubkey, rw_app_state: Arc<RwLock<AppState>>, client_channel: UnboundedSender<ClientMessage>, miner_id: i32) {
     if socket.send(axum::extract::ws::Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {who}...");
     } else {
@@ -1185,7 +1166,9 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
         println!("Socket addr: {who} already has an active connection");
         return;
     } else {
-        app_state.sockets.insert(who, (who_pubkey, Mutex::new(sender)));
+        let sender = Arc::new(Mutex::new(sender));
+        app_state.sockets.insert(who, (who_pubkey, sender.clone()));
+        app_state.miner_sockets.insert(miner_id, (who_pubkey, sender));
     }
     drop(app_state);
 
@@ -1199,6 +1182,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, who_pubkey: Pubke
 
     let mut app_state = rw_app_state.write().await;
     app_state.sockets.remove(&who);
+    app_state.miner_sockets.remove(&miner_id);
     drop(app_state);
 
     info!("Client: {} disconnected!", who_pubkey.to_string());
@@ -1214,7 +1198,6 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
             let message_type = d[0];
             match message_type {
                 0 => {
-                    println!("Got Ready message");
                     let mut b_index = 1;
 
                     let mut pubkey = [0u8; 32];
@@ -1377,6 +1360,7 @@ async fn proof_tracking_system(
                                 {
                                     let mut app_proof = app_proof.lock().await;
                                     *app_proof = *new_proof;
+                                    drop(app_proof);
                                 }
                             }
                         }
@@ -1392,13 +1376,12 @@ async fn client_message_handler_system(
     app_database: Arc<AppDatabase>,
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
-    epoch_hashes: Arc<RwLock<EpochHashes>>,
     client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>
 ) {
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
             ClientMessage::Ready(addr) => {
-                println!("Client {} is ready!", addr.to_string());
+                info!("Client {} is ready!", addr.to_string());
                 {
                     let shared_state = shared_state.read().await;
                     if let Some(sender) = shared_state.sockets.get(&addr) {
@@ -1421,7 +1404,7 @@ async fn client_message_handler_system(
                 let pubkey_str = pubkey.to_string();
                 let challenge = {
                     let proof = proof.lock().await;
-                    proof.challenge
+                    proof.challenge.clone()
                 };
 
                 let nonce_range: Range<u64> = {
@@ -1442,10 +1425,9 @@ async fn client_message_handler_system(
 
                 if solution.is_valid(&challenge) {
                     let diff = solution.to_hash().difficulty();
-                    println!("{} found diff: {}", pubkey_str, diff);
+                    info!("{} found diff: {}", pubkey_str, diff);
                     if diff >= MIN_DIFF {
                         // calculate rewards
-                        let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
                         let challenge = app_database.get_challenge_by_challenge(challenge.to_vec()).await.unwrap();
 
                         let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
@@ -1453,26 +1435,18 @@ async fn client_message_handler_system(
                         let new_submission = InsertSubmission {
                             miner_id: miner.id,
                             challenge_id: challenge.id,
+                            digest: Some(solution.d.to_vec()),
                             nonce,
                             difficulty: diff as i8,
                         };
 
                         let _ = app_database.add_new_submission(new_submission).await.unwrap();
-
-                        {
-                            let mut epoch_hashes = epoch_hashes.write().await;
-                            epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
-                            if diff > epoch_hashes.best_hash.difficulty {
-                                epoch_hashes.best_hash.difficulty = diff;
-                                epoch_hashes.best_hash.solution = Some(solution);
-                            }
-                        }
-
                     } else {
-                        println!("Diff to low, skipping");
+                        error!("Diff to low, skipping");
                     }
                 } else {
-                    println!("{} returned an invalid solution!", pubkey);
+                    error!("{} returned an invalid solution!", pubkey);
+                    return;
                 }
             }
         }
