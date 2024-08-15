@@ -1,6 +1,6 @@
 use diesel::{sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
 use deadpool_diesel::mysql::{Manager, Pool};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{models, InsertReward, Miner, Submission, SubmissionForSolution, SubmissionWithId};
 
@@ -146,11 +146,23 @@ impl AppDatabase {
                 .bind::<TinyInt, _>(submission.difficulty)
                 .execute(conn)
             }).await;
-
-            if res.is_ok() {
-                return Ok(());
-            } else {
-                return Err(AppDatabaseError::FailedToInsertNewEntity);
+            match res {
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(_query) => {
+                            info!("Successfully added new submission");
+                            return Ok(());
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
             }
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
@@ -188,11 +200,20 @@ impl AppDatabase {
             }).await;
 
             match res {
-                Ok(Ok(submission)) => {
-                    return Ok(submission)
+                Ok(interaction) => {
+                    match interaction {
+                        Ok(query) => {
+                            return Ok(query);
+                        },
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(AppDatabaseError::QueryFailed);
+                        }
+                    }
                 },
-                _ => {
-                    return Err(AppDatabaseError::EntityDoesNotExist);
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
                 }
             }
         } else {
@@ -485,13 +506,14 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => {
                     match interaction {
-                        Ok(_query) => {},
+                        Ok(_query) => {
+                            return Ok(());
+                        },
                         Err(e) => {
                             error!("{:?}", e);
                             return Err(AppDatabaseError::QueryFailed);
                         }
                     }
-                    return Ok(());
                 },
                 Err(e) => {
                     error!("{:?}", e);
