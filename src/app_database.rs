@@ -1,5 +1,5 @@
 use diesel::{sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned}, MysqlConnection, RunQueryDsl};
-use deadpool_diesel::mysql::{Manager, Pool};
+use deadpool_diesel::{mysql::{Manager, Pool}, PoolConfig};
 
 use crate::{models, InsertReward, Miner, SubmissionWithId};
 
@@ -22,7 +22,7 @@ impl AppDatabase {
             deadpool_diesel::Runtime::Tokio1,
         );
 
-        let pool = Pool::builder(manager).build().unwrap();
+        let pool = Pool::builder(manager).config(PoolConfig::new(50)).build().unwrap();
 
         AppDatabase {
             connection_pool: pool,
