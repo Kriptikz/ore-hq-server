@@ -1143,8 +1143,8 @@ async fn ws_handler(
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
 
-    // Signed authentication message is only valid for 5 seconds
-    if (now - query_params.timestamp) >= 15 {
+    // Signed authentication message is only valid for 30 seconds
+    if (now - query_params.timestamp) >= 30 {
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
     }
 
@@ -1274,7 +1274,7 @@ fn process_message(msg: Message, who: SocketAddr, client_channel: UnboundedSende
 
 
                     let time_since = now - ts;
-                    if time_since > 15 {
+                    if time_since > 30 {
                         error!("Client tried to ready up with expired signed message");
                         return ControlFlow::Break(());
                     }
