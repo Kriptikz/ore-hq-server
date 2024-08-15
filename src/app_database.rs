@@ -22,7 +22,7 @@ impl AppDatabase {
             deadpool_diesel::Runtime::Tokio1,
         );
 
-        let pool = Pool::builder(manager).config(PoolConfig::new(50)).build().unwrap();
+        let pool = Pool::builder(manager).build().unwrap();
 
         AppDatabase {
             connection_pool: pool,
