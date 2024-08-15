@@ -1458,66 +1458,77 @@ async fn client_message_handler_system(
                 println!("Client {} has started mining!", addr.to_string());
             },
             ClientMessage::BestSolution(_addr, solution, pubkey) => {
-                let pubkey_str = pubkey.to_string();
-                let challenge = {
-                    let proof = proof.lock().await;
-                    proof.challenge
-                };
+                let app_epoch_hashes = epoch_hashes.clone();
+                let app_app_database = app_database.clone();
+                let app_proof = proof.clone();
+                let app_client_nonce_ranges = client_nonce_ranges.clone();
+                tokio::spawn(async move {
+                    let epoch_hashes = app_epoch_hashes;
+                    let app_database = app_app_database;
+                    let proof = app_proof;
+                    let client_nonce_ranges = app_client_nonce_ranges;
 
-                let nonce_range: Range<u64> = {
-                    if let Some(nr) = client_nonce_ranges.read().await.get(&pubkey) {
-                        nr.clone()
-                    } else {
-                        error!("Client nonce range not set!");
-                        continue;
+                    let pubkey_str = pubkey.to_string();
+                    let challenge = {
+                        let proof = proof.lock().await;
+                        proof.challenge
+                    };
+
+                    let nonce_range: Range<u64> = {
+                        if let Some(nr) = client_nonce_ranges.read().await.get(&pubkey) {
+                            nr.clone()
+                        } else {
+                            error!("Client nonce range not set!");
+                            return;
+                        }
+                    };
+
+                    let nonce = u64::from_le_bytes(solution.n);
+
+                    if !nonce_range.contains(&nonce) {
+                        error!("Client submitted nonce out of assigned range");
+                        return;
                     }
-                };
 
-                let nonce = u64::from_le_bytes(solution.n);
-
-                if !nonce_range.contains(&nonce) {
-                    error!("Client submitted nonce out of assigned range");
-                    continue;
-                }
-
-                if solution.is_valid(&challenge) {
-                    let diff = solution.to_hash().difficulty();
-                    println!("{} found diff: {}", pubkey_str, diff);
-                    if diff >= MIN_DIFF {
-                        // calculate rewards
-                        let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        if let Ok(challenge) = app_database.get_challenge_by_challenge(challenge.to_vec()).await {
+                    if solution.is_valid(&challenge) {
+                        let diff = solution.to_hash().difficulty();
+                        println!("{} found diff: {}", pubkey_str, diff);
+                        if diff >= MIN_DIFF {
+                            // calculate rewards
+                            let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
                             tokio::time::sleep(Duration::from_millis(100)).await;
-                            let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
+                            if let Ok(challenge) = app_database.get_challenge_by_challenge(challenge.to_vec()).await {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                let miner = app_database.get_miner_by_pubkey_str(pubkey_str).await.unwrap();
 
-                            let new_submission = InsertSubmission {
-                                miner_id: miner.id,
-                                challenge_id: challenge.id,
-                                nonce,
-                                difficulty: diff as i8,
-                            };
+                                let new_submission = InsertSubmission {
+                                    miner_id: miner.id,
+                                    challenge_id: challenge.id,
+                                    nonce,
+                                    difficulty: diff as i8,
+                                };
 
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            let _ = app_database.add_new_submission(new_submission).await.unwrap();
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                let _ = app_database.add_new_submission(new_submission).await.unwrap();
 
-                            {
-                                let mut epoch_hashes = epoch_hashes.write().await;
-                                epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
-                                if diff > epoch_hashes.best_hash.difficulty {
-                                    epoch_hashes.best_hash.difficulty = diff;
-                                    epoch_hashes.best_hash.solution = Some(solution);
+                                {
+                                    let mut epoch_hashes = epoch_hashes.write().await;
+                                    epoch_hashes.submissions.insert(pubkey, (miner.id, diff, hashpower));
+                                    if diff > epoch_hashes.best_hash.difficulty {
+                                        epoch_hashes.best_hash.difficulty = diff;
+                                        epoch_hashes.best_hash.solution = Some(solution);
+                                    }
                                 }
+                            } else {
+                                error!("Challenge not found in db, :(");
                             }
                         } else {
-                            error!("Challenge not found in db, :(");
+                            println!("Diff to low, skipping");
                         }
                     } else {
-                        println!("Diff to low, skipping");
+                        println!("{} returned an invalid solution!", pubkey);
                     }
-                } else {
-                    println!("{} returned an invalid solution!", pubkey);
-                }
+                });
             }
         }
     }
