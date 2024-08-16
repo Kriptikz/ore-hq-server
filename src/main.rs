@@ -67,8 +67,15 @@ mod schema;
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
+#[derive(Clone)]
+struct AppClientConnection {
+    pubkey: Pubkey,
+    miner_id: i32,
+    socket: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+}
+
 struct AppState {
-    sockets: HashMap<SocketAddr, (Pubkey, Arc<Mutex<SplitSink<WebSocket, Message>>>)>,
+    sockets: HashMap<SocketAddr, AppClientConnection>
 }
 
 pub struct MessageInternalAllClients {
@@ -355,6 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_app_database = app_database.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     let app_config = config.clone();
+    let app_state = shared_state.clone();
     tokio::spawn(async move {
         client_message_handler_system(
             client_message_receiver,
@@ -364,6 +372,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_epoch_hashes,
             app_client_nonce_ranges,
             app_config,
+            app_state,
         )
         .await;
     });
@@ -433,7 +442,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let ready_clients = ready_clients.clone();
                         tokio::spawn(async move {
                             let _ = sender
-                                .1
+                                .socket
                                 .lock()
                                 .await
                                 .send(Message::Binary(bin_data.to_vec()))
@@ -442,7 +451,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = app_client_nonce_ranges
                                 .write()
                                 .await
-                                .insert(sender.0, nonce_range);
+                                .insert(sender.pubkey, nonce_range);
                         });
                     }
                 }
@@ -756,7 +765,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let shared_state = app_shared_state.read().await;
                     let len = shared_state.sockets.len();
                     for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
-                        let pubkey = socket_sender.0;
+                        let pubkey = socket_sender.pubkey;
 
                         if let Some((miner_id, supplied_diff, pubkey_hashpower)) =
                             msg.submissions.get(&pubkey)
@@ -803,7 +812,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let socket_sender = socket_sender.clone();
                             tokio::spawn(async move {
                                 if let Ok(_) = socket_sender
-                                    .1
+                                    .socket
                                     .lock()
                                     .await
                                     .send(Message::Text(message))
@@ -848,7 +857,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let socket = socket_sender.clone();
                         tokio::spawn(async move {
                             if let Ok(_) = socket
-                                .1
+                                .socket
+
                                 .lock()
                                 .await
                                 .send(Message::Text(text))
@@ -1405,8 +1415,8 @@ async fn ws_handler(
     if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
         {
             let mut already_connected = false;
-            for (_, (socket_pubkey, _)) in app_state.read().await.sockets.iter() {
-                if user_pubkey == *socket_pubkey {
+            for (_, app_client_connection) in app_state.read().await.sockets.iter() {
+                if user_pubkey == app_client_connection.pubkey {
                     already_connected = true;
                     break;
                 }
@@ -1460,7 +1470,7 @@ async fn ws_handler(
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
                 info!("Client: {addr} connected with pubkey {pubkey}.");
                 return Ok(ws.on_upgrade(move |socket| {
-                    handle_socket(socket, addr, user_pubkey, app_state, client_channel)
+                    handle_socket(socket, addr, user_pubkey, miner.id, app_state, client_channel)
                 }));
             } else {
                 return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
@@ -1477,6 +1487,7 @@ async fn handle_socket(
     mut socket: WebSocket,
     who: SocketAddr,
     who_pubkey: Pubkey,
+    who_miner_id: i32,
     rw_app_state: Arc<RwLock<AppState>>,
     client_channel: UnboundedSender<ClientMessage>,
 ) {
@@ -1499,9 +1510,14 @@ async fn handle_socket(
         info!("Socket addr: {who} already has an active connection");
         return;
     } else {
+        let new_app_client_connection = AppClientConnection {
+            pubkey: who_pubkey,
+            miner_id: who_miner_id,
+            socket: Arc::new(Mutex::new(sender))
+        };
         app_state
             .sockets
-            .insert(who, (who_pubkey, Arc::new(Mutex::new(sender))));
+            .insert(who, new_app_client_connection);
     }
     drop(app_state);
 
@@ -1683,6 +1699,7 @@ async fn client_message_handler_system(
     epoch_hashes: Arc<RwLock<EpochHashes>>,
     client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>,
     app_config: Arc<Config>,
+    app_state: Arc<RwLock<AppState>>,
 ) {
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
@@ -1697,12 +1714,13 @@ async fn client_message_handler_system(
             ClientMessage::Mining(addr) => {
                 info!("Client {} has started mining!", addr.to_string());
             }
-            ClientMessage::BestSolution(_addr, solution, pubkey) => {
+            ClientMessage::BestSolution(addr, solution, pubkey) => {
                 let app_epoch_hashes = epoch_hashes.clone();
                 let app_app_database = app_database.clone();
                 let app_proof = proof.clone();
                 let app_client_nonce_ranges = client_nonce_ranges.clone();
                 let app_config = app_config.clone();
+                let app_state = app_state.clone();
                 tokio::spawn(async move {
                     let epoch_hashes = app_epoch_hashes;
                     let app_database = app_app_database;
@@ -1730,25 +1748,41 @@ async fn client_message_handler_system(
                         return;
                     }
 
+                    let reader = app_state.read().await;
+                    let miner_id;
+                    if let Some(app_client_socket) = reader.sockets.get(&addr) {
+                        miner_id = app_client_socket.miner_id;
+                    } else {
+                        error!("Failed to get client socket for addr: {}", addr);
+                        return;
+                    }
+                    drop(reader);
+
                     if solution.is_valid(&challenge) {
                         let diff = solution.to_hash().difficulty();
                         info!("{} found diff: {}", pubkey_str, diff);
                         if diff >= MIN_DIFF {
                             // calculate rewards
                             let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
+                            {
+                                let mut epoch_hashes = epoch_hashes.write().await;
+                                epoch_hashes
+                                    .submissions
+                                    .insert(pubkey, (miner_id, diff, hashpower));
+                                if diff > epoch_hashes.best_hash.difficulty {
+                                    epoch_hashes.best_hash.difficulty = diff;
+                                    epoch_hashes.best_hash.solution = Some(solution);
+                                }
+                                drop(epoch_hashes);
+                            }
                             tokio::time::sleep(Duration::from_millis(100)).await;
                             if let Ok(challenge) = app_database
                                 .get_challenge_by_challenge(challenge.to_vec())
                                 .await
                             {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
-                                let miner = app_database
-                                    .get_miner_by_pubkey_str(pubkey_str)
-                                    .await
-                                    .unwrap();
-
                                 let new_submission = InsertSubmission {
-                                    miner_id: miner.id,
+                                    miner_id,
                                     challenge_id: challenge.id,
                                     nonce,
                                     difficulty: diff as i8,
@@ -1759,17 +1793,6 @@ async fn client_message_handler_system(
                                     .add_new_submission(new_submission)
                                     .await
                                     .unwrap();
-
-                                {
-                                    let mut epoch_hashes = epoch_hashes.write().await;
-                                    epoch_hashes
-                                        .submissions
-                                        .insert(pubkey, (miner.id, diff, hashpower));
-                                    if diff > epoch_hashes.best_hash.difficulty {
-                                        epoch_hashes.best_hash.difficulty = diff;
-                                        epoch_hashes.best_hash.solution = Some(solution);
-                                    }
-                                }
                             } else {
                                 error!("Challenge not found in db, :(");
                                 info!("Adding challenge to db.");
@@ -1805,7 +1828,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
             let socket = socket.clone();
             handles.push(tokio::spawn(async move {
                 if socket
-                    .1
+                    .socket
                     .lock()
                     .await
                     .send(Message::Ping(vec![1, 2, 3]))
