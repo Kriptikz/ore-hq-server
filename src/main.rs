@@ -895,7 +895,7 @@ async fn get_miner_rewards(
 
         match res {
             Ok(rewards) => {
-                let decimal_bal = rewards.balance as f64 / 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64);
+                let decimal_bal = rewards.balance as f64 / 10f64.powf(gemm_api::consts::TOKEN_DECIMALS as f64);
                 let response = format!("{}", decimal_bal);
                 return Response::builder()
                     .status(StatusCode::OK)
@@ -978,7 +978,7 @@ async fn post_claim(
                         ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
                             &wallet.pubkey(),
                             &user_pubkey,
-                            &ore_api::consts::MINT_ADDRESS,
+                            &gemm_api::consts::MINT_ADDRESS,
                             &spl_token::id(),
                         ))
                     }
@@ -988,12 +988,12 @@ async fn post_claim(
                 ixs.push(spl_associated_token_account::instruction::create_associated_token_account(
                     &wallet.pubkey(),
                     &user_pubkey,
-                    &ore_api::consts::MINT_ADDRESS,
+                    &gemm_api::consts::MINT_ADDRESS,
                     &spl_token::id(),
                 ))
             }
 
-            let ix = ore_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
+            let ix = gemm_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client
@@ -1353,7 +1353,7 @@ async fn proof_tracking_system(
                             // if let Ok(bus) = Bus::try_from_bytes(&data_bytes) {
                             //     let _ = sender.send(AccountUpdatesData::BusData(*bus));
                             // }
-                            // if let Ok(ore_config) = ore_api::state::Config::try_from_bytes(&data_bytes) {
+                            // if let Ok(ore_config) = gemm_api::state::Config::try_from_bytes(&data_bytes) {
                             //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
                             // }
                             if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
