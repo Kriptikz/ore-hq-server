@@ -13,7 +13,7 @@ pub struct Challenge {
     pub rewards_earned: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::challenges)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertChallenge {

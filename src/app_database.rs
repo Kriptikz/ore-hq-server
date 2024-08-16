@@ -16,6 +16,7 @@ use crate::{models, InsertReward, Miner, SubmissionWithId};
 pub enum AppDatabaseError {
     FailedToGetConnectionFromPool,
     FailedToUpdateRow,
+    FailedToInsertRow,
     InteractionFailed,
     QueryFailed,
 }
@@ -315,7 +316,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
                         return Ok(());
                     }
                     Err(e) => {

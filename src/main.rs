@@ -580,6 +580,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         };
                                         let _result =
                                             app_database.add_new_challenge(new_challenge).await;
+                                        while let Err(_) = app_database.add_new_challenge(new_challenge.clone()).await {
+                                            error!("Failed to add new challenge to db, retrying...");
+                                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                                        }
+                                        info!("New challenge successfully added to db");
 
                                         tokio::time::sleep(Duration::from_millis(200)).await;
                                         let submission_id = app_database
