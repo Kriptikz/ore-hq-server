@@ -384,6 +384,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for ready_client in ready_clients_lock.iter() {
                     clients.push(ready_client.clone());
                 }
+                drop(ready_clients_lock);
             };
 
             let lock = app_proof.lock().await;
@@ -449,7 +450,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 
@@ -603,6 +604,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 tokio::time::sleep(Duration::from_millis(1000)).await;
                                             }
                                             info!("New challenge successfully added to db");
+                                            let reader = app_epoch_hashes.read().await;
+                                            let submissions = reader.submissions.clone();
+                                            drop(reader);
 
                                             tokio::time::sleep(Duration::from_millis(200)).await;
                                             let submission_id = app_database
@@ -638,9 +642,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 .await
                                                 .unwrap();
 
-                                            let reader = app_epoch_hashes.read().await;
-                                            let submissions = reader.submissions.clone();
-                                            drop(reader);
 
                                             let mut total_hashpower: u64 = 0;
                                             for submission in submissions.iter() {
