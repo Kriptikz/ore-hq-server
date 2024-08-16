@@ -1535,33 +1535,6 @@ fn process_message(
             let message_type = d[0];
             match message_type {
                 0 => {
-                    println!("Got Ready message");
-                    let mut b_index = 1;
-
-                    let mut pubkey = [0u8; 32];
-                    for i in 0..32 {
-                        pubkey[i] = d[i + b_index];
-                    }
-                    b_index += 32;
-
-                    let mut ts = [0u8; 8];
-                    for i in 0..8 {
-                        ts[i] = d[i + b_index];
-                    }
-
-                    let ts = u64::from_le_bytes(ts);
-
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs();
-
-                    let time_since = now - ts;
-                    if time_since > 30 {
-                        error!("Client tried to ready up with expired signed message");
-                        return ControlFlow::Break(());
-                    }
-
                     let msg = ClientMessage::Ready(who);
                     let _ = client_channel.send(msg);
                 }
