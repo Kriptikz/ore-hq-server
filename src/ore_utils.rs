@@ -54,7 +54,7 @@ pub fn get_ore_decimals() -> u8 {
 
 pub async fn get_config(
     client: &RpcClient,
-) -> Result<ore_api::state::Config, String> {
+) -> Result<gemm_api::state::Config, String> {
     let data = client.get_account_data(&CONFIG_ADDRESS).await;
     match data {
         Ok(data) => {
@@ -74,8 +74,8 @@ pub async fn get_proof_and_config_with_busses(
     authority: Pubkey,
 ) -> (
     Result<Proof, ()>,
-    Result<ore_api::state::Config, ()>,
-    Result<Vec<Result<ore_api::state::Bus, ()>>, ()>,
+    Result<gemm_api::state::Config, ()>,
+    Result<Vec<Result<gemm_api::state::Bus, ()>>, ()>,
 ) {
     let account_pubkeys = vec![
         proof_pubkey(authority),
@@ -98,55 +98,55 @@ pub async fn get_proof_and_config_with_busses(
         };
 
         let treasury_config = if let Some(data) = &datas[1] {
-            Ok(*ore_api::state::Config::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Config::try_from_bytes(data.data())
                 .expect("Failed to parse config account"))
         } else {
             Err(())
         };
         let bus_1 = if let Some(data) = &datas[2] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus1 account"))
         } else {
             Err(())
         };
         let bus_2 = if let Some(data) = &datas[3] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus2 account"))
         } else {
             Err(())
         };
         let bus_3 = if let Some(data) = &datas[4] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus3 account"))
         } else {
             Err(())
         };
         let bus_4 = if let Some(data) = &datas[5] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus4 account"))
         } else {
             Err(())
         };
         let bus_5 = if let Some(data) = &datas[6] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus5 account"))
         } else {
             Err(())
         };
         let bus_6 = if let Some(data) = &datas[7] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus6 account"))
         } else {
             Err(())
         };
         let bus_7 = if let Some(data) = &datas[8] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus7 account"))
         } else {
             Err(())
         };
         let bus_8 = if let Some(data) = &datas[9] {
-            Ok(*ore_api::state::Bus::try_from_bytes(data.data())
+            Ok(*gemm_api::state::Bus::try_from_bytes(data.data())
                 .expect("Failed to parse bus1 account"))
         } else {
             Err(())
