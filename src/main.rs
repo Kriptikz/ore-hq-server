@@ -75,7 +75,7 @@ struct AppClientConnection {
 }
 
 struct AppState {
-    sockets: HashMap<SocketAddr, AppClientConnection>
+    sockets: HashMap<SocketAddr, AppClientConnection>,
 }
 
 pub struct MessageInternalAllClients {
@@ -152,9 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file_appender = tracing_appender::rolling::hourly("./logs", "ore-hq-server.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::fmt()
-        .with_writer(non_blocking)
-        .init();
+    tracing_subscriber::fmt().with_writer(non_blocking).init();
 
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
@@ -506,8 +504,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             info!(
                                 "Starting mine submission attempt {} with difficulty {}.",
-                                i,
-                                difficulty
+                                i, difficulty
                             );
                             let mut loaded_config = None;
                             info!("Getting latest config and busses data.");
@@ -534,10 +531,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             info!("using priority fee of {}", prio_fee);
                             let _ = app_all_clients_sender.send(MessageInternalAllClients {
-                                text: String::from("Sending mine transaction...")
+                                text: String::from("Sending mine transaction..."),
                             });
 
-                            let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
+                            let cu_limit_ix =
+                                ComputeBudgetInstruction::set_compute_unit_limit(480000);
                             ixs.push(cu_limit_ix);
 
                             let prio_fee_ix =
@@ -562,7 +560,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .get_latest_blockhash_with_commitment(rpc_client.commitment())
                                 .await
                             {
-                                let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
+                                let mut tx =
+                                    Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
                                 tx.sign(&[&signer], hash);
                                 info!("Sending signed tx...");
@@ -580,7 +579,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         signature: sig.to_string(),
                                         priority_fee: prio_fee as u32,
                                     };
-                                    let _ = app_database.add_new_txn(itxn).await.unwrap();
+                                    let app_db = app_database.clone();
+                                    tokio::spawn(async move {
+                                        while let Err(_) = app_db.add_new_txn(itxn.clone()).await {
+                                            error!("Failed to add tx to db! Retrying...");
+                                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                                        }
+                                    });
                                     // update proof
                                     loop {
                                         info!("Waiting for proof hash update");
@@ -592,7 +597,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             tokio::time::sleep(Duration::from_millis(1000)).await;
                                             continue;
                                         } else {
-                                            info!("Proof challenge updated! Checking rewards earned.");
+                                            info!(
+                                                "Proof challenge updated! Checking rewards earned."
+                                            );
                                             let balance = (latest_proof.balance as f64)
                                                 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                             info!("New balance: {}", balance);
@@ -608,9 +615,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 rewards_earned: None,
                                             };
 
-                                            while let Err(_) = app_database.add_new_challenge(new_challenge.clone()).await {
+                                            while let Err(_) = app_database
+                                                .add_new_challenge(new_challenge.clone())
+                                                .await
+                                            {
                                                 error!("Failed to add new challenge to db, retrying...");
-                                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                tokio::time::sleep(Duration::from_millis(1000))
+                                                    .await;
                                             }
                                             info!("New challenge successfully added to db");
 
@@ -633,7 +644,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     decrease_amount = 10_000;
                                                 }
 
-                                                *prio_fee = prio_fee.saturating_sub(decrease_amount);
+                                                *prio_fee =
+                                                    prio_fee.saturating_sub(decrease_amount);
                                             }
                                             // reset nonce
                                             {
@@ -651,54 +663,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
 
                                             tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let submission_id = app_database
-                                                .get_submission_id_with_nonce(u64::from_le_bytes(
+                                            let submission_id;
+                                            loop {
+                                                if let Ok(s) = app_database.get_submission_id_with_nonce(u64::from_le_bytes(
                                                     solution.n,
                                                 ))
-                                                .await
-                                                .unwrap();
+                                                .await {
+                                                    submission_id = s;
+                                                    break;
+                                                } else {
+                                                    error!("Failed to get submission id with nonce! Retrying...");
+                                                    tokio::time::sleep(Duration::from_millis(1000))
+                                                        .await;
+                                                }
+                                            }
 
                                             tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let _ = app_database
+                                            while let Err(_) = app_database
                                                 .update_challenge_rewards(
                                                     old_proof.challenge.to_vec(),
                                                     submission_id,
                                                     rewards,
                                                 )
                                                 .await
-                                                .unwrap();
+                                            {
+                                                error!("Failed to update challenge rewards! Retrying...");
+                                                tokio::time::sleep(Duration::from_millis(1000))
+                                                    .await;
+                                            }
                                             tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let _ = app_database
+                                            while let Err(_) = app_database
                                                 .update_pool_rewards(
                                                     app_wallet.pubkey().to_string(),
                                                     rewards,
                                                 )
                                                 .await
-                                                .unwrap();
+                                            {
+                                                error!(
+                                                    "Failed to update pool rewards! Retrying..."
+                                                );
+                                                tokio::time::sleep(Duration::from_millis(1000))
+                                                    .await;
+                                            }
 
                                             tokio::time::sleep(Duration::from_millis(200)).await;
-                                            let challenge = app_database
-                                                .get_challenge_by_challenge(
-                                                    old_proof.challenge.to_vec(),
-                                                )
-                                                .await
-                                                .unwrap();
-
+                                            let challenge;
+                                            loop {
+                                                if let Ok(c) = app_database
+                                                    .get_challenge_by_challenge(
+                                                        old_proof.challenge.to_vec(),
+                                                    )
+                                                    .await
+                                                {
+                                                    challenge = c;
+                                                    break;
+                                                } else {
+                                                    error!(
+                                                        "Failed to get challenge by challenge! Retrying..."
+                                                    );
+                                                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                }
+                                            }
 
                                             let mut total_hashpower: u64 = 0;
                                             for submission in submissions.iter() {
                                                 total_hashpower += submission.1 .2
                                             }
 
-                                            let _ =
-                                                mine_success_sender.send(MessageInternalMineSuccess {
+                                            let _ = mine_success_sender.send(
+                                                MessageInternalMineSuccess {
                                                     difficulty,
                                                     total_balance: balance,
                                                     rewards,
                                                     challenge_id: challenge.id,
                                                     total_hashpower,
                                                     submissions,
-                                                });
+                                                },
+                                            );
 
                                             break;
                                         }
@@ -722,7 +763,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             error!("Solution is_some but got none on best hash re-check?");
                             tokio::time::sleep(Duration::from_millis(1_000)).await;
-
                         }
                     }
                     if !success {
@@ -856,18 +896,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let text = msg.text.clone();
                         let socket = socket_sender.clone();
                         tokio::spawn(async move {
-                            if let Ok(_) = socket
-                                .socket
-
-                                .lock()
-                                .await
-                                .send(Message::Text(text))
-                                .await
+                            if let Ok(_) =
+                                socket.socket.lock().await.send(Message::Text(text)).await
                             {
                             } else {
                                 error!("Failed to send client text");
                             }
-                       });
+                        });
                     }
                 }
             }
@@ -1207,9 +1242,7 @@ async fn get_miner_balance(
     }
 }
 
-async fn get_connected_miners(
-    State(app_state): State<Arc<RwLock<AppState>>>,
-) -> impl IntoResponse {
+async fn get_connected_miners(State(app_state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
     let len = app_state.read().await.sockets.len();
     return Response::builder()
         .status(StatusCode::OK)
@@ -1227,7 +1260,6 @@ async fn get_timestamp() -> impl IntoResponse {
         .body(now.to_string())
         .unwrap();
 }
-
 
 #[derive(Deserialize)]
 struct ClaimParams {
@@ -1470,7 +1502,14 @@ async fn ws_handler(
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
                 info!("Client: {addr} connected with pubkey {pubkey}.");
                 return Ok(ws.on_upgrade(move |socket| {
-                    handle_socket(socket, addr, user_pubkey, miner.id, app_state, client_channel)
+                    handle_socket(
+                        socket,
+                        addr,
+                        user_pubkey,
+                        miner.id,
+                        app_state,
+                        client_channel,
+                    )
                 }));
             } else {
                 return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
@@ -1513,11 +1552,9 @@ async fn handle_socket(
         let new_app_client_connection = AppClientConnection {
             pubkey: who_pubkey,
             miner_id: who_miner_id,
-            socket: Arc::new(Mutex::new(sender))
+            socket: Arc::new(Mutex::new(sender)),
         };
-        app_state
-            .sockets
-            .insert(who, new_app_client_connection);
+        app_state.sockets.insert(who, new_app_client_connection);
     }
     drop(app_state);
 
@@ -1791,10 +1828,13 @@ async fn client_message_handler_system(
                                 };
 
                                 tokio::time::sleep(Duration::from_millis(100)).await;
-                                let _ = app_database
-                                    .add_new_submission(new_submission)
+                                while let Err(_) = app_database
+                                    .add_new_submission(new_submission.clone())
                                     .await
-                                    .unwrap();
+                                {
+                                    error!("Failed to add new submission! Retrying...");
+                                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                                }
                             } else {
                                 error!("Challenge not found in db, :(");
                                 info!("Adding challenge to db.");
@@ -1803,7 +1843,8 @@ async fn client_message_handler_system(
                                     challenge: challenge.to_vec(),
                                     rewards_earned: None,
                                 };
-                                if let Err(_) = app_database.add_new_challenge(new_challenge).await {
+                                if let Err(_) = app_database.add_new_challenge(new_challenge).await
+                                {
                                     error!("Failed to add challenge to db");
                                 }
                             }
@@ -1815,7 +1856,7 @@ async fn client_message_handler_system(
 
                         let reader = app_state.read().await;
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
-                             let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
+                            let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
                         } else {
                             error!("Failed to get client socket for addr: {}", addr);
                             return;
@@ -1848,7 +1889,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 {
                     return None;
                 } else {
-                    return Some(who.clone())
+                    return Some(who.clone());
                 }
             }));
         }
@@ -1860,7 +1901,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 Ok(Some(who)) => {
                     let mut app_state = shared_state.write().await;
                     app_state.sockets.remove(&who);
-                },
+                }
                 Ok(None) => {}
                 Err(_) => {
                     error!("Got error sending ping to client.");

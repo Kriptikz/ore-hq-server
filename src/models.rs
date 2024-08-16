@@ -81,7 +81,7 @@ pub struct Submission {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::submissions)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertSubmission {
@@ -115,7 +115,7 @@ pub struct TxnId {
     pub id: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::txns)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertTxn {

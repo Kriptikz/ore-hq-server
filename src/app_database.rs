@@ -421,6 +421,7 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => match interaction {
                     Ok(_query) => {
+                        info!("Successfully updated pool rewards");
                         return Ok(());
                     }
                     Err(e) => {
