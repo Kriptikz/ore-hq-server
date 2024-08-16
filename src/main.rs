@@ -1812,6 +1812,15 @@ async fn client_message_handler_system(
                         }
                     } else {
                         error!("{} returned an invalid solution!", pubkey);
+
+                        let reader = app_state.read().await;
+                        if let Some(app_client_socket) = reader.sockets.get(&addr) {
+                             let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
+                        } else {
+                            error!("Failed to get client socket for addr: {}", addr);
+                            return;
+                        }
+                        drop(reader);
                     }
                 });
             }
