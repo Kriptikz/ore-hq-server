@@ -403,6 +403,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if should_mine {
                 let challenge = proof.challenge;
 
+                let shared_state = app_shared_state.read().await;
                 for client in clients {
                     let nonce_range = {
                         let mut nonce = app_nonce.lock().await;
@@ -412,20 +413,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let end = *nonce;
                         start..end
                     };
-                    {
-                        let shared_state = app_shared_state.read().await;
-                        // message type is 8 bytes = 1 u8
-                        // challenge is 256 bytes = 32 u8
-                        // cutoff is 64 bytes = 8 u8
-                        // nonce_range is 128 bytes, start is 64 bytes, end is 64 bytes = 16 u8
-                        let mut bin_data = [0; 57];
-                        bin_data[00..1].copy_from_slice(&0u8.to_le_bytes());
-                        bin_data[01..33].copy_from_slice(&challenge);
-                        bin_data[33..41].copy_from_slice(&cutoff.to_le_bytes());
-                        bin_data[41..49].copy_from_slice(&nonce_range.start.to_le_bytes());
-                        bin_data[49..57].copy_from_slice(&nonce_range.end.to_le_bytes());
+                    // message type is 8 bytes = 1 u8
+                    // challenge is 256 bytes = 32 u8
+                    // cutoff is 64 bytes = 8 u8
+                    // nonce_range is 128 bytes, start is 64 bytes, end is 64 bytes = 16 u8
+                    let mut bin_data = [0; 57];
+                    bin_data[00..1].copy_from_slice(&0u8.to_le_bytes());
+                    bin_data[01..33].copy_from_slice(&challenge);
+                    bin_data[33..41].copy_from_slice(&cutoff.to_le_bytes());
+                    bin_data[41..49].copy_from_slice(&nonce_range.start.to_le_bytes());
+                    bin_data[49..57].copy_from_slice(&nonce_range.end.to_le_bytes());
 
-                        if let Some(sender) = shared_state.sockets.get(&client) {
+                    let app_client_nonce_ranges = app_client_nonce_ranges.clone();
+                    let sockets = shared_state.sockets.clone();
+                    if let Some(sender) = sockets.get(&client) {
+                        let sender = sender.clone();
+                        let ready_clients = ready_clients.clone();
+                        tokio::spawn(async move {
                             let _ = sender
                                 .1
                                 .lock()
@@ -437,7 +441,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .write()
                                 .await
                                 .insert(sender.0, nonce_range);
-                        }
+                        });
                     }
                 }
             }
@@ -844,6 +848,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/claim", post(post_claim))
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/balance", get(get_miner_balance))
+        .route("/connected-miners", get(get_connected_miners))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
         .layer(Extension(config))
@@ -1163,6 +1168,16 @@ async fn get_miner_balance(
             .body("Invalid public key".to_string())
             .unwrap();
     }
+}
+
+async fn get_connected_miners(
+    State(app_state): State<Arc<RwLock<AppState>>>,
+) -> impl IntoResponse {
+    let len = app_state.read().await.sockets.len();
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(len.to_string())
+        .unwrap();
 }
 
 #[derive(Deserialize)]
