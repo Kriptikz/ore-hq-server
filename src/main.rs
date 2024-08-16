@@ -474,7 +474,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rpc_client = app_rpc_client;
         let app_database = app_app_database;
         loop {
-            let mut old_proof = { app_proof.lock().await.clone() };
+            let lock = app_proof.lock().await;
+            let mut old_proof = lock.clone();
+            drop(lock);
 
             let cutoff = get_cutoff(old_proof, 0);
             if cutoff <= 0 {
@@ -1660,6 +1662,7 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
                         //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
                         // }
                         if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
+                            info!("Got new proof data");
                             // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
                             //
                             {
