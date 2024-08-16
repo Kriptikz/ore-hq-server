@@ -1732,14 +1732,16 @@ async fn client_message_handler_system(
                     let challenge = lock.challenge;
                     drop(lock);
 
+                    let reader = client_nonce_ranges.read().await;
                     let nonce_range: Range<u64> = {
-                        if let Some(nr) = client_nonce_ranges.read().await.get(&pubkey) {
+                        if let Some(nr) = reader.get(&pubkey) {
                             nr.clone()
                         } else {
                             error!("Client nonce range not set!");
                             return;
                         }
                     };
+                    drop(reader);
 
                     let nonce = u64::from_le_bytes(solution.n);
 
