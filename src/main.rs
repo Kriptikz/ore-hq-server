@@ -871,6 +871,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/balance", get(get_miner_balance))
         .route("/connected-miners", get(get_connected_miners))
+        .route("/timestamp", get(get_timestamp))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
         .layer(Extension(config))
@@ -1201,6 +1202,18 @@ async fn get_connected_miners(
         .body(len.to_string())
         .unwrap();
 }
+
+async fn get_timestamp() -> impl IntoResponse {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs();
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(now.to_string())
+        .unwrap();
+}
+
 
 #[derive(Deserialize)]
 struct ClaimParams {
