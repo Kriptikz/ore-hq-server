@@ -730,6 +730,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut i_earnings = Vec::new();
                     let mut i_rewards = Vec::new();
                     let shared_state = app_shared_state.read().await;
+                    let len = shared_state.sockets.len();
                     for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
                         let pubkey = socket_sender.0;
 
@@ -767,12 +768,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
                             let message = format!(
-                                "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}",
+                                "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}\nActive Miners: {}",
                                 msg.difficulty,
                                 pool_rewards_dec,
                                 msg.total_balance,
                                 earned_rewards_dec,
-                                supplied_diff
+                                supplied_diff,
+                                len
                             );
                             let socket_sender = socket_sender.clone();
                             tokio::spawn(async move {
