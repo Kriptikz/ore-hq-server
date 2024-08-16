@@ -1,11 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use drillx::Solution;
-use ore_api::{
+use gemm_api::{
     consts::{BUS_ADDRESSES, CONFIG_ADDRESS, EPOCH_DURATION, MINT_ADDRESS, PROOF,
     TOKEN_DECIMALS, TREASURY_ADDRESS }, instruction, state::{Config, Proof, Treasury}, ID as ORE_ID
 };
-pub use ore_utils::AccountDeserialize;
+pub use gemm_utils::AccountDeserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     account::ReadableAccount, clock::Clock, instruction::Instruction, pubkey::Pubkey, sysvar,
