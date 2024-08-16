@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     let args = Args::parse();
 
-    let file_appender = tracing_appender::rolling::hourly("./logs", "ore-hq-server.log");
+    let file_appender = tracing_appender::rolling::daily("./logs", "ore-hq-server.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt().with_writer(non_blocking).init();
 
