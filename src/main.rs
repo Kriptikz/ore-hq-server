@@ -403,7 +403,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if should_mine {
                 let challenge = proof.challenge;
 
-                let shared_state = app_shared_state.read().await;
                 for client in clients {
                     let nonce_range = {
                         let mut nonce = app_nonce.lock().await;
@@ -425,7 +424,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     bin_data[49..57].copy_from_slice(&nonce_range.end.to_le_bytes());
 
                     let app_client_nonce_ranges = app_client_nonce_ranges.clone();
+                    let shared_state = app_shared_state.read().await;
                     let sockets = shared_state.sockets.clone();
+                    drop(shared_state);
                     if let Some(sender) = sockets.get(&client) {
                         let sender = sender.clone();
                         let ready_clients = ready_clients.clone();
