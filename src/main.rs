@@ -386,7 +386,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let proof = { app_proof.lock().await.clone() };
+            let lock = app_proof.lock().await;
+            let proof = lock.clone();
+            drop(lock);
 
             let cutoff = get_cutoff(proof, 5);
             let mut should_mine = true;
@@ -476,225 +478,237 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cutoff = get_cutoff(old_proof, 0);
             if cutoff <= 0 {
                 // process solutions
-                let solution = { app_epoch_hashes.read().await.best_hash.solution.clone() };
-                if let Some(solution) = solution {
+                let reader = app_epoch_hashes.read().await;
+                let solution = reader.best_hash.solution.clone();
+                drop(reader);
+                if solution.is_some() {
                     let signer = app_wallet.clone();
 
                     let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
 
-                    let difficulty = solution.to_hash().difficulty();
-
-                    info!(
-                        "Starting mine submission attempts with difficulty {}.",
-                        difficulty
-                    );
-
                     let mut success = false;
                     for i in 0..10 {
-                        let mut loaded_config = None;
-                        info!("Getting latest config and busses data.");
-                        if let (Ok(_), Ok(config), Ok(busses)) =
-                            get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await
-                        {
-                            let mut best_bus = 0;
-                            for (i, bus) in busses.iter().enumerate() {
-                                if let Ok(bus) = bus {
-                                    if bus.rewards > busses[best_bus].unwrap().rewards {
-                                        best_bus = i;
+                        let reader = app_epoch_hashes.read().await;
+                        let solution = reader.best_hash.solution.clone();
+                        drop(reader);
+                        if let Some(solution) = solution {
+                            let difficulty = solution.to_hash().difficulty();
+
+                            info!(
+                                "Starting mine submission attempt {} with difficulty {}.",
+                                i,
+                                difficulty
+                            );
+                            let mut loaded_config = None;
+                            info!("Getting latest config and busses data.");
+                            if let (Ok(_), Ok(config), Ok(busses)) =
+                                get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await
+                            {
+                                let mut best_bus = 0;
+                                for (i, bus) in busses.iter().enumerate() {
+                                    if let Ok(bus) = bus {
+                                        if bus.rewards > busses[best_bus].unwrap().rewards {
+                                            best_bus = i;
+                                        }
                                     }
                                 }
+                                bus = best_bus;
+                                loaded_config = Some(config);
                             }
-                            bus = best_bus;
-                            loaded_config = Some(config);
-                        }
-                        let now = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .expect("Time went backwards")
-                            .as_secs();
-                        let mut ixs = vec![];
-                        let prio_fee = { app_prio_fee.lock().await.clone() };
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .expect("Time went backwards")
+                                .as_secs();
+                            let mut ixs = vec![];
+                            let prio_fee = { app_prio_fee.lock().await.clone() };
 
-                        info!("using priority fee of {}", prio_fee);
-                        let _ = app_all_clients_sender.send(MessageInternalAllClients {
-                            text: String::from("Sending mine transaction...")
-                        });
+                            info!("using priority fee of {}", prio_fee);
+                            let _ = app_all_clients_sender.send(MessageInternalAllClients {
+                                text: String::from("Sending mine transaction...")
+                            });
 
-                        let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
-                        ixs.push(cu_limit_ix);
+                            let cu_limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(480000);
+                            ixs.push(cu_limit_ix);
 
-                        let prio_fee_ix =
-                            ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
-                        ixs.push(prio_fee_ix);
+                            let prio_fee_ix =
+                                ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
+                            ixs.push(prio_fee_ix);
 
-                        let noop_ix = get_auth_ix(signer.pubkey());
-                        ixs.push(noop_ix);
+                            let noop_ix = get_auth_ix(signer.pubkey());
+                            ixs.push(noop_ix);
 
-                        if let Some(config) = loaded_config {
-                            let time_until_reset = (config.last_reset_at + 60) - now as i64;
-                            if time_until_reset <= 5 {
-                                let reset_ix = get_reset_ix(signer.pubkey());
-                                ixs.push(reset_ix);
+                            if let Some(config) = loaded_config {
+                                let time_until_reset = (config.last_reset_at + 60) - now as i64;
+                                if time_until_reset <= 5 {
+                                    let reset_ix = get_reset_ix(signer.pubkey());
+                                    ixs.push(reset_ix);
+                                }
                             }
-                        }
 
-                        let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
-                        ixs.push(ix_mine);
+                            let ix_mine = get_mine_ix(signer.pubkey(), solution, bus);
+                            ixs.push(ix_mine);
 
-                        if let Ok((hash, _slot)) = rpc_client
-                            .get_latest_blockhash_with_commitment(rpc_client.commitment())
-                            .await
-                        {
-                            let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
+                            if let Ok((hash, _slot)) = rpc_client
+                                .get_latest_blockhash_with_commitment(rpc_client.commitment())
+                                .await
+                            {
+                                let mut tx = Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
-                            tx.sign(&[&signer], hash);
-                            info!("Sending signed tx...");
-                            info!("attempt: {}", i + 1);
-                            let sig = rpc_client
-                                .send_and_confirm_transaction_with_spinner(&tx)
-                                .await;
-                            if let Ok(sig) = sig {
-                                // success
-                                success = true;
-                                info!("Success!!");
-                                info!("Sig: {}", sig);
-                                let itxn = InsertTxn {
-                                    txn_type: "mine".to_string(),
-                                    signature: sig.to_string(),
-                                    priority_fee: prio_fee as u32,
-                                };
-                                let _ = app_database.add_new_txn(itxn).await.unwrap();
-                                // update proof
-                                loop {
-                                    info!("Waiting for proof hash update");
-                                    let latest_proof = { app_proof.lock().await.clone() };
+                                tx.sign(&[&signer], hash);
+                                info!("Sending signed tx...");
+                                info!("attempt: {}", i + 1);
+                                let sig = rpc_client
+                                    .send_and_confirm_transaction_with_spinner(&tx)
+                                    .await;
+                                if let Ok(sig) = sig {
+                                    // success
+                                    success = true;
+                                    info!("Success!!");
+                                    info!("Sig: {}", sig);
+                                    let itxn = InsertTxn {
+                                        txn_type: "mine".to_string(),
+                                        signature: sig.to_string(),
+                                        priority_fee: prio_fee as u32,
+                                    };
+                                    let _ = app_database.add_new_txn(itxn).await.unwrap();
+                                    // update proof
+                                    loop {
+                                        info!("Waiting for proof hash update");
+                                        let latest_proof = { app_proof.lock().await.clone() };
 
-                                    if old_proof.challenge.eq(&latest_proof.challenge) {
-                                        info!("Proof challenge not updated yet..");
-                                        old_proof = latest_proof;
-                                        tokio::time::sleep(Duration::from_millis(1000)).await;
-                                        continue;
-                                    } else {
-                                        info!("Proof challenge updated! Checking rewards earned.");
-                                        let balance = (latest_proof.balance as f64)
-                                            / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                        info!("New balance: {}", balance);
-                                        let rewards = latest_proof.balance - old_proof.balance;
-                                        let dec_rewards = (rewards as f64)
-                                            / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                        info!("Earned: {} ORE", dec_rewards);
-
-                                        info!("Adding new challenge to db");
-                                        let new_challenge = InsertChallenge {
-                                            pool_id: app_config.pool_id,
-                                            challenge: latest_proof.challenge.to_vec(),
-                                            rewards_earned: None,
-                                        };
-
-                                        while let Err(_) = app_database.add_new_challenge(new_challenge.clone()).await {
-                                            error!("Failed to add new challenge to db, retrying...");
+                                        if old_proof.challenge.eq(&latest_proof.challenge) {
+                                            info!("Proof challenge not updated yet..");
+                                            old_proof = latest_proof;
                                             tokio::time::sleep(Duration::from_millis(1000)).await;
-                                        }
-                                        info!("New challenge successfully added to db");
+                                            continue;
+                                        } else {
+                                            info!("Proof challenge updated! Checking rewards earned.");
+                                            let balance = (latest_proof.balance as f64)
+                                                / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                            info!("New balance: {}", balance);
+                                            let rewards = latest_proof.balance - old_proof.balance;
+                                            let dec_rewards = (rewards as f64)
+                                                / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                            info!("Earned: {} ORE", dec_rewards);
 
-                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                        let submission_id = app_database
-                                            .get_submission_id_with_nonce(u64::from_le_bytes(
-                                                solution.n,
-                                            ))
-                                            .await
-                                            .unwrap();
+                                            info!("Adding new challenge to db");
+                                            let new_challenge = InsertChallenge {
+                                                pool_id: app_config.pool_id,
+                                                challenge: latest_proof.challenge.to_vec(),
+                                                rewards_earned: None,
+                                            };
 
-                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                        let _ = app_database
-                                            .update_challenge_rewards(
-                                                old_proof.challenge.to_vec(),
-                                                submission_id,
-                                                rewards,
-                                            )
-                                            .await
-                                            .unwrap();
-                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                        let _ = app_database
-                                            .update_pool_rewards(
-                                                app_wallet.pubkey().to_string(),
-                                                rewards,
-                                            )
-                                            .await
-                                            .unwrap();
-
-                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                        let challenge = app_database
-                                            .get_challenge_by_challenge(
-                                                old_proof.challenge.to_vec(),
-                                            )
-                                            .await
-                                            .unwrap();
-
-                                        let submissions =
-                                            { app_epoch_hashes.read().await.submissions.clone() };
-
-                                        let mut total_hashpower: u64 = 0;
-                                        for submission in submissions.iter() {
-                                            total_hashpower += submission.1 .2
-                                        }
-
-                                        let _ =
-                                            mine_success_sender.send(MessageInternalMineSuccess {
-                                                difficulty,
-                                                total_balance: balance,
-                                                rewards,
-                                                challenge_id: challenge.id,
-                                                total_hashpower,
-                                                submissions,
-                                            });
-
-                                        {
-                                            let mut prio_fee = app_prio_fee.lock().await;
-                                            let mut decrease_amount = 0;
-                                            if *prio_fee >= 1_000 {
-                                                decrease_amount = 1_000;
+                                            while let Err(_) = app_database.add_new_challenge(new_challenge.clone()).await {
+                                                error!("Failed to add new challenge to db, retrying...");
+                                                tokio::time::sleep(Duration::from_millis(1000)).await;
                                             }
-                                            if *prio_fee >= 50_000 {
-                                                decrease_amount = 5_000;
-                                            }
-                                            if *prio_fee >= 100_000 {
-                                                decrease_amount = 10_000;
+                                            info!("New challenge successfully added to db");
+
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                            let submission_id = app_database
+                                                .get_submission_id_with_nonce(u64::from_le_bytes(
+                                                    solution.n,
+                                                ))
+                                                .await
+                                                .unwrap();
+
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                            let _ = app_database
+                                                .update_challenge_rewards(
+                                                    old_proof.challenge.to_vec(),
+                                                    submission_id,
+                                                    rewards,
+                                                )
+                                                .await
+                                                .unwrap();
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                            let _ = app_database
+                                                .update_pool_rewards(
+                                                    app_wallet.pubkey().to_string(),
+                                                    rewards,
+                                                )
+                                                .await
+                                                .unwrap();
+
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                            let challenge = app_database
+                                                .get_challenge_by_challenge(
+                                                    old_proof.challenge.to_vec(),
+                                                )
+                                                .await
+                                                .unwrap();
+
+                                            let reader = app_epoch_hashes.read().await;
+                                            let submissions = reader.submissions.clone();
+                                            drop(reader);
+
+                                            let mut total_hashpower: u64 = 0;
+                                            for submission in submissions.iter() {
+                                                total_hashpower += submission.1 .2
                                             }
 
-                                            *prio_fee = prio_fee.saturating_sub(decrease_amount);
+                                            let _ =
+                                                mine_success_sender.send(MessageInternalMineSuccess {
+                                                    difficulty,
+                                                    total_balance: balance,
+                                                    rewards,
+                                                    challenge_id: challenge.id,
+                                                    total_hashpower,
+                                                    submissions,
+                                                });
+
+                                            {
+                                                let mut prio_fee = app_prio_fee.lock().await;
+                                                let mut decrease_amount = 0;
+                                                if *prio_fee >= 1_000 {
+                                                    decrease_amount = 1_000;
+                                                }
+                                                if *prio_fee >= 50_000 {
+                                                    decrease_amount = 5_000;
+                                                }
+                                                if *prio_fee >= 100_000 {
+                                                    decrease_amount = 10_000;
+                                                }
+
+                                                *prio_fee = prio_fee.saturating_sub(decrease_amount);
+                                            }
+                                            // reset nonce
+                                            {
+                                                let mut nonce = app_nonce.lock().await;
+                                                *nonce = 0;
+                                            }
+                                            // reset epoch hashes
+                                            {
+                                                info!("reset epoch hashes");
+                                                let mut mut_epoch_hashes =
+                                                    app_epoch_hashes.write().await;
+                                                mut_epoch_hashes.best_hash.solution = None;
+                                                mut_epoch_hashes.best_hash.difficulty = 0;
+                                                mut_epoch_hashes.submissions = HashMap::new();
+                                            }
+                                            break;
                                         }
-                                        // reset nonce
-                                        {
-                                            let mut nonce = app_nonce.lock().await;
-                                            *nonce = 0;
-                                        }
-                                        // reset epoch hashes
-                                        {
-                                            info!("reset epoch hashes");
-                                            let mut mut_epoch_hashes =
-                                                app_epoch_hashes.write().await;
-                                            mut_epoch_hashes.best_hash.solution = None;
-                                            mut_epoch_hashes.best_hash.difficulty = 0;
-                                            mut_epoch_hashes.submissions = HashMap::new();
-                                        }
-                                        break;
                                     }
-                                }
 
-                                break;
+                                    break;
+                                } else {
+                                    info!("increasing prio fees");
+                                    {
+                                        let mut prio_fee = app_prio_fee.lock().await;
+                                        if *prio_fee < 1_000_000 {
+                                            *prio_fee += 10_000;
+                                        }
+                                    }
+                                    tokio::time::sleep(Duration::from_millis(2_000)).await;
+                                }
                             } else {
-                                info!("increasing prio fees");
-                                {
-                                    let mut prio_fee = app_prio_fee.lock().await;
-                                    if *prio_fee < 1_000_000 {
-                                        *prio_fee += 10_000;
-                                    }
-                                }
-                                tokio::time::sleep(Duration::from_millis(2_000)).await;
+                                error!("Failed to get latest blockhash. retrying...");
+                                tokio::time::sleep(Duration::from_millis(1_000)).await;
                             }
                         } else {
-                            error!("Failed to get latest blockhash. retrying...");
+                            error!("Solution is_some but got none on best hash re-check?");
                             tokio::time::sleep(Duration::from_millis(1_000)).await;
+
                         }
                     }
                     if !success {
@@ -714,6 +728,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
+                } else {
+                    error!("No best solution yet.");
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
             } else {
                 tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
@@ -1701,10 +1718,9 @@ async fn client_message_handler_system(
                     let client_nonce_ranges = app_client_nonce_ranges;
 
                     let pubkey_str = pubkey.to_string();
-                    let challenge = {
-                        let proof = proof.lock().await;
-                        proof.challenge
-                    };
+                    let lock = proof.lock().await;
+                    let challenge = lock.challenge;
+                    drop(lock);
 
                     let nonce_range: Range<u64> = {
                         if let Some(nr) = client_nonce_ranges.read().await.get(&pubkey) {
@@ -1813,10 +1829,10 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
         drop(app_state);
 
         // remove any sockets where ping failed
-        let mut app_state = shared_state.write().await;
         for handle in handles {
             match handle.await {
                 Ok(Some(who)) => {
+                    let mut app_state = shared_state.write().await;
                     app_state.sockets.remove(&who);
                 },
                 Ok(None) => {}
@@ -1825,7 +1841,6 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 }
             }
         }
-        drop(app_state);
 
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
