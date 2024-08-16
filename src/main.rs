@@ -604,9 +604,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 tokio::time::sleep(Duration::from_millis(1000)).await;
                                             }
                                             info!("New challenge successfully added to db");
+
+                                            // Load up the submissions
                                             let reader = app_epoch_hashes.read().await;
                                             let submissions = reader.submissions.clone();
                                             drop(reader);
+
+                                            // Reset mining data
+                                            {
+                                                let mut prio_fee = app_prio_fee.lock().await;
+                                                let mut decrease_amount = 0;
+                                                if *prio_fee >= 1_000 {
+                                                    decrease_amount = 1_000;
+                                                }
+                                                if *prio_fee >= 50_000 {
+                                                    decrease_amount = 5_000;
+                                                }
+                                                if *prio_fee >= 100_000 {
+                                                    decrease_amount = 10_000;
+                                                }
+
+                                                *prio_fee = prio_fee.saturating_sub(decrease_amount);
+                                            }
+                                            // reset nonce
+                                            {
+                                                let mut nonce = app_nonce.lock().await;
+                                                *nonce = 0;
+                                            }
+                                            // reset epoch hashes
+                                            {
+                                                info!("reset epoch hashes");
+                                                let mut mut_epoch_hashes =
+                                                    app_epoch_hashes.write().await;
+                                                mut_epoch_hashes.best_hash.solution = None;
+                                                mut_epoch_hashes.best_hash.difficulty = 0;
+                                                mut_epoch_hashes.submissions = HashMap::new();
+                                            }
 
                                             tokio::time::sleep(Duration::from_millis(200)).await;
                                             let submission_id = app_database
@@ -658,35 +691,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     submissions,
                                                 });
 
-                                            {
-                                                let mut prio_fee = app_prio_fee.lock().await;
-                                                let mut decrease_amount = 0;
-                                                if *prio_fee >= 1_000 {
-                                                    decrease_amount = 1_000;
-                                                }
-                                                if *prio_fee >= 50_000 {
-                                                    decrease_amount = 5_000;
-                                                }
-                                                if *prio_fee >= 100_000 {
-                                                    decrease_amount = 10_000;
-                                                }
-
-                                                *prio_fee = prio_fee.saturating_sub(decrease_amount);
-                                            }
-                                            // reset nonce
-                                            {
-                                                let mut nonce = app_nonce.lock().await;
-                                                *nonce = 0;
-                                            }
-                                            // reset epoch hashes
-                                            {
-                                                info!("reset epoch hashes");
-                                                let mut mut_epoch_hashes =
-                                                    app_epoch_hashes.write().await;
-                                                mut_epoch_hashes.best_hash.solution = None;
-                                                mut_epoch_hashes.best_hash.difficulty = 0;
-                                                mut_epoch_hashes.submissions = HashMap::new();
-                                            }
                                             break;
                                         }
                                     }
