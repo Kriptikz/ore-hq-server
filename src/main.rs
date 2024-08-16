@@ -58,7 +58,7 @@ pub struct Config {
     pool_id: i32,
 }
 
-mod ore_utils;
+mod gemm_utils;
 
 #[derive(Parser, Debug)]
 #[command(version, author, about, long_about = None)]
