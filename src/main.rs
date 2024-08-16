@@ -310,7 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let result = app_database.add_new_challenge(new_challenge).await;
 
             if result.is_err() {
-                panic!("Failed to create pool in database");
+                panic!("Failed to create challenge in database");
             }
         }
     }
@@ -356,6 +356,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_epoch_hashes = epoch_hashes.clone();
     let app_app_database = app_database.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
+    let app_config = config.clone();
     tokio::spawn(async move {
         client_message_handler_system(
             client_message_receiver,
@@ -364,6 +365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_proof,
             app_epoch_hashes,
             app_client_nonce_ranges,
+            app_config,
         )
         .await;
     });
@@ -497,6 +499,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         difficulty
                     );
 
+                    let mut success = false;
                     for i in 0..10 {
                         let now = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -545,6 +548,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .await;
                             if let Ok(sig) = sig {
                                 // success
+                                success = true;
                                 info!("Success!!");
                                 info!("Sig: {}", sig);
                                 let itxn = InsertTxn {
@@ -572,14 +576,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let dec_rewards = (rewards as f64)
                                             / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                                         info!("Earned: {} ORE", dec_rewards);
-                                        println!("Adding new challenge to db");
+
+                                        info!("Adding new challenge to db");
                                         let new_challenge = InsertChallenge {
                                             pool_id: app_config.pool_id,
                                             challenge: latest_proof.challenge.to_vec(),
                                             rewards_earned: None,
                                         };
-                                        let _result =
-                                            app_database.add_new_challenge(new_challenge).await;
+
                                         while let Err(_) = app_database.add_new_challenge(new_challenge.clone()).await {
                                             error!("Failed to add new challenge to db, retrying...");
                                             tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -687,19 +691,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tokio::time::sleep(Duration::from_millis(1_000)).await;
                         }
                     }
-                    info!("Failed to send after 3 attempts. Discarding and refreshing data.");
-                    // reset nonce
-                    {
-                        let mut nonce = app_nonce.lock().await;
-                        *nonce = 0;
-                    }
-                    // reset epoch hashes
-                    {
-                        info!("reset epoch hashes");
-                        let mut mut_epoch_hashes = app_epoch_hashes.write().await;
-                        mut_epoch_hashes.best_hash.solution = None;
-                        mut_epoch_hashes.best_hash.difficulty = 0;
-                        mut_epoch_hashes.submissions = HashMap::new();
+                    if !success {
+                        info!("Failed to send after 10 attempts. Discarding and refreshing data.");
+                        // reset nonce
+                        {
+                            let mut nonce = app_nonce.lock().await;
+                            *nonce = 0;
+                        }
+                        // reset epoch hashes
+                        {
+                            info!("reset epoch hashes");
+                            let mut mut_epoch_hashes = app_epoch_hashes.write().await;
+                            mut_epoch_hashes.best_hash.solution = None;
+                            mut_epoch_hashes.best_hash.difficulty = 0;
+                            mut_epoch_hashes.submissions = HashMap::new();
+                        }
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -1648,6 +1654,7 @@ async fn client_message_handler_system(
     proof: Arc<Mutex<Proof>>,
     epoch_hashes: Arc<RwLock<EpochHashes>>,
     client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>,
+    app_config: Arc<Config>,
 ) {
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
@@ -1667,6 +1674,7 @@ async fn client_message_handler_system(
                 let app_app_database = app_database.clone();
                 let app_proof = proof.clone();
                 let app_client_nonce_ranges = client_nonce_ranges.clone();
+                let app_config = app_config.clone();
                 tokio::spawn(async move {
                     let epoch_hashes = app_epoch_hashes;
                     let app_database = app_app_database;
@@ -1737,6 +1745,15 @@ async fn client_message_handler_system(
                                 }
                             } else {
                                 error!("Challenge not found in db, :(");
+                                info!("Adding challenge to db.");
+                                let new_challenge = models::InsertChallenge {
+                                    pool_id: app_config.pool_id,
+                                    challenge: challenge.to_vec(),
+                                    rewards_earned: None,
+                                };
+                                if let Err(_) = app_database.add_new_challenge(new_challenge).await {
+                                    error!("Failed to add challenge to db");
+                                }
                             }
                         } else {
                             println!("Diff to low, skipping");
