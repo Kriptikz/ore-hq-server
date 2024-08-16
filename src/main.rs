@@ -207,19 +207,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let wallet = read_keypair_file(wallet_path)
         .expect("Failed to load keypair from file: {wallet_path_str}");
-    println!("loaded wallet {}", wallet.pubkey().to_string());
+    info!("loaded wallet {}", wallet.pubkey().to_string());
 
-    println!("establishing rpc connection...");
+    info!("establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
 
-    println!("loading sol balance...");
+    info!("loading sol balance...");
     let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
         balance
     } else {
         return Err("Failed to load balance".into());
     };
 
-    println!("Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
+    info!("Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
 
     if balance < 1_000_000 {
         return Err("Sol balance is too low!".into());
@@ -228,8 +228,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
         loaded_proof
     } else {
-        println!("Failed to load proof.");
-        println!("Creating proof account...");
+        error!("Failed to load proof.");
+        info!("Creating proof account...");
 
         let ix = get_register_ix(wallet.pubkey());
 
@@ -249,7 +249,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await;
 
             if let Ok(sig) = result {
-                println!("Sig: {}", sig.to_string());
+                info!("Sig: {}", sig.to_string());
             } else {
                 return Err("Failed to create proof account".into());
             }
@@ -262,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
-    println!("Validating pool exists in db");
+    info!("Validating pool exists in db");
     let db_pool = app_database
         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
         .await;
@@ -273,7 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("Failed to get database pool connection");
         }
         Err(_) => {
-            println!("Pool missing from database. Inserting...");
+            info!("Pool missing from database. Inserting...");
             let proof_pubkey = proof_pubkey(wallet.pubkey());
             let result = app_database
                 .add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string())
@@ -290,7 +290,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .unwrap();
 
-    println!("Validating current challenge for pool exists in db");
+    info!("Validating current challenge for pool exists in db");
     let result = app_database
         .get_challenge_by_challenge(proof.challenge.to_vec())
         .await;
@@ -301,7 +301,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("Failed to get database pool connection");
         }
         Err(_) => {
-            println!("Challenge missing from database. Inserting...");
+            info!("Challenge missing from database. Inserting...");
             let new_challenge = models::InsertChallenge {
                 pool_id: db_pool.id,
                 challenge: proof.challenge.to_vec(),
@@ -810,7 +810,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .await
                                 {
                                 } else {
-                                    println!("Failed to send client text");
+                                    error!("Failed to send client text");
                                 }
                             });
                         }
@@ -855,7 +855,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .await
                             {
                             } else {
-                                println!("Failed to send client text");
+                                error!("Failed to send client text");
                             }
                        });
                     }
@@ -1070,7 +1070,7 @@ async fn post_signup(
                 .body("Invalid Tx".to_string())
                 .unwrap();
         } else {
-            println!("Valid signup tx, submitting.");
+            info!("Valid signup tx, submitting.");
 
             if let Ok(_sig) = rpc_client.send_and_confirm_transaction(&tx).await {
                 let res = app_database
@@ -1343,7 +1343,7 @@ async fn post_claim(
                             .unwrap();
                     }
                     Err(e) => {
-                        println!("ERROR: {:?}", e);
+                        error!("ERROR: {:?}", e);
                         return Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .body("FAILED".to_string())
@@ -1458,7 +1458,7 @@ async fn ws_handler(
             let ts_msg = msg_timestamp.to_le_bytes();
 
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
-                println!("Client: {addr} connected with pubkey {pubkey}.");
+                debug!("Client: {addr} connected with pubkey {pubkey}.");
                 return Ok(ws.on_upgrade(move |socket| {
                     handle_socket(socket, addr, user_pubkey, app_state, client_channel)
                 }));
@@ -1485,9 +1485,9 @@ async fn handle_socket(
         .await
         .is_ok()
     {
-        println!("Pinged {who}...");
+        debug!("Pinged {who}...");
     } else {
-        println!("could not ping {who}");
+        error!("could not ping {who}");
 
         // if we can't ping we can't do anything, return to close the connection
         return;
@@ -1496,7 +1496,7 @@ async fn handle_socket(
     let (sender, mut receiver) = socket.split();
     let mut app_state = rw_app_state.write().await;
     if app_state.sockets.contains_key(&who) {
-        println!("Socket addr: {who} already has an active connection");
+        debug!("Socket addr: {who} already has an active connection");
         return;
     } else {
         app_state
@@ -1688,7 +1688,7 @@ async fn client_message_handler_system(
             ClientMessage::Ready(addr) => {
                 let ready_clients = ready_clients.clone();
                 tokio::spawn(async move {
-                    println!("Client {} is ready!", addr.to_string());
+                    debug!("Client {} is ready!", addr.to_string());
                     let mut ready_clients = ready_clients.lock().await;
                     ready_clients.insert(addr);
                 });
@@ -1731,7 +1731,7 @@ async fn client_message_handler_system(
 
                     if solution.is_valid(&challenge) {
                         let diff = solution.to_hash().difficulty();
-                        println!("{} found diff: {}", pubkey_str, diff);
+                        info!("{} found diff: {}", pubkey_str, diff);
                         if diff >= MIN_DIFF {
                             // calculate rewards
                             let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
@@ -1782,10 +1782,10 @@ async fn client_message_handler_system(
                                 }
                             }
                         } else {
-                            println!("Diff to low, skipping");
+                            error!("Diff to low, skipping");
                         }
                     } else {
-                        println!("{} returned an invalid solution!", pubkey);
+                        error!("{} returned an invalid solution!", pubkey);
                     }
                 });
             }
