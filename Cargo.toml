@@ -32,4 +32,5 @@ deadpool-diesel = { version = "0.6.1", features = ["mysql"] }
 base64 = "0.22.1"
 spl-token = { version = "^4", features = ["no-entrypoint"] }
 solana-account-decoder = "1.18.13"
+tracing-appender = "0.2.3"
 

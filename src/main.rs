@@ -58,8 +58,7 @@ use tokio::{
     },
 };
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{debug, error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{error, info};
 
 mod app_database;
 mod models;
@@ -143,12 +142,11 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     let args = Args::parse();
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ore_hq_server=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
+
+    let file_appender = tracing_appender::rolling::hourly("./logs", "ore-hq-server.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
         .init();
 
     // load envs
@@ -822,14 +820,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .add_new_earnings_batch(i_earnings.clone())
                             .await
                         {
-                            debug!("Successfully added earnings batch");
+                            info!("Successfully added earnings batch");
                         } else {
                             error!("Failed to insert earnings batch");
                         }
                     }
                     if i_rewards.len() > 0 {
                         if let Ok(_) = app_database.update_rewards(i_rewards).await {
-                            debug!("Successfully updated rewards");
+                            info!("Successfully updated rewards");
                         } else {
                             error!("Failed to bulk update rewards");
                         }
@@ -893,7 +891,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
-    tracing::debug!("listening on {}", listener.local_addr().unwrap());
+    tracing::info!("listening on {}", listener.local_addr().unwrap());
 
     let app_shared_state = shared_state.clone();
     tokio::spawn(async move {
@@ -956,7 +954,7 @@ async fn post_signup(
         match db_miner {
             Ok(miner) => {
                 if miner.enabled {
-                    println!("Miner account already enabled!");
+                    info!("Miner account already enabled!");
                     return Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "text/text")
@@ -972,7 +970,7 @@ async fn post_signup(
                     .unwrap();
             }
             Err(_) => {
-                println!("No miner account exists. Signing up new user.");
+                info!("No miner account exists. Signing up new user.");
             }
         }
 
@@ -1460,7 +1458,7 @@ async fn ws_handler(
             let ts_msg = msg_timestamp.to_le_bytes();
 
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
-                debug!("Client: {addr} connected with pubkey {pubkey}.");
+                info!("Client: {addr} connected with pubkey {pubkey}.");
                 return Ok(ws.on_upgrade(move |socket| {
                     handle_socket(socket, addr, user_pubkey, app_state, client_channel)
                 }));
@@ -1487,7 +1485,7 @@ async fn handle_socket(
         .await
         .is_ok()
     {
-        debug!("Pinged {who}...");
+        tracing::debug!("Pinged {who}...");
     } else {
         error!("could not ping {who}");
 
@@ -1498,7 +1496,7 @@ async fn handle_socket(
     let (sender, mut receiver) = socket.split();
     let mut app_state = rw_app_state.write().await;
     if app_state.sockets.contains_key(&who) {
-        debug!("Socket addr: {who} already has an active connection");
+        info!("Socket addr: {who} already has an active connection");
         return;
     } else {
         app_state
@@ -1529,8 +1527,8 @@ fn process_message(
     client_channel: UnboundedSender<ClientMessage>,
 ) -> ControlFlow<(), ()> {
     match msg {
-        Message::Text(t) => {
-            println!(">>> {who} sent str: {t:?}");
+        Message::Text(_t) => {
+            //println!(">>> {who} sent str: {t:?}");
         }
         Message::Binary(d) => {
             // first 8 bytes are message type
@@ -1593,18 +1591,18 @@ fn process_message(
                     }
                 }
                 _ => {
-                    println!(">>> {} sent an invalid message", who);
+                    error!(">>> {} sent an invalid message", who);
                 }
             }
         }
         Message::Close(c) => {
             if let Some(cf) = c {
-                println!(
+                info!(
                     ">>> {} sent close with code {} and reason `{}`",
                     who, cf.code, cf.reason
                 );
             } else {
-                println!(">>> {who} somehow sent close message without CloseFrame");
+                info!(">>> {who} somehow sent close message without CloseFrame");
             }
             return ControlFlow::Break(());
         }
@@ -1621,7 +1619,7 @@ fn process_message(
 
 async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<Mutex<Proof>>) {
     loop {
-        println!("Establishing rpc websocket connection...");
+        info!("Establishing rpc websocket connection...");
         let mut ps_client = PubsubClient::new(&ws_url).await;
         let mut attempts = 0;
 
@@ -1691,13 +1689,13 @@ async fn client_message_handler_system(
             ClientMessage::Ready(addr) => {
                 let ready_clients = ready_clients.clone();
                 tokio::spawn(async move {
-                    debug!("Client {} is ready!", addr.to_string());
+                    info!("Client {} is ready!", addr.to_string());
                     let mut ready_clients = ready_clients.lock().await;
                     ready_clients.insert(addr);
                 });
             }
             ClientMessage::Mining(addr) => {
-                println!("Client {} has started mining!", addr.to_string());
+                info!("Client {} has started mining!", addr.to_string());
             }
             ClientMessage::BestSolution(_addr, solution, pubkey) => {
                 let app_epoch_hashes = epoch_hashes.clone();
