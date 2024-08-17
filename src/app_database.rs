@@ -219,7 +219,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
                         return Ok(());
                     }
                     Err(e) => {
@@ -284,7 +287,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToUpdateRow);
+                        }
                         info!("Updated challenge rewards!");
                         return Ok(());
                     }
@@ -389,7 +395,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
                         return Ok(());
                     }
                     Err(e) => {
@@ -422,7 +431,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToUpdateRow);
+                        }
                         info!("Successfully updated pool rewards");
                         return Ok(());
                     }
@@ -456,7 +468,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToUpdateRow);
+                        }
                         return Ok(());
                     }
                     Err(e) => {
