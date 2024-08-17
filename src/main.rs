@@ -727,7 +727,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             let mut total_hashpower: u64 = 0;
                                             for submission in submissions.iter() {
-                                                total_hashpower += submission.1 .2
+                                                total_hashpower += submission.1.2
                                             }
 
                                             let _ = mine_success_sender.send(
@@ -1802,7 +1802,10 @@ async fn client_message_handler_system(
                         info!("{} found diff: {}", pubkey_str, diff);
                         if diff >= MIN_DIFF {
                             // calculate rewards
-                            let hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
+                            let mut hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
+                            if hashpower > 327_680 {
+                                hashpower = 327_680;
+                            }
                             {
                                 let mut epoch_hashes = epoch_hashes.write().await;
                                 epoch_hashes
