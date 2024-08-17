@@ -1415,7 +1415,7 @@ async fn post_claim(
                             signature: sig.to_string(),
                             priority_fee: prio_fee,
                         };
-                        while let Err(_) = app_database.add_new_txn(itxn).await {
+                        while let Err(_) = app_database.add_new_txn(itxn.clone()).await {
                             error!("Failed to increase pool claimed amount! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
