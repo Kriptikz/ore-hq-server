@@ -39,7 +39,7 @@ pub struct Claim {
     pub amount: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Copy, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::claims)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertClaim {
@@ -115,7 +115,7 @@ pub struct TxnId {
     pub id: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::txns)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertTxn {
