@@ -841,7 +841,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
                             let message = format!(
-                                "Submitted Difficulty: {}\nPool Earned: {} ORE.\nPool Balance: {}\nMiner Earned: {} ORE for difficulty: {}\nActive Miners: {}",
+                                "Submitted Difficulty: {}\nPool Earned:  {:.11} ORE.\nPool Balance: {:.11}\nMiner Earned: {:.11} ORE for difficulty: {}\nActive Miners: {}",
                                 msg.difficulty,
                                 pool_rewards_dec,
                                 msg.total_balance,
