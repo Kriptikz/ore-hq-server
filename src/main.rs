@@ -679,7 +679,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
 
                                             tokio::time::sleep(Duration::from_millis(200)).await;
-                                            while let Err(_) = app_database
+                                            if let Err(_) = app_database
                                                 .update_challenge_rewards(
                                                     old_proof.challenge.to_vec(),
                                                     submission_id,
@@ -687,9 +687,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 )
                                                 .await
                                             {
-                                                error!("Failed to update challenge rewards! Retrying...");
-                                                tokio::time::sleep(Duration::from_millis(1000))
-                                                    .await;
+                                                error!("Failed to update challenge rewards! Skipping! Devs check!");
+                                                let err_str = format!("Challenge UPDATE FAILED - Challenge: {:?}\nSubmission ID: {}\nRewards: {}\n", old_proof.challenge.to_vec(), submission_id, rewards);
+                                                error!(err_str);
                                             }
                                             tokio::time::sleep(Duration::from_millis(200)).await;
                                             while let Err(_) = app_database
