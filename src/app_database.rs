@@ -142,8 +142,9 @@ impl AppDatabase {
         }
 
         if let Ok(db_conn) = self.connection_pool.get().await {
+            let conn_query = query.clone();
             let res = db_conn
-                .interact(move |conn: &mut MysqlConnection| conn.batch_execute(&query))
+                .interact(move |conn: &mut MysqlConnection| conn.batch_execute(&conn_query))
                 .await;
 
             match res {
@@ -153,6 +154,7 @@ impl AppDatabase {
                     }
                     Err(e) => {
                         error!("{:?}", e);
+                        error!("QUERY: {}", query);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
@@ -239,7 +241,7 @@ impl AppDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT id FROM submissions WHERE submissions.nonce = ?")
+                    diesel::sql_query("SELECT id FROM submissions WHERE submissions.nonce = ? ORDER BY id DESC")
                         .bind::<Unsigned<BigInt>, _>(nonce)
                         .get_result::<SubmissionWithId>(conn)
                 })
