@@ -73,7 +73,7 @@ impl AppDatabase {
     ) -> Result<models::Reward, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("SELECT r.balance FROM miners m JOIN rewards r ON m.id = r.miner_id WHERE m.pubkey = ?")
+                diesel::sql_query("SELECT r.balance, r.miner_id FROM miners m JOIN rewards r ON m.id = r.miner_id WHERE m.pubkey = ?")
                 .bind::<Text, _>(miner_pubkey)
                 .get_result::<models::Reward>(conn)
             }).await;
@@ -589,6 +589,36 @@ impl AppDatabase {
         };
     }
 
+    pub async fn get_last_claim(&self, miner_id: i32) -> Result<models::LastClaim, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT created_at FROM claims WHERE miner_id = ? ORDER BY id DESC")
+                        .bind::<Integer, _>(miner_id)
+                        .get_result::<models::LastClaim>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
     pub async fn add_new_txn(&self, txn: models::InsertTxn) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
@@ -653,39 +683,39 @@ impl AppDatabase {
         };
     }
 
-    pub async fn add_new_earning(
-        &self,
-        earning: models::InsertEarning,
-    ) -> Result<(), AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("INSERT INTO earnings (miner_id, pool_id, challenge_id, amount) VALUES (?, ?, ?, ?)")
-                .bind::<Integer, _>(earning.miner_id)
-                .bind::<Integer, _>(earning.pool_id)
-                .bind::<Integer, _>(earning.challenge_id)
-                .bind::<Unsigned<BigInt>, _>(earning.amount)
-                .execute(conn)
-            }).await;
+    // pub async fn add_new_earning(
+    //     &self,
+    //     earning: models::InsertEarning,
+    // ) -> Result<(), AppDatabaseError> {
+    //     if let Ok(db_conn) = self.connection_pool.get().await {
+    //         let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+    //             diesel::sql_query("INSERT INTO earnings (miner_id, pool_id, challenge_id, amount) VALUES (?, ?, ?, ?)")
+    //             .bind::<Integer, _>(earning.miner_id)
+    //             .bind::<Integer, _>(earning.pool_id)
+    //             .bind::<Integer, _>(earning.challenge_id)
+    //             .bind::<Unsigned<BigInt>, _>(earning.amount)
+    //             .execute(conn)
+    //         }).await;
 
-            match res {
-                Ok(interaction) => match interaction {
-                    Ok(_query) => {
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Err(AppDatabaseError::QueryFailed);
-                    }
-                },
-                Err(e) => {
-                    error!("{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-    }
+    //         match res {
+    //             Ok(interaction) => match interaction {
+    //                 Ok(_query) => {
+    //                     return Ok(());
+    //                 }
+    //                 Err(e) => {
+    //                     error!("{:?}", e);
+    //                     return Err(AppDatabaseError::QueryFailed);
+    //                 }
+    //             },
+    //             Err(e) => {
+    //                 error!("{:?}", e);
+    //                 return Err(AppDatabaseError::InteractionFailed);
+    //             }
+    //         }
+    //     } else {
+    //         return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+    //     };
+    // }
 
     pub async fn add_new_earnings_batch(
         &self,

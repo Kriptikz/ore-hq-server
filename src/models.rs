@@ -39,6 +39,13 @@ pub struct Claim {
     pub amount: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::claims)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct LastClaim {
+    pub created_at: NaiveDateTime,
+}
+
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::claims)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
@@ -145,6 +152,7 @@ pub struct UpdateReward {
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Reward {
     pub balance: u64,
+    pub miner_id: i32,
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, Insertable)]

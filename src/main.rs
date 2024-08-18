@@ -1328,6 +1328,21 @@ async fn post_claim(
                     .unwrap();
             }
 
+            if let Ok(last_claim) = app_database.get_last_claim(miner_rewards.miner_id).await {
+                let last_claim_ts = last_claim.created_at.and_utc().timestamp();
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs() as i64;
+                let time_difference = now - last_claim_ts;
+                if time_difference  <= 1800 {
+                    return Response::builder()
+                        .status(StatusCode::TOO_MANY_REQUESTS)
+                        .body(time_difference.to_string())
+                        .unwrap();
+                }
+            }
+
             let ore_mint = get_ore_mint();
             let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
 
