@@ -42,6 +42,13 @@ pub struct Claim {
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::claims)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct LastClaim {
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::claims)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertClaim {
     pub miner_id: i32,
     pub pool_id: i32,
@@ -81,7 +88,7 @@ pub struct Submission {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::submissions)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertSubmission {
@@ -115,7 +122,7 @@ pub struct TxnId {
     pub id: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::txns)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertTxn {
@@ -145,6 +152,7 @@ pub struct UpdateReward {
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Reward {
     pub balance: u64,
+    pub miner_id: i32,
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, Insertable)]
