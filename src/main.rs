@@ -961,7 +961,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/claim", post(post_claim))
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/balance", get(get_miner_balance))
-        .route("/connected-miners", get(get_connected_miners))
+        .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
