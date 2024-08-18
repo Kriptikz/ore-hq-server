@@ -882,15 +882,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let earned_rewards_dec = (earned_rewards as f64).div(decimals);
                             let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
+                            let percentage = if pool_rewards_dec != 0.0 {
+                                (earned_rewards_dec / pool_rewards_dec) * 100.0
+                            } else {
+                                0.0 // Handle the case where pool_rewards_dec is 0 to avoid division by zero
+                            };
+                            
                             let message = format!(
-                                "Submitted Difficulty: {}\nPool Earned:  {:.11} ORE.\nPool Balance: {:.11}\nMiner Earned: {:.11} ORE for difficulty: {}\nActive Miners: {}",
+                                "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11}\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
                                 msg.difficulty,
                                 pool_rewards_dec,
                                 msg.total_balance,
-                                earned_rewards_dec,
+                                len,
                                 supplied_diff,
-                                len
+                                earned_rewards_dec,
+                                percentage
                             );
+                            
                             let socket_sender = socket_sender.clone();
                             tokio::spawn(async move {
                                 if let Ok(_) = socket_sender
