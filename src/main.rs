@@ -631,7 +631,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 {
                                                     let mut prio_fee = app_prio_fee.lock().await;
                                                     let mut decrease_amount = 0;
-                                                    if *prio_fee >= 1_000 {
+                                                    if *prio_fee > 20_000 {
                                                         decrease_amount = 1_000;
                                                     }
                                                     if *prio_fee >= 50_000 {
@@ -793,7 +793,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     {
                                         let mut prio_fee = app_prio_fee.lock().await;
                                         if *prio_fee < 1_000_000 {
-                                            *prio_fee += 10_000;
+                                            *prio_fee += 15_000;
                                         }
                                     }
                                     tokio::time::sleep(Duration::from_millis(2_000)).await;
