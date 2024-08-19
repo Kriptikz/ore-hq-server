@@ -571,232 +571,238 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let sig = rpc_client
                                     .send_and_confirm_transaction_with_spinner(&tx)
                                     .await;
-                                if let Ok(sig) = sig {
-                                    // success
-                                    success = true;
-                                    info!("Success!!");
-                                    info!("Sig: {}", sig);
-                                    let itxn = InsertTxn {
-                                        txn_type: "mine".to_string(),
-                                        signature: sig.to_string(),
-                                        priority_fee: prio_fee as u32,
-                                    };
-                                    let app_db = app_database.clone();
-                                    tokio::spawn(async move {
-                                        while let Err(_) = app_db.add_new_txn(itxn.clone()).await {
-                                            error!("Failed to add tx to db! Retrying...");
-                                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                                        }
-                                    });
 
-                                    // Handle new hash immediately with websocket
-                                    let app_app_proof = app_proof.clone();
-                                    let app_db = app_database.clone();
-                                    let app_nonce = app_nonce.clone();
-                                    let app_config = app_config.clone();
-                                    let app_prio_fee = app_prio_fee.clone();
-                                    let app_epoch_hashes = app_epoch_hashes.clone();
-                                    tokio::spawn(async move {
-                                        let app_proof = app_app_proof;
-                                        let app_database = app_db;
-                                        loop {
-                                            info!("Waiting for proof hash update");
-                                            let latest_proof = { app_proof.lock().await.clone() };
-
-                                            if old_proof.challenge.eq(&latest_proof.challenge) {
-                                                info!("Proof challenge not updated yet..");
-                                                old_proof = latest_proof;
-                                                tokio::time::sleep(Duration::from_millis(1000)).await;
-                                                continue;
-                                            } else {
-                                                info!("Adding new challenge to db");
-                                                let new_challenge = InsertChallenge {
-                                                    pool_id: app_config.pool_id,
-                                                    challenge: latest_proof.challenge.to_vec(),
-                                                    rewards_earned: None,
-                                                };
-
-                                                while let Err(_) = app_database
-                                                    .add_new_challenge(new_challenge.clone())
-                                                    .await
-                                                {
-                                                    error!("Failed to add new challenge to db, retrying...");
-                                                    tokio::time::sleep(Duration::from_millis(1000))
-                                                        .await;
-                                                }
-                                                info!("New challenge successfully added to db");
-
-
-                                                // Reset mining data
-                                                {
-                                                    let mut prio_fee = app_prio_fee.lock().await;
-                                                    let mut decrease_amount = 0;
-                                                    if *prio_fee > 20_000 {
-                                                        decrease_amount = 1_000;
-                                                    }
-                                                    if *prio_fee >= 50_000 {
-                                                        decrease_amount = 5_000;
-                                                    }
-                                                    if *prio_fee >= 100_000 {
-                                                        decrease_amount = 10_000;
-                                                    }
-
-                                                    *prio_fee =
-                                                        prio_fee.saturating_sub(decrease_amount);
-                                                }
-                                                // reset nonce
-                                                {
-                                                    let mut nonce = app_nonce.lock().await;
-                                                    *nonce = 0;
-                                                }
-                                                // reset epoch hashes
-                                                {
-                                                    info!("reset epoch hashes");
-                                                    let mut mut_epoch_hashes =
-                                                        app_epoch_hashes.write().await;
-                                                    mut_epoch_hashes.best_hash.solution = None;
-                                                    mut_epoch_hashes.best_hash.difficulty = 0;
-                                                    mut_epoch_hashes.submissions = HashMap::new();
-                                                }
-
-                                                break;
+                                match sig {
+                                    Ok(sig) => {
+                                        // success
+                                        success = true;
+                                        info!("Success!!");
+                                        info!("Sig: {}", sig);
+                                        let itxn = InsertTxn {
+                                            txn_type: "mine".to_string(),
+                                            signature: sig.to_string(),
+                                            priority_fee: prio_fee as u32,
+                                        };
+                                        let app_db = app_database.clone();
+                                        tokio::spawn(async move {
+                                            while let Err(_) = app_db.add_new_txn(itxn.clone()).await {
+                                                error!("Failed to add tx to db! Retrying...");
+                                                tokio::time::sleep(Duration::from_millis(2000)).await;
                                             }
-                                        }
+                                        });
 
-                                    });
+                                        // Handle new hash immediately with websocket
+                                        let app_app_proof = app_proof.clone();
+                                        let app_db = app_database.clone();
+                                        let app_nonce = app_nonce.clone();
+                                        let app_config = app_config.clone();
+                                        let app_prio_fee = app_prio_fee.clone();
+                                        let app_epoch_hashes = app_epoch_hashes.clone();
+                                        tokio::spawn(async move {
+                                            let app_proof = app_app_proof;
+                                            let app_database = app_db;
+                                            loop {
+                                                info!("Waiting for proof hash update");
+                                                let latest_proof = { app_proof.lock().await.clone() };
 
-                                    // get reward amount from MineEvent data and update database
-                                    // and clients
-                                    loop {
-                                        if let Ok(txn_result) = rpc_client.get_transaction_with_config(&sig, RpcTransactionConfig {
-                                            encoding: Some(UiTransactionEncoding::Base64),
-                                            commitment: Some(rpc_client.commitment()),
-                                            max_supported_transaction_version: None,
-                                        }).await {
-                                            let data = txn_result.transaction.meta.unwrap().return_data;
+                                                if old_proof.challenge.eq(&latest_proof.challenge) {
+                                                    info!("Proof challenge not updated yet..");
+                                                    old_proof = latest_proof;
+                                                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                    continue;
+                                                } else {
+                                                    info!("Adding new challenge to db");
+                                                    let new_challenge = InsertChallenge {
+                                                        pool_id: app_config.pool_id,
+                                                        challenge: latest_proof.challenge.to_vec(),
+                                                        rewards_earned: None,
+                                                    };
 
-                                            match data {
-                                                solana_transaction_status::option_serializer::OptionSerializer::Some(data) => {
-                                                    let bytes = BASE64_STANDARD.decode(data.data.0).unwrap();
+                                                    while let Err(_) = app_database
+                                                        .add_new_challenge(new_challenge.clone())
+                                                        .await
+                                                    {
+                                                        error!("Failed to add new challenge to db, retrying...");
+                                                        tokio::time::sleep(Duration::from_millis(1000))
+                                                            .await;
+                                                    }
+                                                    info!("New challenge successfully added to db");
 
-                                                    if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEvent>(&bytes) {
-                                                        info!("MineEvent: {:?}", mine_event);
-                                                        let rewards = mine_event.reward;
-                                                        // handle sending mine success message
-                                                        let mut total_hashpower: u64 = 0;
-                                                        for submission in submissions.iter() {
-                                                            total_hashpower += submission.1.2
+
+                                                    // Reset mining data
+                                                    {
+                                                        let mut prio_fee = app_prio_fee.lock().await;
+                                                        let mut decrease_amount = 0;
+                                                        if *prio_fee > 20_000 {
+                                                            decrease_amount = 1_000;
                                                         }
-                                                        let challenge;
-                                                        loop {
-                                                            if let Ok(c) = app_database
-                                                                .get_challenge_by_challenge(
-                                                                    old_proof.challenge.to_vec(),
+                                                        if *prio_fee >= 50_000 {
+                                                            decrease_amount = 5_000;
+                                                        }
+                                                        if *prio_fee >= 100_000 {
+                                                            decrease_amount = 10_000;
+                                                        }
+
+                                                        *prio_fee =
+                                                            prio_fee.saturating_sub(decrease_amount);
+                                                    }
+                                                    // reset nonce
+                                                    {
+                                                        let mut nonce = app_nonce.lock().await;
+                                                        *nonce = 0;
+                                                    }
+                                                    // reset epoch hashes
+                                                    {
+                                                        info!("reset epoch hashes");
+                                                        let mut mut_epoch_hashes =
+                                                            app_epoch_hashes.write().await;
+                                                        mut_epoch_hashes.best_hash.solution = None;
+                                                        mut_epoch_hashes.best_hash.difficulty = 0;
+                                                        mut_epoch_hashes.submissions = HashMap::new();
+                                                    }
+
+                                                    break;
+                                                }
+                                            }
+
+                                        });
+
+                                        // get reward amount from MineEvent data and update database
+                                        // and clients
+                                        loop {
+                                            if let Ok(txn_result) = rpc_client.get_transaction_with_config(&sig, RpcTransactionConfig {
+                                                encoding: Some(UiTransactionEncoding::Base64),
+                                                commitment: Some(rpc_client.commitment()),
+                                                max_supported_transaction_version: None,
+                                            }).await {
+                                                let data = txn_result.transaction.meta.unwrap().return_data;
+
+                                                match data {
+                                                    solana_transaction_status::option_serializer::OptionSerializer::Some(data) => {
+                                                        let bytes = BASE64_STANDARD.decode(data.data.0).unwrap();
+
+                                                        if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEvent>(&bytes) {
+                                                            info!("MineEvent: {:?}", mine_event);
+                                                            let rewards = mine_event.reward;
+                                                            // handle sending mine success message
+                                                            let mut total_hashpower: u64 = 0;
+                                                            for submission in submissions.iter() {
+                                                                total_hashpower += submission.1.2
+                                                            }
+                                                            let challenge;
+                                                            loop {
+                                                                if let Ok(c) = app_database
+                                                                    .get_challenge_by_challenge(
+                                                                        old_proof.challenge.to_vec(),
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    challenge = c;
+                                                                    break;
+                                                                } else {
+                                                                    error!(
+                                                                        "Failed to get challenge by challenge! Retrying..."
+                                                                    );
+                                                                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                                }
+                                                            }
+
+                                                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                            let latest_proof = { app_proof.lock().await.clone() };
+                                                            let balance = (latest_proof.balance as f64)
+                                                                / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                                                            let _ = mine_success_sender.send(
+                                                                MessageInternalMineSuccess {
+                                                                    difficulty,
+                                                                    total_balance: balance,
+                                                                    rewards,
+                                                                    challenge_id: challenge.id,
+                                                                    total_hashpower,
+                                                                    submissions,
+                                                                },
+                                                            );
+                                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                                            while let Err(_) = app_database
+                                                                .update_pool_rewards(
+                                                                    app_wallet.pubkey().to_string(),
+                                                                    rewards,
                                                                 )
                                                                 .await
                                                             {
-                                                                challenge = c;
-                                                                break;
-                                                            } else {
                                                                 error!(
-                                                                    "Failed to get challenge by challenge! Retrying..."
+                                                                    "Failed to update pool rewards! Retrying..."
                                                                 );
-                                                                tokio::time::sleep(Duration::from_millis(1000)).await;
-                                                            }
-                                                        }
-
-                                                        tokio::time::sleep(Duration::from_millis(1000)).await;
-                                                        let latest_proof = { app_proof.lock().await.clone() };
-                                                        let balance = (latest_proof.balance as f64)
-                                                            / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                                                        let _ = mine_success_sender.send(
-                                                            MessageInternalMineSuccess {
-                                                                difficulty,
-                                                                total_balance: balance,
-                                                                rewards,
-                                                                challenge_id: challenge.id,
-                                                                total_hashpower,
-                                                                submissions,
-                                                            },
-                                                        );
-                                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                                        while let Err(_) = app_database
-                                                            .update_pool_rewards(
-                                                                app_wallet.pubkey().to_string(),
-                                                                rewards,
-                                                            )
-                                                            .await
-                                                        {
-                                                            error!(
-                                                                "Failed to update pool rewards! Retrying..."
-                                                            );
-                                                            tokio::time::sleep(Duration::from_millis(1000))
-                                                                .await;
-                                                        }
-
-                                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                                        let submission_id;
-                                                        loop {
-                                                            if let Ok(s) = app_database.get_submission_id_with_nonce(u64::from_le_bytes(
-                                                                best_solution.n,
-                                                            ))
-                                                            .await {
-                                                                submission_id = s;
-                                                                break;
-                                                            } else {
-                                                                error!("Failed to get submission id with nonce! Retrying...");
                                                                 tokio::time::sleep(Duration::from_millis(1000))
                                                                     .await;
                                                             }
-                                                        }
-                                                        tokio::time::sleep(Duration::from_millis(200)).await;
-                                                        if let Err(_) = app_database
-                                                            .update_challenge_rewards(
-                                                                old_proof.challenge.to_vec(),
-                                                                submission_id,
-                                                                rewards,
-                                                            )
-                                                            .await
-                                                        {
-                                                            error!("Failed to update challenge rewards! Skipping! Devs check!");
-                                                            let err_str = format!("Challenge UPDATE FAILED - Challenge: {:?}\nSubmission ID: {}\nRewards: {}\n", old_proof.challenge.to_vec(), submission_id, rewards);
-                                                            error!(err_str);
-                                                        }
-                                                    } else {
-                                                        error!("Failed get MineEvent data from transaction... wtf...");
-                                                        break;
-                                                    }
 
-                                                },
-                                                solana_transaction_status::option_serializer::OptionSerializer::None => {
-                                                    error!("RPC gave no transaction metadata....");
-                                                    tokio::time::sleep(Duration::from_millis(2000)).await;
-                                                    continue;
-                                                },
-                                                solana_transaction_status::option_serializer::OptionSerializer::Skip => {
-                                                    error!("RPC gave transaction metadata should skip...");
-                                                    tokio::time::sleep(Duration::from_millis(2000)).await;
-                                                    continue;
+                                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                                            let submission_id;
+                                                            loop {
+                                                                if let Ok(s) = app_database.get_submission_id_with_nonce(u64::from_le_bytes(
+                                                                    best_solution.n,
+                                                                ))
+                                                                .await {
+                                                                    submission_id = s;
+                                                                    break;
+                                                                } else {
+                                                                    error!("Failed to get submission id with nonce! Retrying...");
+                                                                    tokio::time::sleep(Duration::from_millis(1000))
+                                                                        .await;
+                                                                }
+                                                            }
+                                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                                            if let Err(_) = app_database
+                                                                .update_challenge_rewards(
+                                                                    old_proof.challenge.to_vec(),
+                                                                    submission_id,
+                                                                    rewards,
+                                                                )
+                                                                .await
+                                                            {
+                                                                error!("Failed to update challenge rewards! Skipping! Devs check!");
+                                                                let err_str = format!("Challenge UPDATE FAILED - Challenge: {:?}\nSubmission ID: {}\nRewards: {}\n", old_proof.challenge.to_vec(), submission_id, rewards);
+                                                                error!(err_str);
+                                                            }
+                                                        } else {
+                                                            error!("Failed get MineEvent data from transaction... wtf...");
+                                                            break;
+                                                        }
 
-                                                },
+                                                    },
+                                                    solana_transaction_status::option_serializer::OptionSerializer::None => {
+                                                        error!("RPC gave no transaction metadata....");
+                                                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                                                        continue;
+                                                    },
+                                                    solana_transaction_status::option_serializer::OptionSerializer::Skip => {
+                                                        error!("RPC gave transaction metadata should skip...");
+                                                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                                                        continue;
+
+                                                    },
+                                                }
+                                                break;
+                                            } else {
+                                                error!("Failed to get confirmed transaction... Come on rpc...");
+                                                tokio::time::sleep(Duration::from_millis(2000)).await;
                                             }
-                                            break;
-                                        } else {
-                                            error!("Failed to get confirmed transaction... Come on rpc...");
-                                            tokio::time::sleep(Duration::from_millis(2000)).await;
                                         }
-                                    }
 
-                                    break;
-                                } else {
-                                    info!("increasing prio fees");
-                                    {
-                                        let mut prio_fee = app_prio_fee.lock().await;
-                                        if *prio_fee < 1_000_000 {
-                                            *prio_fee += 15_000;
+                                        break;
+                                    },
+                                    Err(e) => {
+                                        error!("Failed to send and confirm txn");
+                                        error!("Error: {:?}", e);
+                                        info!("increasing prio fees");
+                                        {
+                                            let mut prio_fee = app_prio_fee.lock().await;
+                                            if *prio_fee < 1_000_000 {
+                                                *prio_fee += 15_000;
+                                            }
                                         }
+                                        tokio::time::sleep(Duration::from_millis(2_000)).await;
                                     }
-                                    tokio::time::sleep(Duration::from_millis(2_000)).await;
                                 }
                             } else {
                                 error!("Failed to get latest blockhash. retrying...");
