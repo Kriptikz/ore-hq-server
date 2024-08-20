@@ -536,8 +536,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 text: String::from("Sending mine transaction..."),
                             });
 
+                            let mut cu_limit = 485_000;
+                            let should_add_reset_ix = if let Some(config) = loaded_config {
+                                let time_until_reset = (config.last_reset_at + 60) - now as i64;
+                                if time_until_reset <= 5 {
+                                    cu_limit = 500_000;
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
                             let cu_limit_ix =
-                                ComputeBudgetInstruction::set_compute_unit_limit(490000);
+                                ComputeBudgetInstruction::set_compute_unit_limit(cu_limit);
                             ixs.push(cu_limit_ix);
 
                             let prio_fee_ix =
@@ -547,13 +560,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let noop_ix = get_auth_ix(signer.pubkey());
                             ixs.push(noop_ix);
 
-                            if let Some(config) = loaded_config {
-                                let time_until_reset = (config.last_reset_at + 60) - now as i64;
-                                if time_until_reset <= 5 {
-                                    let reset_ix = get_reset_ix(signer.pubkey());
-                                    ixs.push(reset_ix);
-                                }
+                            if should_add_reset_ix {
+                                let reset_ix = get_reset_ix(signer.pubkey());
+                                ixs.push(reset_ix);
                             }
+
 
                             let ix_mine = get_mine_ix(signer.pubkey(), best_solution, bus);
                             ixs.push(ix_mine);
