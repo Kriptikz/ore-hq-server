@@ -538,7 +538,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             let mut cu_limit = 485_000;
                             let should_add_reset_ix = if let Some(config) = loaded_config {
-                                let time_until_reset = (config.last_reset_at + 60) - now as i64;
+                                let time_until_reset = (config.last_reset_at + 300) - now as i64;
                                 if time_until_reset <= 5 {
                                     cu_limit = 500_000;
                                     true
