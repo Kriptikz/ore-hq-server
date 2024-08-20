@@ -1903,8 +1903,8 @@ async fn client_message_handler_system(
                         if diff >= MIN_DIFF {
                             // calculate rewards
                             let mut hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
-                            if hashpower > 327_680 {
-                                hashpower = 327_680;
+                            if hashpower > 81_920 {
+                                hashpower = 81_920;
                             }
                             {
                                 let mut epoch_hashes = epoch_hashes.write().await;
