@@ -18,7 +18,7 @@ solana-sdk = "1.18.12"
 solana-client = "1.18.12"
 tokio = { version = "1.39.2", features = ["full"] }
 tower = { version = "0.4.13", features = ["util"] }
-tower-http = { version = "0.5.2", features = ["trace"] }
+tower-http = { version = "0.5.2", features = ["trace", "cors"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 dotenv = "0.15.0"

@@ -16,7 +16,7 @@ use axum::{
         ws::{Message, WebSocket},
         ConnectInfo, Query, State, WebSocketUpgrade,
     },
-    http::{Response, StatusCode},
+    http::{Method, Response, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Extension, Router,
@@ -58,7 +58,7 @@ use tokio::{
         Mutex, RwLock,
     },
 };
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tower_http::{cors::CorsLayer, trace::{DefaultMakeSpan, TraceLayer}};
 use tracing::{error, info};
 
 mod app_database;
@@ -976,6 +976,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET])
+        .allow_origin(tower_http::cors::Any);
+
     let client_channel = client_message_sender.clone();
     let app_shared_state = shared_state.clone();
     let app = Router::new()
@@ -999,7 +1003,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
-        );
+        )
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
