@@ -1173,53 +1173,60 @@ async fn post_signup(
         } else {
             info!("Valid signup tx, submitting.");
 
-            if let Ok(_sig) = rpc_client.send_and_confirm_transaction(&tx).await {
-                let res = app_database
-                    .add_new_miner(user_pubkey.to_string(), true)
-                    .await;
-                let miner = app_database
-                    .get_miner_by_pubkey_str(user_pubkey.to_string())
-                    .await
-                    .unwrap();
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
 
-                let wallet_pubkey = wallet.pubkey();
-                let pool = app_database
-                    .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
-                    .await
-                    .unwrap();
+            match result {
+                Ok(_sig) => {
+                    let res = app_database
+                        .add_new_miner(user_pubkey.to_string(), true)
+                        .await;
+                    let miner = app_database
+                        .get_miner_by_pubkey_str(user_pubkey.to_string())
+                        .await
+                        .unwrap();
 
-                if res.is_ok() {
-                    let new_reward = InsertReward {
-                        miner_id: miner.id,
-                        pool_id: pool.id,
-                    };
-                    let result = app_database.add_new_reward(new_reward).await;
+                    let wallet_pubkey = wallet.pubkey();
+                    let pool = app_database
+                        .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
+                        .await
+                        .unwrap();
 
-                    if result.is_ok() {
-                        return Response::builder()
-                            .status(StatusCode::OK)
-                            .header("Content-Type", "text/text")
-                            .body("SUCCESS".to_string())
-                            .unwrap();
+                    if res.is_ok() {
+                        let new_reward = InsertReward {
+                            miner_id: miner.id,
+                            pool_id: pool.id,
+                        };
+                        let result = app_database.add_new_reward(new_reward).await;
+
+                        if result.is_ok() {
+                            return Response::builder()
+                                .status(StatusCode::OK)
+                                .header("Content-Type", "text/text")
+                                .body("SUCCESS".to_string())
+                                .unwrap();
+                        } else {
+                            error!("Failed to add miner rewards tracker to database");
+                            return Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body("Failed to add miner rewards tracker to database".to_string())
+                                .unwrap();
+                        }
                     } else {
-                        error!("Failed to add miner rewards tracker to database");
+                        error!("Failed to add miner to database");
                         return Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Failed to add miner rewards tracker to database".to_string())
+                            .body("Failed to add user to database".to_string())
                             .unwrap();
                     }
-                } else {
-                    error!("Failed to add miner to database");
+                },
+                Err(e) => {
+                    error!("{} signup transaction failed...", user_pubkey.to_string());
+                    error!("Signup Tx Error: {:?}", e);
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to add user to database".to_string())
+                        .body("Failed to send tx".to_string())
                         .unwrap();
                 }
-            } else {
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body("Failed to send tx".to_string())
-                    .unwrap();
             }
         }
     } else {
