@@ -537,7 +537,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             });
 
                             let cu_limit_ix =
-                                ComputeBudgetInstruction::set_compute_unit_limit(480000);
+                                ComputeBudgetInstruction::set_compute_unit_limit(490000);
                             ixs.push(cu_limit_ix);
 
                             let prio_fee_ix =
