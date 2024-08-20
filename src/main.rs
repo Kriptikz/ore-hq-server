@@ -417,7 +417,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut nonce = app_nonce.lock().await;
                         let start = *nonce;
                         // max hashes possible in 60s for a single client
-                        *nonce += 2_000_000;
+                        *nonce += 4_000_000;
                         let end = *nonce;
                         start..end
                     };
