@@ -9,7 +9,7 @@ use diesel::{
 };
 use tracing::{error, info};
 
-use crate::{app_database::AppDatabaseError, models, InsertReward, Miner, Submission, SubmissionWithId};
+use crate::{app_database::AppDatabaseError, models, InsertReward, Miner, Submission, SubmissionWithId, SubmissionWithPubkey};
 
 pub struct AppRRDatabase {
     connection_pool: Pool,
@@ -88,13 +88,44 @@ impl AppRRDatabase {
         };
     }
 
-    pub async fn get_last_claim(&self, miner_id: i32) -> Result<models::LastClaim, AppDatabaseError> {
+    pub async fn get_last_challenge_submissions(&self) -> Result<Vec<SubmissionWithPubkey>, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT created_at FROM claims WHERE miner_id = ? ORDER BY id DESC")
-                        .bind::<Integer, _>(miner_id)
-                        .get_result::<models::LastClaim>(conn)
+
+                    diesel::sql_query("SELECT (s.*, m.pubkey) FROM submissions s JOIN miners m ON s.miner_id = m.id JOIN challenges c ON s.challenge_id = c.id WHERE c.id = (SELECT id from challenges ORDER BY created_at DESC LIMIT 1 OFFSET 1)")
+                        .load::<SubmissionWithPubkey>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_miner_earnings(&self, pubkey: String) -> Result<Vec<Submission>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+
+                    diesel::sql_query("SELECT s.* FROM submissions s JOIN miners m ON s.miner_id = m.id WHERE m.pubkey = ? ORDER BY s.created_at DESC LIMIT 100")
+                        .bind::<Text, _>(pubkey)
+                        .load::<Submission>(conn)
                 })
                 .await;
 

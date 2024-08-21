@@ -992,6 +992,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
         // App RR Database routes
+        .route("last-challenge-submissions", get(get_last_challenge_submissions))
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/submissions", get(get_miner_submissions))
         .with_state(app_shared_state)
@@ -1293,6 +1294,23 @@ async fn get_miner_rewards(
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid public key".to_string())
             .unwrap();
+    }
+}
+
+async fn get_last_challenge_submissions(
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+) -> Result<Json<Vec<SubmissionWithPubkey>>, String> {
+    let res = app_rr_database
+        .get_last_challenge_submissions()
+        .await;
+
+    match res {
+        Ok(submissions) => {
+            Ok(Json(submissions))
+        }
+        Err(_) => {
+            Err("Failed to get submissions for miner".to_string())
+        }
     }
 }
 

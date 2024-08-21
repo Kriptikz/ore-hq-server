@@ -1,6 +1,7 @@
 use chrono::NaiveDateTime;
-use diesel::prelude::*;
+use diesel::{mysql::MysqlType, prelude::*};
 use serde::{Deserialize, Serialize};
+use diesel::sql_types::{Integer, Text, BigInt, TinyInt, Unsigned, Nullable, Binary, Timestamp};
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::challenges)]
@@ -86,6 +87,24 @@ pub struct Submission {
     pub nonce: u64,
     pub difficulty: i8,
     pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Deserialize, Serialize, QueryableByName)]
+pub struct SubmissionWithPubkey {
+    #[sql_type = "Integer"]
+    pub id: i32,
+    #[sql_type = "Integer"]
+    pub miner_id: i32,
+    #[sql_type = "Integer"]
+    pub challenge_id: i32,
+    #[sql_type = "Unsigned<BigInt>"]
+    pub nonce: u64,
+    #[sql_type = "TinyInt"]
+    pub difficulty: i8,
+    #[sql_type = "Timestamp"]
+    pub created_at: NaiveDateTime,
+    #[sql_type = "Text"]
+    pub pubkey: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
