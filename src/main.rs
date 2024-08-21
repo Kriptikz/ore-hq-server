@@ -992,7 +992,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
         // App RR Database routes
-        .route("last-challenge-submissions", get(get_last_challenge_submissions))
+        .route("/last-challenge-submissions", get(get_last_challenge_submissions))
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/submissions", get(get_miner_submissions))
         .with_state(app_shared_state)
