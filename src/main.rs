@@ -9,6 +9,7 @@ use std::{
 };
 
 use self::models::*;
+use app_rr_database::AppRRDatabase;
 use ::ore_utils::AccountDeserialize;
 use app_database::{AppDatabase, AppDatabaseError};
 use axum::{
@@ -57,14 +58,13 @@ use tokio::{
 use tower_http::{cors::CorsLayer, trace::{DefaultMakeSpan, TraceLayer}};
 use tracing::{error, info};
 
+mod app_rr_database;
 mod app_database;
 mod models;
 mod schema;
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
-
-type AppRRDatabase = AppDatabase;
 
 #[derive(Clone)]
 struct AppClientConnection {
@@ -1296,12 +1296,13 @@ async fn get_miner_rewards(
     }
 }
 
+#[derive(Deserialize)]
 struct GetSubmissionsParams {
     pubkey: String,
 }
 
 async fn get_miner_submissions(
-    query_params: Query<PubkeyParam>,
+    query_params: Query<GetSubmissionsParams>,
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
 ) -> Result<Json<Vec<Submission>>, String> {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {

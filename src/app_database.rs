@@ -1,6 +1,5 @@
 use deadpool_diesel::{
     mysql::{Manager, Pool},
-    PoolConfig,
 };
 use diesel::{
     connection::SimpleConnection,
