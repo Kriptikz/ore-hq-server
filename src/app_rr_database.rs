@@ -93,7 +93,7 @@ impl AppRRDatabase {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
 
-                    diesel::sql_query("SELECT (s.*, m.pubkey) FROM submissions s JOIN miners m ON s.miner_id = m.id JOIN challenges c ON s.challenge_id = c.id WHERE c.id = (SELECT id from challenges ORDER BY created_at DESC LIMIT 1 OFFSET 1)")
+                    diesel::sql_query("SELECT s.*, m.pubkey FROM submissions s JOIN miners m ON s.miner_id = m.id JOIN challenges c ON s.challenge_id = c.id WHERE c.id = (SELECT id from challenges ORDER BY created_at DESC LIMIT 1 OFFSET 1)")
                         .load::<SubmissionWithPubkey>(conn)
                 })
                 .await;
