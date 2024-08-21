@@ -10,7 +10,7 @@ use diesel::{
 };
 use tracing::{error, info};
 
-use crate::{models, InsertReward, Miner, SubmissionWithId};
+use crate::{models, InsertReward, Miner, Submission, SubmissionWithId};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
@@ -734,6 +734,36 @@ impl AppDatabase {
                 Ok(interaction) => match interaction {
                     Ok(_query) => {
                         return Ok(());
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_miner_submissions(&self, pubkey: String) -> Result<Vec<Submission>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT s.* FROM submissions s JOIN miners m ON s.miner_id = m.id WHERE m.pubkey = ? ORDER BY s.created_at DESC LIMIT 100")
+                        .bind::<Text, _>(pubkey)
+                        .load::<Submission>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
                     }
                     Err(e) => {
                         error!("{:?}", e);

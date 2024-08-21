@@ -15,11 +15,7 @@ use axum::{
     extract::{
         ws::{Message, WebSocket},
         ConnectInfo, Query, State, WebSocketUpgrade,
-    },
-    http::{Method, Response, StatusCode},
-    response::IntoResponse,
-    routing::{get, post},
-    Extension, Router,
+    }, http::{Method, Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Json, Router
 };
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -67,6 +63,8 @@ mod schema;
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
+
+type AppRRDatabase = AppDatabase;
 
 #[derive(Clone)]
 struct AppClientConnection {
@@ -161,8 +159,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rpc_ws_url = std::env::var("RPC_WS_URL").expect("RPC_WS_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
+    let database_rr_url = std::env::var("DATABASE_RR_URL").expect("DATABASE_RR_URL must be set.");
 
     let app_database = Arc::new(AppDatabase::new(database_url));
+    let app_rr_database = Arc::new(AppRRDatabase::new(database_rr_url));
 
     let whitelist = if let Some(whitelist) = args.whitelist {
         let file = Path::new(&whitelist);
@@ -988,12 +988,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/signup", post(post_signup))
         .route("/claim", post(post_claim))
-        .route("/miner/rewards", get(get_miner_rewards))
-        .route("/miner/balance", get(get_miner_balance))
         .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
+        .route("/miner/balance", get(get_miner_balance))
+        // App RR Database routes
+        .route("/miner/rewards", get(get_miner_rewards))
+        .route("/miner/submissions", get(get_miner_submissions))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
+        .layer(Extension(app_rr_database))
         .layer(Extension(config))
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
@@ -1261,10 +1264,10 @@ struct PubkeyParam {
 
 async fn get_miner_rewards(
     query_params: Query<PubkeyParam>,
-    Extension(app_database): Extension<Arc<AppDatabase>>,
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        let res = app_database
+        let res = app_rr_database
             .get_miner_rewards(user_pubkey.to_string())
             .await;
 
@@ -1290,6 +1293,32 @@ async fn get_miner_rewards(
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid public key".to_string())
             .unwrap();
+    }
+}
+
+struct GetSubmissionsParams {
+    pubkey: String,
+}
+
+async fn get_miner_submissions(
+    query_params: Query<PubkeyParam>,
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+) -> Result<Json<Vec<Submission>>, String> {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let res = app_rr_database
+            .get_miner_submissions(user_pubkey.to_string())
+            .await;
+
+        match res {
+            Ok(submissions) => {
+                Ok(Json(submissions))
+            }
+            Err(_) => {
+                Err("Failed to get submissions for miner".to_string())
+            }
+        }
+    } else {
+        Err("Invalid public key".to_string())
     }
 }
 
