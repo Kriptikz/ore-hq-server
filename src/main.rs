@@ -606,7 +606,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 info!("Sending signed tx...");
                                 info!("attempt: {}", i + 1);
                                 let sig = rpc_client
-                                    .send_and_confirm_transaction_with_spinner(&tx)
                                     .send_and_confirm_transaction_with_spinner_and_commitment(&tx, rpc_client.commitment())
                                     .await;
 
