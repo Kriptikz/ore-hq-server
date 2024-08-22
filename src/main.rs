@@ -1316,7 +1316,7 @@ async fn get_miner_rewards(
                     .unwrap();
             }
             Err(_) => {
-                error!("get_miner_rewards: failed to get balance from db.");
+                error!("get_miner_rewards: failed to get rewards balance from db for {}", user_pubkey.to_string());
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to get balance".to_string())
