@@ -70,7 +70,7 @@ impl AppRRDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!("get_miner_rewards: {:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
@@ -205,4 +205,34 @@ impl AppRRDatabase {
         };
     }
 
+    pub async fn get_pool_by_authority_pubkey(
+        &self,
+        pool_pubkey: String,
+    ) -> Result<models::Pool, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT id, proof_pubkey, authority_pubkey, total_rewards, claimed_rewards FROM pools WHERE pools.authority_pubkey = ?")
+                .bind::<Text, _>(pool_pubkey)
+                .get_result::<models::Pool>(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
 }

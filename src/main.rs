@@ -30,6 +30,7 @@ use ore_utils::{
     ORE_TOKEN_DECIMALS,
 };
 use rand::Rng;
+use routes::{get_challenges, get_pool_balance, get_pool_staked};
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
@@ -61,6 +62,7 @@ use tracing::{error, info};
 mod app_rr_database;
 mod app_database;
 mod models;
+mod routes;
 mod schema;
 
 const MIN_DIFF: u32 = 8;
@@ -1022,6 +1024,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/submissions", get(get_miner_submissions))
         .route("/challenges", get(get_challenges))
+        .route("/pool", get(routes::get_pool))
+        .route("/pool/balance", get(get_pool_balance))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
         .layer(Extension(app_rr_database))
@@ -1373,28 +1377,6 @@ async fn get_miner_submissions(
             }
         } else {
             Err("Invalid public key".to_string())
-        }
-    } else {
-        return Err("Stats not enabled for this server.".to_string());
-    }
-}
-
-async fn get_challenges(
-    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
-    Extension(app_config): Extension<Arc<Config>>,
-) -> Result<Json<Vec<ChallengeWithDifficulty>>, String> {
-    if app_config.stats_enabled {
-        let res = app_rr_database
-            .get_challenges()
-            .await;
-
-        match res {
-            Ok(challenges) => {
-                Ok(Json(challenges))
-            }
-            Err(_) => {
-                Err("Failed to get submissions for miner".to_string())
-            }
         }
     } else {
         return Err("Stats not enabled for this server.".to_string());
