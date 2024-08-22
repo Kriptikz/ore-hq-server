@@ -7,7 +7,7 @@ use solana_sdk::pubkey::Pubkey;
 use spl_associated_token_account::get_associated_token_address;
 use tracing::error;
 
-use crate::{app_rr_database, ore_utils::{get_ore_mint, get_proof}, ChallengeWithDifficulty, Config};
+use crate::{app_rr_database, ore_utils::{get_ore_mint, get_proof}, ChallengeWithDifficulty, Config, Txn};
 use std::{str::FromStr, sync::Arc};
 
 
@@ -36,15 +36,15 @@ pub async fn get_challenges(
 pub async fn get_latest_mine_txn(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
     Extension(app_config): Extension<Arc<Config>>,
-) -> Result<Json<Vec<ChallengeWithDifficulty>>, String> {
+) -> Result<Json<Txn>, String> {
     if app_config.stats_enabled {
         let res = app_rr_database
-            .get_challenges()
+            .get_latest_mine_txn()
             .await;
 
         match res {
-            Ok(challenges) => {
-                Ok(Json(challenges))
+            Ok(txn) => {
+                Ok(Json(txn))
             }
             Err(_) => {
                 Err("Failed to get submissions for miner".to_string())
