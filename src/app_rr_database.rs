@@ -5,7 +5,7 @@ use diesel::{
 };
 use tracing::error;
 
-use crate::{app_database::AppDatabaseError, models, ChallengeWithDifficulty, Submission, SubmissionWithPubkey};
+use crate::{app_database::AppDatabaseError, models, ChallengeWithDifficulty, Submission, SubmissionWithPubkey, Txn};
 
 pub struct AppRRDatabase {
     connection_pool: Pool,
@@ -215,6 +215,36 @@ impl AppRRDatabase {
                 .bind::<Text, _>(pool_pubkey)
                 .get_result::<models::Pool>(conn)
             }).await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_latest_mine_txn(&self) -> Result<Txn, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+
+                    diesel::sql_query("SELECT * FROM txns WHERE txn_type = mine ORDER BY id LIMIT 1")
+                        .get_result::<Txn>(conn)
+                })
+                .await;
 
             match res {
                 Ok(interaction) => match interaction {

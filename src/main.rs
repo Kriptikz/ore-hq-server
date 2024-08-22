@@ -30,7 +30,7 @@ use ore_utils::{
     ORE_TOKEN_DECIMALS,
 };
 use rand::Rng;
-use routes::{get_challenges, get_pool_balance, get_pool_staked};
+use routes::{get_challenges, get_latest_mine_txn, get_pool_balance, get_pool_staked};
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
@@ -1027,6 +1027,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool", get(routes::get_pool))
         .route("/pool/staked", get(routes::get_pool_staked))
         .route("/pool/balance", get(get_pool_balance))
+        .route("/txns/latest-mine", get(get_latest_mine_txn))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
         .layer(Extension(app_rr_database))

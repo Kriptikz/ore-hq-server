@@ -33,6 +33,28 @@ pub async fn get_challenges(
     }
 }
 
+pub async fn get_latest_mine_txn(
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+    Extension(app_config): Extension<Arc<Config>>,
+) -> Result<Json<Vec<ChallengeWithDifficulty>>, String> {
+    if app_config.stats_enabled {
+        let res = app_rr_database
+            .get_challenges()
+            .await;
+
+        match res {
+            Ok(challenges) => {
+                Ok(Json(challenges))
+            }
+            Err(_) => {
+                Err("Failed to get submissions for miner".to_string())
+            }
+        }
+    } else {
+        return Err("Stats not enabled for this server.".to_string());
+    }
+}
+
 
 pub async fn get_pool(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,

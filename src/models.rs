@@ -144,6 +144,7 @@ pub struct Txn {
     pub txn_type: String,
     pub signature: String,
     pub priority_fee: u32,
+    pub created_at: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
