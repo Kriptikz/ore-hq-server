@@ -1025,6 +1025,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/submissions", get(get_miner_submissions))
         .route("/challenges", get(get_challenges))
         .route("/pool", get(routes::get_pool))
+        .route("/pool/staked", get(routes::get_pool_staked))
         .route("/pool/balance", get(get_pool_balance))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
