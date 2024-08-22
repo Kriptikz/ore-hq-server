@@ -180,7 +180,7 @@ impl AppRRDatabase {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
 
-                    diesel::sql_query("SELECT c.id, c.rewards_earned, c.updated_at, s.difficulty FROM challenges c JOIN submissions s ON c.submission_id = s.id WHERE c.submission_id IS NOT NULL ORDER BY c.id LIMIT 1440")
+                    diesel::sql_query("SELECT c.id, c.rewards_earned, c.updated_at, s.difficulty FROM challenges c JOIN submissions s ON c.submission_id = s.id WHERE c.submission_id IS NOT NULL ORDER BY c.id  DESC LIMIT 1440")
                         .load::<ChallengeWithDifficulty>(conn)
                 })
                 .await;
