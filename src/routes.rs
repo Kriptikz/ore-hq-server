@@ -2,14 +2,13 @@ use app_rr_database::AppRRDatabase;
 use axum::{
     http::{Response, StatusCode}, response::IntoResponse, Extension, Json
 };
-use ore_api::state::Proof;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{signature::Keypair, signer::Signer};
+use solana_sdk::pubkey::Pubkey;
 use spl_associated_token_account::get_associated_token_address;
 use tracing::error;
 
 use crate::{app_rr_database, ore_utils::{get_ore_mint, get_proof}, ChallengeWithDifficulty, Config};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 
 pub async fn get_challenges(
@@ -38,12 +37,12 @@ pub async fn get_challenges(
 pub async fn get_pool(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
     Extension(app_config): Extension<Arc<Config>>,
-    Extension(wallet): Extension<Arc<Keypair>>,
 ) -> Result<Json<crate::models::Pool>, String> {
     if app_config.stats_enabled {
+        let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
         let res = app_rr_database
             .get_pool_by_authority_pubkey(
-                wallet.pubkey().to_string()
+                pubkey.to_string()
             )
             .await;
 
@@ -63,17 +62,17 @@ pub async fn get_pool(
 pub async fn get_pool_staked(
     Extension(app_config): Extension<Arc<Config>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
-    Extension(wallet): Extension<Arc<Keypair>>,
-) -> Result<Json<Proof>, String> {
+) -> impl IntoResponse {
     if app_config.stats_enabled {
-        let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
+        let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
+        let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, pubkey).await {
             loaded_proof
         } else {
             error!("get_pool_staked: Failed to load proof.");
             return Err("Stats not enabled for this server.".to_string());
         };
 
-        return Ok(Json(proof))
+        return Ok(Json(proof.balance))
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }
@@ -81,11 +80,11 @@ pub async fn get_pool_staked(
 
 pub async fn get_pool_balance(
     Extension(app_config): Extension<Arc<Config>>,
-    Extension(wallet): Extension<Arc<Keypair>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
 ) -> impl IntoResponse {
     if app_config.stats_enabled {
-        let miner_token_account = get_associated_token_address(&wallet.pubkey(), &get_ore_mint());
+        let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
+        let miner_token_account = get_associated_token_address(&pubkey, &get_ore_mint());
         if let Ok(response) = rpc_client
             .get_token_account_balance(&miner_token_account)
             .await
