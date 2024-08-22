@@ -47,7 +47,7 @@ pub async fn get_latest_mine_txn(
                 Ok(Json(txn))
             }
             Err(_) => {
-                Err("Failed to get submissions for miner".to_string())
+                Err("Failed to get latest mine txn".to_string())
             }
         }
     } else {

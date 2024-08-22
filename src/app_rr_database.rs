@@ -241,7 +241,8 @@ impl AppRRDatabase {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
 
-                    diesel::sql_query("SELECT * FROM txns WHERE txn_type = mine ORDER BY id LIMIT 1")
+                    diesel::sql_query("SELECT * FROM txns WHERE txn_type = ? ORDER BY id LIMIT 1")
+                        .bind::<Text, _>("mine")
                         .get_result::<Txn>(conn)
                 })
                 .await;
