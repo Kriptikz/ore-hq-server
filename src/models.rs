@@ -14,6 +14,18 @@ pub struct Challenge {
     pub rewards_earned: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Serialize, QueryableByName)]
+pub struct ChallengeWithDifficulty {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Nullable<Unsigned<BigInt>>)]
+    pub rewards_earned: Option<u64>,
+    #[diesel(sql_type = TinyInt)]
+    pub difficulty: i8,
+    #[diesel(sql_type = Timestamp)]
+    pub updated_at: NaiveDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::challenges)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
@@ -91,19 +103,19 @@ pub struct Submission {
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct SubmissionWithPubkey {
-    #[sql_type = "Integer"]
+    #[diesel(sql_type = Integer)]
     pub id: i32,
-    #[sql_type = "Integer"]
+    #[diesel(sql_type = Integer)]
     pub miner_id: i32,
-    #[sql_type = "Integer"]
+    #[diesel(sql_type = Integer)]
     pub challenge_id: i32,
-    #[sql_type = "Unsigned<BigInt>"]
+    #[diesel(sql_type = Unsigned<BigInt>)]
     pub nonce: u64,
-    #[sql_type = "TinyInt"]
+    #[diesel(sql_type = TinyInt)]
     pub difficulty: i8,
-    #[sql_type = "Timestamp"]
+    #[diesel(sql_type = Timestamp)]
     pub created_at: NaiveDateTime,
-    #[sql_type = "Text"]
+    #[diesel(sql_type = Text)]
     pub pubkey: String,
 }
 

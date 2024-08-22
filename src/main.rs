@@ -116,6 +116,7 @@ pub struct Config {
     password: String,
     whitelist: Option<HashSet<Pubkey>>,
     pool_id: i32,
+    stats_enabled: bool,
 }
 
 mod ore_utils;
@@ -147,6 +148,14 @@ struct Args {
         global = true
     )]
     signup_cost: u64,
+    #[arg(
+        long,
+        short,
+        action,
+        help = "Enable stats endpoints",
+    )]
+    stats: bool,
+
 }
 
 #[tokio::main]
@@ -328,6 +337,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         password,
         whitelist,
         pool_id: db_pool.id,
+        stats_enabled: args.stats,
     });
 
     let epoch_hashes = Arc::new(RwLock::new(EpochHashes {
@@ -1011,6 +1021,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/last-challenge-submissions", get(get_last_challenge_submissions))
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/submissions", get(get_miner_submissions))
+        .route("/challenges", get(get_challenges))
         .with_state(app_shared_state)
         .layer(Extension(app_database))
         .layer(Extension(app_rr_database))
@@ -1315,33 +1326,11 @@ async fn get_miner_rewards(
 
 async fn get_last_challenge_submissions(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+    Extension(app_config): Extension<Arc<Config>>,
 ) -> Result<Json<Vec<SubmissionWithPubkey>>, String> {
-    let res = app_rr_database
-        .get_last_challenge_submissions()
-        .await;
-
-    match res {
-        Ok(submissions) => {
-            Ok(Json(submissions))
-        }
-        Err(_) => {
-            Err("Failed to get submissions for miner".to_string())
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct GetSubmissionsParams {
-    pubkey: String,
-}
-
-async fn get_miner_submissions(
-    query_params: Query<GetSubmissionsParams>,
-    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
-) -> Result<Json<Vec<Submission>>, String> {
-    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+    if app_config.stats_enabled {
         let res = app_rr_database
-            .get_miner_submissions(user_pubkey.to_string())
+            .get_last_challenge_submissions()
             .await;
 
         match res {
@@ -1353,7 +1342,61 @@ async fn get_miner_submissions(
             }
         }
     } else {
-        Err("Invalid public key".to_string())
+        return Err("Stats not enabled for this server.".to_string());
+    }
+}
+
+#[derive(Deserialize)]
+struct GetSubmissionsParams {
+    pubkey: String,
+}
+
+async fn get_miner_submissions(
+    query_params: Query<GetSubmissionsParams>,
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+    Extension(app_config): Extension<Arc<Config>>,
+) -> Result<Json<Vec<Submission>>, String> {
+    if app_config.stats_enabled {
+        if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+            let res = app_rr_database
+                .get_miner_submissions(user_pubkey.to_string())
+                .await;
+
+            match res {
+                Ok(submissions) => {
+                    Ok(Json(submissions))
+                }
+                Err(_) => {
+                    Err("Failed to get submissions for miner".to_string())
+                }
+            }
+        } else {
+            Err("Invalid public key".to_string())
+        }
+    } else {
+        return Err("Stats not enabled for this server.".to_string());
+    }
+}
+
+async fn get_challenges(
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+    Extension(app_config): Extension<Arc<Config>>,
+) -> Result<Json<Vec<ChallengeWithDifficulty>>, String> {
+    if app_config.stats_enabled {
+        let res = app_rr_database
+            .get_challenges()
+            .await;
+
+        match res {
+            Ok(challenges) => {
+                Ok(Json(challenges))
+            }
+            Err(_) => {
+                Err("Failed to get submissions for miner".to_string())
+            }
+        }
+    } else {
+        return Err("Stats not enabled for this server.".to_string());
     }
 }
 
@@ -1955,7 +1998,6 @@ async fn client_message_handler_system(
             ClientMessage::Ready(addr) => {
                 let ready_clients = ready_clients.clone();
                 tokio::spawn(async move {
-                    info!("Client {} is ready!", addr.to_string());
                     let mut ready_clients = ready_clients.lock().await;
                     ready_clients.insert(addr);
                 });

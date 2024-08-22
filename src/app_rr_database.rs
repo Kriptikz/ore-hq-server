@@ -1,15 +1,11 @@
-use deadpool_diesel::{
-    mysql::{Manager, Pool},
-};
+use deadpool_diesel::mysql::{Manager, Pool};
 use diesel::{
-    connection::SimpleConnection,
-    insert_into,
     sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned},
     MysqlConnection, RunQueryDsl,
 };
-use tracing::{error, info};
+use tracing::error;
 
-use crate::{app_database::AppDatabaseError, models, InsertReward, Miner, Submission, SubmissionWithId, SubmissionWithPubkey};
+use crate::{app_database::AppDatabaseError, models, ChallengeWithDifficulty, Submission, SubmissionWithPubkey};
 
 pub struct AppRRDatabase {
     connection_pool: Pool,
@@ -178,4 +174,35 @@ impl AppRRDatabase {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
     }
+
+    pub async fn get_challenges(&self) -> Result<Vec<ChallengeWithDifficulty>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+
+                    diesel::sql_query("SELECT c.id, c.rewards_earned, c.updated_at, s.difficulty FROM challenges c JOIN submissions s ON c.submission_id = s.id WHERE c.submission_id IS NOT NULL ORDER BY c.id LIMIT 1440")
+                        .load::<ChallengeWithDifficulty>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
 }
