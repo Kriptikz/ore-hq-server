@@ -8,6 +8,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use rand::seq::SliceRandom;
+
 use self::models::*;
 use app_rr_database::AppRRDatabase;
 use ::ore_utils::AccountDeserialize;
@@ -40,11 +42,11 @@ use solana_client::{
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
-    native_token::LAMPORTS_PER_SOL,
+    native_token::{lamports_to_sol, LAMPORTS_PER_SOL},
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair, Signature},
     signer::Signer,
-    system_instruction,
+    system_instruction::{self, transfer},
     transaction::Transaction,
 };
 use solana_transaction_status::UiTransactionEncoding;
@@ -557,7 +559,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .expect("Time went backwards")
                                 .as_secs();
                             let mut ixs = vec![];
-                            let prio_fee = { app_prio_fee.lock().await.clone() };
+                            let prio_fee = 10_000;
 
                             info!("using priority fee of {}", prio_fee);
                             let _ = app_all_clients_sender.send(MessageInternalAllClients {
@@ -584,6 +586,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let prio_fee_ix =
                                 ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
                             ixs.push(prio_fee_ix);
+
+                            let jito_tip = 5_000;
+                            if jito_tip > 0 {
+                                        let tip_accounts = [
+                                            "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+                                            "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+                                            "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+                                            "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+                                            "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+                                            "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+                                            "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+                                            "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
+                                        ];
+                                        ixs.push(transfer(
+                                            &signer.pubkey(),
+                                            &Pubkey::from_str(
+                                                &tip_accounts
+                                                    .choose(&mut rand::thread_rng())
+                                                    .unwrap()
+                                                    .to_string(),
+                                            )
+                                            .unwrap(),
+                                            jito_tip,
+                                        ));
+
+                                        let log = format!("Jito tip: {} SOL", lamports_to_sol(jito_tip));
+                                        info!(log);
+                                    }
 
                             let noop_ix = get_auth_ix(signer.pubkey());
                             ixs.push(noop_ix);
