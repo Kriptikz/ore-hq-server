@@ -217,7 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let priority_fee = Arc::new(Mutex::new(args.priority_fee));
+    let priority_fee = Arc::new(args.priority_fee);
 
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
@@ -559,7 +559,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .expect("Time went backwards")
                                 .as_secs();
                             let mut ixs = vec![];
-                            let prio_fee = 10_000;
+                            let prio_fee = *app_prio_fee;
 
                             info!("using priority fee of {}", prio_fee);
                             let _ = app_all_clients_sender.send(MessageInternalAllClients {
@@ -665,7 +665,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let app_db = app_database.clone();
                                         let app_nonce = app_nonce.clone();
                                         let app_config = app_config.clone();
-                                        let app_prio_fee = app_prio_fee.clone();
+                                        //let app_prio_fee = app_prio_fee.clone();
                                         let app_epoch_hashes = app_epoch_hashes.clone();
                                         tokio::spawn(async move {
                                             let app_proof = app_app_proof;
@@ -699,22 +699,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
                                                     // Reset mining data
-                                                    {
-                                                        let mut prio_fee = app_prio_fee.lock().await;
-                                                        let mut decrease_amount = 0;
-                                                        if *prio_fee > 20_000 {
-                                                            decrease_amount = 1_000;
-                                                        }
-                                                        if *prio_fee >= 50_000 {
-                                                            decrease_amount = 5_000;
-                                                        }
-                                                        if *prio_fee >= 100_000 {
-                                                            decrease_amount = 10_000;
-                                                        }
+                                                    // {
+                                                    //     let mut prio_fee = app_prio_fee.lock().await;
+                                                    //     let mut decrease_amount = 0;
+                                                    //     if *prio_fee > 20_000 {
+                                                    //         decrease_amount = 1_000;
+                                                    //     }
+                                                    //     if *prio_fee >= 50_000 {
+                                                    //         decrease_amount = 5_000;
+                                                    //     }
+                                                    //     if *prio_fee >= 100_000 {
+                                                    //         decrease_amount = 10_000;
+                                                    //     }
 
-                                                        *prio_fee =
-                                                            prio_fee.saturating_sub(decrease_amount);
-                                                    }
+                                                    //     *prio_fee =
+                                                    //         prio_fee.saturating_sub(decrease_amount);
+                                                    // }
                                                     // reset nonce
                                                     {
                                                         let mut nonce = app_nonce.lock().await;
@@ -863,13 +863,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => {
                                         error!("Failed to send and confirm txn");
                                         error!("Error: {:?}", e);
-                                        info!("increasing prio fees");
-                                        {
-                                            let mut prio_fee = app_prio_fee.lock().await;
-                                            if *prio_fee < 1_000_000 {
-                                                *prio_fee += 15_000;
-                                            }
-                                        }
+                                        // info!("increasing prio fees");
+                                        // {
+                                        //     let mut prio_fee = app_prio_fee.lock().await;
+                                        //     if *prio_fee < 1_000_000 {
+                                        //         *prio_fee += 15_000;
+                                        //     }
+                                        // }
                                         tokio::time::sleep(Duration::from_millis(2_000)).await;
                                     }
                                 }
@@ -884,6 +884,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if !success {
                         info!("Failed to send after 10 attempts. Discarding and refreshing data.");
+                        // TODO: use next best submission data
                         // reset nonce
                         {
                             let mut nonce = app_nonce.lock().await;
