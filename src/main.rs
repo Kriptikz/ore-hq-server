@@ -138,6 +138,14 @@ struct Args {
     priority_fee: u64,
     #[arg(
         long,
+        value_name = "jito tip",
+        help = "Number of lamports to pay as jito tip per transaction",
+        default_value = "0",
+        global = true
+    )]
+    jito_tip: u64,
+    #[arg(
+        long,
         value_name = "whitelist",
         help = "Path to whitelist of allowed miners",
         default_value = None,
@@ -218,6 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let priority_fee = Arc::new(args.priority_fee);
+    let jito_tip = Arc::new(args.jito_tip);
 
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
@@ -502,6 +511,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_wallet = wallet_extension.clone();
     let app_nonce = nonce_ext.clone();
     let app_prio_fee = priority_fee.clone();
+    let app_jito_tip = jito_tip.clone();
     let app_rpc_client = rpc_client.clone();
     let app_config = config.clone();
     let app_app_database = app_database.clone();
@@ -587,7 +597,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
                             ixs.push(prio_fee_ix);
 
-                            let jito_tip = 5_000;
+                            let jito_tip = *app_jito_tip;
                             if jito_tip > 0 {
                                         let tip_accounts = [
                                             "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
@@ -611,8 +621,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             jito_tip,
                                         ));
 
-                                        let log = format!("Jito tip: {} SOL", lamports_to_sol(jito_tip));
-                                        info!(log);
+                                        info!("Jito tip: {} SOL", lamports_to_sol(jito_tip));
                                     }
 
                             let noop_ix = get_auth_ix(signer.pubkey());
