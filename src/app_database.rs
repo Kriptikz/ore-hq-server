@@ -219,7 +219,7 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => match interaction {
                     Ok(query) => {
-                        if query != 1 {
+                        if query == 0 {
                             return Err(AppDatabaseError::FailedToInsertRow);
                         }
                         return Ok(());

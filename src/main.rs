@@ -33,12 +33,12 @@ use ore_utils::{
     ORE_TOKEN_DECIMALS,
 };
 use rand::Rng;
-use routes::{get_challenges, get_latest_mine_txn, get_pool_balance, get_pool_staked};
+use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
-    rpc_config::{RpcAccountInfoConfig, RpcTransactionConfig},
+    rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcTransactionConfig},
 };
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -50,7 +50,7 @@ use solana_sdk::{
     system_instruction::{self, transfer},
     transaction::Transaction,
 };
-use solana_transaction_status::UiTransactionEncoding;
+use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
 use spl_associated_token_account::get_associated_token_address;
 use tokio::{
     io::AsyncReadExt,
@@ -68,7 +68,6 @@ mod models;
 mod routes;
 mod schema;
 mod systems;
-
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
@@ -85,6 +84,10 @@ struct AppState {
 
 struct ClaimsQueue {
     queue: RwLock<HashMap<Pubkey, u64>>,
+}
+
+struct SubmissionWindow {
+    closed: bool
 }
 
 pub struct MessageInternalAllClients {
@@ -248,6 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
+    let jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/transactions".to_string();
+    let jito_client = RpcClient::new(jito_url);
 
     info!("loading sol balance...");
     let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
@@ -384,7 +389,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         queue: RwLock::new(HashMap::new())
     });
 
+    let submission_window = Arc::new(RwLock::new(SubmissionWindow { closed: false }));
+
     let rpc_client = Arc::new(rpc_client);
+    let jito_client = Arc::new(jito_client);
 
     let app_rpc_client = rpc_client.clone();
     let app_wallet = wallet_extension.clone();
@@ -420,6 +428,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_config = config.clone();
     let app_state = shared_state.clone();
     let app_pongs = pongs.clone();
+    let app_submission_window = submission_window.clone();
     tokio::spawn(async move {
         client_message_handler_system(
             client_message_receiver,
@@ -431,6 +440,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_config,
             app_state,
             app_pongs,
+            app_submission_window
         )
         .await;
     });
@@ -532,11 +542,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_prio_fee = priority_fee.clone();
     let app_jito_tip = jito_tip.clone();
     let app_rpc_client = rpc_client.clone();
+    let app_jito_client = jito_client.clone();
     let app_config = config.clone();
     let app_app_database = app_database.clone();
     let app_all_clients_sender = all_clients_sender.clone();
+    let app_submission_window = submission_window.clone();
     tokio::spawn(async move {
         let rpc_client = app_rpc_client;
+        let jito_client = app_jito_client;
         let app_database = app_app_database;
         loop {
             let lock = app_proof.lock().await;
@@ -550,6 +563,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let solution = reader.best_hash.solution.clone();
                 drop(reader);
                 if solution.is_some() {
+                    // Close submission window
+                    info!("Submission window closed.");
+                    let mut writer = app_submission_window.write().await;
+                    writer.closed = true;
+                    drop(writer);
+
                     let signer = app_wallet.clone();
 
                     let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
@@ -662,14 +681,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let mut tx =
                                     Transaction::new_with_payer(&ixs, Some(&signer.pubkey()));
 
+                                let expired_timer = Instant::now();
                                 tx.sign(&[&signer], hash);
                                 info!("Sending signed tx...");
                                 info!("attempt: {}", i + 1);
-                                let sig = rpc_client
-                                    .send_and_confirm_transaction_with_spinner_and_commitment(&tx, rpc_client.commitment())
-                                    .await;
+                                let send_client = if jito_tip > 0 {
+                                    jito_client.clone()
+                                } else {
+                                    rpc_client.clone()
+                                };
 
-                                match sig {
+                                let rpc_config =  RpcSendTransactionConfig {
+                                    preflight_commitment: Some(rpc_client.commitment().commitment),
+                                    ..RpcSendTransactionConfig::default()
+                                };
+
+                                let signature;
+                                loop {
+                                    if let Ok(sig) = send_client.send_transaction_with_config(&tx, rpc_config).await {
+                                        signature = sig;
+                                        break;
+                                    } else {
+                                        error!("Failed to send mine transaction. retrying in 1 seconds...");
+                                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                                    }
+                                }
+                                let result: Result<Signature, String> = loop {
+                                    if expired_timer.elapsed().as_secs() >= 200 {
+                                        break Err("Transaction Expired".to_string());
+                                    }
+                                    let results = rpc_client.get_signature_statuses(&[signature]).await;
+                                    if let Ok(response) = results {
+                                        let statuses = response.value;
+                                        if let Some(status) = &statuses[0] {
+                                            if status.confirmation_status() == TransactionConfirmationStatus::Confirmed {
+                                                if status.err.is_some() {
+                                                    let e_str = format!("Transaction Failed: {:?}", status.err);
+                                                    break Err(e_str);
+                                                }
+                                                break Ok(signature);
+                                            }
+                                        }
+                                    }
+                                    // wait 500ms before checking status
+                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                };
+
+                                match result {
                                     Ok(sig) => {
                                         // success
                                         success = true;
@@ -695,6 +753,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let app_config = app_config.clone();
                                         //let app_prio_fee = app_prio_fee.clone();
                                         let app_epoch_hashes = app_epoch_hashes.clone();
+                                        let app_submission_window = app_submission_window.clone();
                                         tokio::spawn(async move {
                                             let app_proof = app_app_proof;
                                             let app_database = app_db;
@@ -757,6 +816,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         mut_epoch_hashes.best_hash.difficulty = 0;
                                                         mut_epoch_hashes.submissions = HashMap::new();
                                                     }
+                                                    // Open submission window
+                                                    info!("openning submission window.");
+                                                    let mut writer = app_submission_window.write().await;
+                                                    writer.closed = false;
+                                                    drop(writer);
 
                                                     break;
                                                 }
@@ -926,6 +990,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             mut_epoch_hashes.best_hash.difficulty = 0;
                             mut_epoch_hashes.submissions = HashMap::new();
                         }
+                        // Open submission window
+                        info!("openning submission window.");
+                        let mut writer = app_submission_window.write().await;
+                        writer.closed = false;
+                        drop(writer);
+
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 } else {
@@ -1096,6 +1166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(rpc_client))
         .layer(Extension(client_nonce_ranges))
         .layer(Extension(claims_queue))
+        .layer(Extension(submission_window))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -1914,7 +1985,8 @@ async fn client_message_handler_system(
     client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>,
     app_config: Arc<Config>,
     app_state: Arc<RwLock<AppState>>,
-    app_pongs: Arc<RwLock<LastPong>>
+    app_pongs: Arc<RwLock<LastPong>>,
+    app_submission_window: Arc<RwLock<SubmissionWindow>>,
 ) {
     while let Some(client_message) = receiver_channel.recv().await {
         match client_message {
@@ -1940,11 +2012,31 @@ async fn client_message_handler_system(
                 let app_client_nonce_ranges = client_nonce_ranges.clone();
                 let app_config = app_config.clone();
                 let app_state = app_state.clone();
+                let app_submission_window = app_submission_window.clone();
                 tokio::spawn(async move {
                     let epoch_hashes = app_epoch_hashes;
                     let app_database = app_app_database;
                     let proof = app_proof;
                     let client_nonce_ranges = app_client_nonce_ranges;
+
+                    let reader = app_submission_window.read().await;
+                    let submission_windows_closed = reader.closed;
+                    drop(reader);
+
+                    if submission_windows_closed {
+                        error!("{} submitted after submission window was closed!", pubkey);
+
+                        let reader = app_state.read().await;
+                        if let Some(app_client_socket) = reader.sockets.get(&addr) {
+                            let msg = format!("Late submission. Please make sure your hash time is under 60 seconds.");
+                            let _ = app_client_socket.socket.lock().await.send(Message::Text(msg)).await;
+                        } else {
+                            error!("Failed to get client socket for addr: {}", addr);
+                            return;
+                        }
+                        drop(reader);
+                        return;
+                    }
 
                     let pubkey_str = pubkey.to_string();
                     let lock = proof.lock().await;
