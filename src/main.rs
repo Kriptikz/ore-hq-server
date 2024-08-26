@@ -706,6 +706,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         tokio::time::sleep(Duration::from_millis(1000)).await;
                                     }
                                 }
+                                let (tx_message_sender, tx_message_receiver) =
+                                    tokio::sync::oneshot::channel::<u8>();
+                                tokio::spawn(async move {
+                                    let mut stop_reciever = tx_message_receiver;
+                                    loop {
+                                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                                        if let Ok(_) = stop_reciever.try_recv() {
+                                            break;
+                                        } else {
+                                            info!("Resending signed tx...");
+                                            let _ = send_client.send_transaction_with_config(&tx, rpc_config).await;
+                                        }
+
+                                    }
+                                    return
+
+                                });
+
                                 let result: Result<Signature, String> = loop {
                                     if expired_timer.elapsed().as_secs() >= 200 {
                                         break Err("Transaction Expired".to_string());
@@ -726,6 +744,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     // wait 500ms before checking status
                                     tokio::time::sleep(Duration::from_millis(500)).await;
                                 };
+                                // stop the tx sender
+                                let _ = tx_message_sender.send(0);
 
                                 match result {
                                     Ok(sig) => {
