@@ -106,6 +106,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                             }
                         }
                     }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 };
 
                 match result {
