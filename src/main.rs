@@ -607,9 +607,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .expect("Time went backwards")
                                 .as_secs();
                             let mut ixs = vec![];
-                            let prio_fee = *app_prio_fee;
+                            let mut prio_fee = *app_prio_fee;
 
-                            info!("using priority fee of {}", prio_fee);
                             let _ = app_all_clients_sender.send(MessageInternalAllClients {
                                 text: String::from("Sending mine transaction..."),
                             });
@@ -619,6 +618,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let time_until_reset = (config.last_reset_at + 300) - now as i64;
                                 if time_until_reset <= 5 {
                                     cu_limit = 500_000;
+                                    prio_fee += 50_000;
+                                    info!("Including reset tx.");
                                     true
                                 } else {
                                     false
@@ -626,6 +627,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             } else {
                                 false
                             };
+
+                            info!("using priority fee of {}", prio_fee);
 
                             let cu_limit_ix =
                                 ComputeBudgetInstruction::set_compute_unit_limit(cu_limit);
