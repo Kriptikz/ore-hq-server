@@ -710,15 +710,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     tokio::sync::oneshot::channel::<u8>();
                                 tokio::spawn(async move {
                                     let mut stop_reciever = tx_message_receiver;
+                                    tokio::time::sleep(Duration::from_millis(2000)).await;
                                     loop {
-                                        tokio::time::sleep(Duration::from_millis(2000)).await;
                                         if let Ok(_) = stop_reciever.try_recv() {
                                             break;
                                         } else {
                                             info!("Resending signed tx...");
                                             let _ = send_client.send_transaction_with_config(&tx, rpc_config).await;
                                         }
-
+                                        tokio::time::sleep(Duration::from_millis(2000)).await;
                                     }
                                     return
 
