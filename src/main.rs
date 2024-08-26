@@ -38,17 +38,10 @@ use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
     nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
-    rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcTransactionConfig},
+    rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTransactionConfig},
 };
 use solana_sdk::{
-    commitment_config::CommitmentConfig,
-    compute_budget::ComputeBudgetInstruction,
-    native_token::{lamports_to_sol, LAMPORTS_PER_SOL},
-    pubkey::Pubkey,
-    signature::{read_keypair_file, Keypair, Signature},
-    signer::Signer,
-    system_instruction::{self, transfer},
-    transaction::Transaction,
+    commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, instruction::InstructionError, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction::{self, transfer}, transaction::{Transaction, TransactionError}
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
 use spl_associated_token_account::get_associated_token_address;
@@ -695,9 +688,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 };
 
                                 let rpc_config =  RpcSendTransactionConfig {
+                                    skip_preflight: false,
                                     preflight_commitment: Some(rpc_client.commitment().commitment),
                                     ..RpcSendTransactionConfig::default()
                                 };
+
+                                let rpc_sim_config =  RpcSimulateTransactionConfig {
+                                    sig_verify: false,
+                                    ..RpcSimulateTransactionConfig::default()
+                                };
+
+
+                                let sim_tx = tx.clone();
+                                let sim = rpc_client.simulate_transaction_with_config(&sim_tx, rpc_sim_config).await;
+
+                                if let Err(e) = sim {
+                                    if let Some(tx_error) = e.get_transaction_error() {
+                                        if tx_error == TransactionError::InstructionError(4, InstructionError::Custom(1))
+                                        || tx_error == TransactionError::InstructionError(5, InstructionError::Custom(1)) {
+                                            error!("Custom program error: Invalid Hash");
+                                            break;
+                                        }
+                                    }
+                                }
 
                                 let signature;
                                 loop {
@@ -998,7 +1011,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     if !success {
-                        info!("Failed to send after 10 attempts. Discarding and refreshing data.");
+                        info!("Failed to send tx. Discarding and refreshing data.");
                         // TODO: use next best submission data
                         // reset nonce
                         {
