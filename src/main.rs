@@ -1484,181 +1484,186 @@ async fn post_claim(
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<Keypair>>,
 ) -> impl IntoResponse {
-    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        let amount = query_params.amount;
-        if let Ok(miner_rewards) = app_database
-            .get_miner_rewards(user_pubkey.to_string())
-            .await
-        {
-            if amount > miner_rewards.balance {
-                return Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body("claim amount exceeds miner rewards balance".to_string())
-                    .unwrap();
-            }
 
-            if let Ok(last_claim) = app_database.get_last_claim(miner_rewards.miner_id).await {
-                let last_claim_ts = last_claim.created_at.and_utc().timestamp();
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_secs() as i64;
-                let time_difference = now - last_claim_ts;
-                if time_difference  <= 1800 {
-                    return Response::builder()
-                        .status(StatusCode::TOO_MANY_REQUESTS)
-                        .body(time_difference.to_string())
-                        .unwrap();
-                }
-            }
+    return Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .body("claims are paused".to_string())
+        .unwrap();
+    // if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+    //     let amount = query_params.amount;
+    //     if let Ok(miner_rewards) = app_database
+    //         .get_miner_rewards(user_pubkey.to_string())
+    //         .await
+    //     {
+    //         if amount > miner_rewards.balance {
+    //             return Response::builder()
+    //                 .status(StatusCode::BAD_REQUEST)
+    //                 .body("claim amount exceeds miner rewards balance".to_string())
+    //                 .unwrap();
+    //         }
 
-            let ore_mint = get_ore_mint();
-            let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
+    //         if let Ok(last_claim) = app_database.get_last_claim(miner_rewards.miner_id).await {
+    //             let last_claim_ts = last_claim.created_at.and_utc().timestamp();
+    //             let now = SystemTime::now()
+    //                 .duration_since(UNIX_EPOCH)
+    //                 .expect("Time went backwards")
+    //                 .as_secs() as i64;
+    //             let time_difference = now - last_claim_ts;
+    //             if time_difference  <= 1800 {
+    //                 return Response::builder()
+    //                     .status(StatusCode::TOO_MANY_REQUESTS)
+    //                     .body(time_difference.to_string())
+    //                     .unwrap();
+    //             }
+    //         }
 
-            let prio_fee: u32 = 20_000;
+    //         let ore_mint = get_ore_mint();
+    //         let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
 
-            let mut ixs = Vec::new();
-            let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
-            ixs.push(prio_fee_ix);
-            if let Ok(response) = rpc_client
-                .get_token_account_balance(&miner_token_account)
-                .await
-            {
-                if let Some(_amount) = response.ui_amount {
-                    info!("miner has valid token account.");
-                } else {
-                    info!("will create token account for miner");
-                    ixs.push(
-                        spl_associated_token_account::instruction::create_associated_token_account(
-                            &wallet.pubkey(),
-                            &user_pubkey,
-                            &ore_api::consts::MINT_ADDRESS,
-                            &spl_token::id(),
-                        ),
-                    )
-                }
-            } else {
-                info!("Adding create ata ix for miner claim");
-                ixs.push(
-                    spl_associated_token_account::instruction::create_associated_token_account(
-                        &wallet.pubkey(),
-                        &user_pubkey,
-                        &ore_api::consts::MINT_ADDRESS,
-                        &spl_token::id(),
-                    ),
-                )
-            }
+    //         let prio_fee: u32 = 20_000;
 
-            let ix = ore_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
-            ixs.push(ix);
+    //         let mut ixs = Vec::new();
+    //         let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
+    //         ixs.push(prio_fee_ix);
+    //         if let Ok(response) = rpc_client
+    //             .get_token_account_balance(&miner_token_account)
+    //             .await
+    //         {
+    //             if let Some(_amount) = response.ui_amount {
+    //                 info!("miner has valid token account.");
+    //             } else {
+    //                 info!("will create token account for miner");
+    //                 ixs.push(
+    //                     spl_associated_token_account::instruction::create_associated_token_account(
+    //                         &wallet.pubkey(),
+    //                         &user_pubkey,
+    //                         &ore_api::consts::MINT_ADDRESS,
+    //                         &spl_token::id(),
+    //                     ),
+    //                 )
+    //             }
+    //         } else {
+    //             info!("Adding create ata ix for miner claim");
+    //             ixs.push(
+    //                 spl_associated_token_account::instruction::create_associated_token_account(
+    //                     &wallet.pubkey(),
+    //                     &user_pubkey,
+    //                     &ore_api::consts::MINT_ADDRESS,
+    //                     &spl_token::id(),
+    //                 ),
+    //             )
+    //         }
 
-            if let Ok((hash, _slot)) = rpc_client
-                .get_latest_blockhash_with_commitment(rpc_client.commitment())
-                .await
-            {
-                let mut tx = Transaction::new_with_payer(&ixs, Some(&wallet.pubkey()));
+    //         let ix = ore_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
+    //         ixs.push(ix);
 
-                tx.sign(&[&wallet], hash);
+    //         if let Ok((hash, _slot)) = rpc_client
+    //             .get_latest_blockhash_with_commitment(rpc_client.commitment())
+    //             .await
+    //         {
+    //             let mut tx = Transaction::new_with_payer(&ixs, Some(&wallet.pubkey()));
 
-                let result = rpc_client
-                    .send_and_confirm_transaction_with_spinner_and_commitment(
-                        &tx,
-                        rpc_client.commitment(),
-                    )
-                    .await;
-                match result {
-                    Ok(sig) => {
-                        info!("Miner successfully claimed.\nSig: {}", sig.to_string());
+    //             tx.sign(&[&wallet], hash);
 
-                        // TODO: use transacions, or at least put them into one query
-                        let miner = app_database
-                            .get_miner_by_pubkey_str(user_pubkey.to_string())
-                            .await
-                            .unwrap();
-                        let db_pool = app_database
-                            .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
-                            .await
-                            .unwrap();
-                        while let Err(_) = app_database
-                            .decrease_miner_reward(miner.id, amount)
-                            .await 
-                        {
-                            error!("Failed to decrease miner rewards! Retrying...");
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                        }
-                        while let Err(_) = app_database
-                            .update_pool_claimed(wallet.pubkey().to_string(), amount)
-                            .await
-                        {
-                            error!("Failed to increase pool claimed amount! Retrying...");
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                        }
+    //             let result = rpc_client
+    //                 .send_and_confirm_transaction_with_spinner_and_commitment(
+    //                     &tx,
+    //                     rpc_client.commitment(),
+    //                 )
+    //                 .await;
+    //             match result {
+    //                 Ok(sig) => {
+    //                     info!("Miner successfully claimed.\nSig: {}", sig.to_string());
 
-                        let itxn = InsertTxn {
-                            txn_type: "claim".to_string(),
-                            signature: sig.to_string(),
-                            priority_fee: prio_fee,
-                        };
-                        while let Err(_) = app_database.add_new_txn(itxn.clone()).await {
-                            error!("Failed to increase pool claimed amount! Retrying...");
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                        }
+    //                     // TODO: use transacions, or at least put them into one query
+    //                     let miner = app_database
+    //                         .get_miner_by_pubkey_str(user_pubkey.to_string())
+    //                         .await
+    //                         .unwrap();
+    //                     let db_pool = app_database
+    //                         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
+    //                         .await
+    //                         .unwrap();
+    //                     while let Err(_) = app_database
+    //                         .decrease_miner_reward(miner.id, amount)
+    //                         .await 
+    //                     {
+    //                         error!("Failed to decrease miner rewards! Retrying...");
+    //                         tokio::time::sleep(Duration::from_millis(2000)).await;
+    //                     }
+    //                     while let Err(_) = app_database
+    //                         .update_pool_claimed(wallet.pubkey().to_string(), amount)
+    //                         .await
+    //                     {
+    //                         error!("Failed to increase pool claimed amount! Retrying...");
+    //                         tokio::time::sleep(Duration::from_millis(2000)).await;
+    //                     }
 
-                        let txn_id;
-                        loop {
-                            if let Ok(ntxn) = app_database.get_txn_by_sig(sig.to_string()).await {
-                                txn_id = ntxn.id;
-                                break;
-                            } else {
-                                error!("Failed to get tx by sig! Retrying...");
-                                tokio::time::sleep(Duration::from_millis(2000)).await;
-                            }
-                        }
+    //                     let itxn = InsertTxn {
+    //                         txn_type: "claim".to_string(),
+    //                         signature: sig.to_string(),
+    //                         priority_fee: prio_fee,
+    //                     };
+    //                     while let Err(_) = app_database.add_new_txn(itxn.clone()).await {
+    //                         error!("Failed to increase pool claimed amount! Retrying...");
+    //                         tokio::time::sleep(Duration::from_millis(2000)).await;
+    //                     }
+
+    //                     let txn_id;
+    //                     loop {
+    //                         if let Ok(ntxn) = app_database.get_txn_by_sig(sig.to_string()).await {
+    //                             txn_id = ntxn.id;
+    //                             break;
+    //                         } else {
+    //                             error!("Failed to get tx by sig! Retrying...");
+    //                             tokio::time::sleep(Duration::from_millis(2000)).await;
+    //                         }
+    //                     }
 
 
-                        let iclaim = InsertClaim {
-                            miner_id: miner.id,
-                            pool_id: db_pool.id,
-                            txn_id,
-                            amount,
-                        };
-                        while let Err(_) = app_database.add_new_claim(iclaim).await {
-                            error!("Failed add new claim to db! Retrying...");
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                        }
+    //                     let iclaim = InsertClaim {
+    //                         miner_id: miner.id,
+    //                         pool_id: db_pool.id,
+    //                         txn_id,
+    //                         amount,
+    //                     };
+    //                     while let Err(_) = app_database.add_new_claim(iclaim).await {
+    //                         error!("Failed add new claim to db! Retrying...");
+    //                         tokio::time::sleep(Duration::from_millis(2000)).await;
+    //                     }
 
-                        return Response::builder()
-                            .status(StatusCode::OK)
-                            .body("SUCCESS".to_string())
-                            .unwrap();
-                    }
-                    Err(e) => {
-                        error!("ERROR: {:?}", e);
-                        return Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("FAILED".to_string())
-                            .unwrap();
-                    }
-                }
-            } else {
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body("FAILED".to_string())
-                    .unwrap();
-            }
-        } else {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("failed to get miner account from database".to_string())
-                .unwrap();
-        }
-    } else {
-        error!("Claim with invalid pubkey");
-        return Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body("Invalid Pubkey".to_string())
-            .unwrap();
-    }
+    //                     return Response::builder()
+    //                         .status(StatusCode::OK)
+    //                         .body("SUCCESS".to_string())
+    //                         .unwrap();
+    //                 }
+    //                 Err(e) => {
+    //                     error!("ERROR: {:?}", e);
+    //                     return Response::builder()
+    //                         .status(StatusCode::INTERNAL_SERVER_ERROR)
+    //                         .body("FAILED".to_string())
+    //                         .unwrap();
+    //                 }
+    //             }
+    //         } else {
+    //             return Response::builder()
+    //                 .status(StatusCode::INTERNAL_SERVER_ERROR)
+    //                 .body("FAILED".to_string())
+    //                 .unwrap();
+    //         }
+    //     } else {
+    //         return Response::builder()
+    //             .status(StatusCode::INTERNAL_SERVER_ERROR)
+    //             .body("failed to get miner account from database".to_string())
+    //             .unwrap();
+    //     }
+    // } else {
+    //     error!("Claim with invalid pubkey");
+    //     return Response::builder()
+    //         .status(StatusCode::BAD_REQUEST)
+    //         .body("Invalid Pubkey".to_string())
+    //         .unwrap();
+    // }
 }
 
 #[derive(Deserialize)]
