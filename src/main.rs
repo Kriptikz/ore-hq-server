@@ -455,11 +455,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(ready_clients_lock);
             };
 
+
             let lock = app_proof.lock().await;
-            let proof = lock.clone();
+            let latest_proof = lock.clone();
             drop(lock);
 
-            let cutoff = get_cutoff(proof, 7);
+            let cutoff = get_cutoff(latest_proof, 7);
             let mut should_mine = true;
             let cutoff = if cutoff <= 0 {
                 let solution = app_epoch_hashes.read().await.best_hash.solution;
@@ -472,7 +473,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if should_mine {
-                let challenge = proof.challenge;
+                let lock = app_proof.lock().await;
+                let latest_proof = lock.clone();
+                drop(lock);
+                let challenge = latest_proof.challenge;
 
                 for client in clients {
                     let nonce_range = {
@@ -713,12 +717,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let signature;
                                 loop {
-                                    if let Ok(sig) = send_client.send_transaction_with_config(&tx, rpc_config).await {
-                                        signature = sig;
-                                        break;
-                                    } else {
-                                        error!("Failed to send mine transaction. retrying in 1 seconds...");
-                                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                                    match send_client.send_transaction_with_config(&tx, rpc_config).await {
+                                        Ok(sig) => {
+                                            signature = sig;
+                                            break;
+                                        
+                                        },
+                                        Err(e) => {
+                                            error!("Failed to send mine transaction. retrying in 1 seconds...");
+                                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                                        }
                                     }
                                 }
                                 let (tx_message_sender, tx_message_receiver) =
@@ -2074,9 +2082,6 @@ async fn client_message_handler_system(
                     }
 
                     let pubkey_str = pubkey.to_string();
-                    let lock = proof.lock().await;
-                    let challenge = lock.challenge;
-                    drop(lock);
 
                     let reader = client_nonce_ranges.read().await;
                     let nonce_range: Range<u64> = {
@@ -2106,6 +2111,9 @@ async fn client_message_handler_system(
                     }
                     drop(reader);
 
+                    let lock = proof.lock().await;
+                    let challenge = lock.challenge;
+                    drop(lock);
                     if solution.is_valid(&challenge) {
                         let diff = solution.to_hash().difficulty();
                         info!("{} found diff: {}", pubkey_str, diff);
