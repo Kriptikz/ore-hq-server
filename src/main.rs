@@ -715,20 +715,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
-                                let signature;
-                                loop {
+                                let mut rpc_send_attempts = 1;
+                                let signature = loop {
                                     match send_client.send_transaction_with_config(&tx, rpc_config).await {
                                         Ok(sig) => {
-                                            signature = sig;
-                                            break;
+                                            break Ok(sig);
                                         
                                         },
-                                        Err(e) => {
-                                            error!("Failed to send mine transaction. retrying in 1 seconds...");
-                                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                                        Err(_e) => {
+                                            error!("Attempt {} Failed to send mine transaction. retrying in 1 seconds...", rpc_send_attempts);
+                                            rpc_send_attempts += 1;
+
+                                            if rpc_send_attempts >= 5 {
+                                                break Err("Failed to send tx");
+
+                                            }
+                                            tokio::time::sleep(Duration::from_millis(1500)).await;
                                         }
                                     }
-                                }
+                                };
+
+                                let signature = if signature.is_err() {
+                                    break;
+                                } else {
+                                    signature.unwrap()
+                                };
                                 let (tx_message_sender, tx_message_receiver) =
                                     tokio::sync::oneshot::channel::<u8>();
                                 tokio::spawn(async move {
