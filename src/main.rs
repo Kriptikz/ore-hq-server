@@ -700,10 +700,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
                                 let sim_tx = tx.clone();
-                                let sim = rpc_client.simulate_transaction_with_config(&sim_tx, rpc_sim_config).await;
 
-                                if let Err(e) = sim {
-                                    if let Some(tx_error) = e.get_transaction_error() {
+                                if let Ok(result) = rpc_client.simulate_transaction_with_config(&sim_tx, rpc_sim_config).await {
+                                    if let Some(tx_error) = result.value.err {
                                         if tx_error == TransactionError::InstructionError(4, InstructionError::Custom(1))
                                         || tx_error == TransactionError::InstructionError(5, InstructionError::Custom(1)) {
                                             error!("Custom program error: Invalid Hash");
