@@ -535,6 +535,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
             } else {
+                info!("Mining is paused");
                 tokio::time::sleep(Duration::from_secs(30)).await;
             }
 
