@@ -490,6 +490,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         info!("Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
                         for client in clients {
+                            let cutoff = get_cutoff(latest_proof, 7);
                             let nonce_range = {
                                 let mut nonce = app_nonce.lock().await;
                                 let start = *nonce;
