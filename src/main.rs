@@ -813,7 +813,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 .add_new_challenge(new_challenge.clone())
                                                 .await
                                             {
-                                                error!("Failed to add new challenge to db, retrying...");
+                                                error!("Failed to add new challenge to db.");
+                                                info!("Verifying challenge does not already exist.");
+                                                if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
+                                                    info!("Challenge already exists, continuing");
+                                                    break;
+                                                }
+
                                                 tokio::time::sleep(Duration::from_millis(1000))
                                                     .await;
                                             }
