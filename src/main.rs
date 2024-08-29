@@ -30,7 +30,7 @@ use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
 use ore_utils::{
-    get_auth_ix, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
+    get_auth_ix, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_original_proof, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
 };
 use rand::Rng;
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
@@ -61,6 +61,9 @@ mod models;
 mod routes;
 mod schema;
 mod systems;
+mod proof_migration;
+
+
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
@@ -170,7 +173,6 @@ struct Args {
         help = "Enable stats endpoints",
     )]
     stats: bool,
-
 }
 
 #[tokio::main]
@@ -262,6 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
+        info!("LOADED PROOF: \n{:?}", loaded_proof);
         loaded_proof
     } else {
         error!("Failed to load proof.");
@@ -300,7 +303,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Validating miners delegate stake account is created");
     match get_delegated_stake_account(&rpc_client, wallet.pubkey(), wallet.pubkey()).await {
-        Ok(_) => {
+        Ok(data) => {
+            info!("Miner Delegated Stake Account: {:?}", data);
             info!("Miner delegate stake account already created.");
         },
         Err(_) => {
@@ -332,15 +336,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    info!("Validating managed stake token account is created");
+    info!("Validating managed proof token account is created");
+    let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", wallet.pubkey().as_ref()], &ore_miner_delegation::id());
+
     let managed_proof_token_account_addr = get_managed_proof_token_ata(wallet.pubkey());
-    match rpc_client.get_token_account_balance(&get_managed_proof_token_ata(wallet.pubkey())).await {
+    match rpc_client.get_token_account_balance(&managed_proof_token_account_addr).await {
         Ok(_) => {
             info!("Managed proof token account already created.");
         },
         Err(_) => {
             info!("Creating managed proof token account");
-            let ix = create_associated_token_account(&wallet.pubkey(), &managed_proof_token_account_addr, &ore_api::consts::MINT_ADDRESS, &spl_token::id());
+            let ix = create_associated_token_account(&wallet.pubkey(), &managed_proof.0, &ore_api::consts::MINT_ADDRESS, &spl_token::id());
 
             let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
 
@@ -357,10 +363,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(_) => {
                     info!("Successfully created managed proof token account");
                 },
-                Err(_) => {
-                    error!("Failed to send and confirm tx.");
+                Err(e) => {
+                    error!("Failed to send and confirm tx.\nE: {:?}", e);
+                    panic!("Failed to create managed proof token account");
                 }
             }
+        }
+    }
+
+    let miner_ore_token_account_addr = get_associated_token_address(&wallet.pubkey(), &ore_api::consts::MINT_ADDRESS);
+    let token_balance = if let Ok(token_balance) = rpc_client.get_token_account_balance(&miner_ore_token_account_addr).await {
+        let bal = token_balance.ui_amount.unwrap() * 10f64.powf(token_balance.decimals as f64);
+        bal as u64
+    } else {
+        error!("Failed to get miner ORE token account balance");
+        panic!("Failed to get ORE token account balance.");
+    };
+
+    info!("Checking original proof, and token account balances.");
+    let original_proof = if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
+        loaded_proof
+    } else {
+    panic!("Failed to get original proof!");
+    };
+    if original_proof.balance > 0 || token_balance > 0 {
+        info!("Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
+        if let Err(e) = proof_migration::migrate(&rpc_client, &wallet, original_proof.balance, token_balance).await {
+            info!("Failed to migrate proof balance.\nError: {}", e);
+            panic!("Failed to migrate proof balance.");
+        } else {
+            info!("Successfully migrated proof balance");
         }
     }
 

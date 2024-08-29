@@ -60,7 +60,7 @@ pub fn get_ore_decimals() -> u8 {
 pub fn get_managed_proof_token_ata(miner: Pubkey) -> Pubkey {
     let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", miner.as_ref()], &ore_miner_delegation::id());
 
-    get_associated_token_address(&managed_proof.0, &spl_token::id())
+    get_associated_token_address(&managed_proof.0, &ore_api::consts::MINT_ADDRESS)
 }
 
 pub fn get_proof_pda(miner: Pubkey) -> Pubkey {
@@ -196,6 +196,22 @@ pub async fn get_proof_and_config_with_busses(
         )
     } else {
         (Err(()), Err(()), Err(()))
+    }
+}
+
+pub async fn get_original_proof(client: &RpcClient, authority: Pubkey) -> Result<Proof, String> {
+    let proof_address = proof_pubkey(authority);
+    let data = client.get_account_data(&proof_address).await;
+    match data {
+        Ok(data) => {
+            let proof = Proof::try_from_bytes(&data);
+            if let Ok(proof) = proof {
+                return Ok(*proof);
+            } else {
+                return Err("Failed to parse proof account".to_string());
+            }
+        }
+        Err(_) => return Err("Failed to get proof account".to_string()),
     }
 }
 

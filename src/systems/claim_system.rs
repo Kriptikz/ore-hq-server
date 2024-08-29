@@ -87,8 +87,6 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                     }
                 }
 
-
-
                 let result: Result<Signature, String> = loop {
                     if expired_timer.elapsed().as_secs() >= 200 {
                         break Err("Transaction Expired".to_string());
