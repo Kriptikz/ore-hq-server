@@ -59,7 +59,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                 )
             }
 
-            let ix = ore_api::instruction::claim(wallet.pubkey(), miner_token_account, amount);
+            let ix = crate::ore_utils::get_claim_ix(wallet.pubkey(), miner_token_account, amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client

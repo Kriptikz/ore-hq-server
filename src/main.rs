@@ -11,6 +11,8 @@ use std::{
 use rand::seq::SliceRandom;
 use systems::claim_system::claim_system;
 
+use crate::ore_utils::{get_managed_proof_token_ata, get_proof_pda};
+
 use self::models::*;
 use app_rr_database::AppRRDatabase;
 use ::ore_utils::AccountDeserialize;
@@ -28,9 +30,7 @@ use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
 use ore_utils::{
-    get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof,
-    get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey,
-    ORE_TOKEN_DECIMALS,
+    get_auth_ix, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
 };
 use rand::Rng;
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
@@ -41,10 +41,10 @@ use solana_client::{
     rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTransactionConfig},
 };
 use solana_sdk::{
-    commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, instruction::InstructionError, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction::{self, transfer}, transaction::{Transaction, TransactionError}
+    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, instruction::InstructionError, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction::{self, transfer}, transaction::{Transaction, TransactionError}
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
-use spl_associated_token_account::get_associated_token_address;
+use spl_associated_token_account::{get_associated_token_address, instruction::create_associated_token_account};
 use tokio::{
     io::AsyncReadExt,
     sync::{
@@ -298,6 +298,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
+    info!("Validating miners delegate stake account is created");
+    match get_delegated_stake_account(&rpc_client, wallet.pubkey(), wallet.pubkey()).await {
+        Ok(_) => {
+            info!("Miner delegate stake account already created.");
+        },
+        Err(_) => {
+            info!("Creating miner delegate stake account");
+            let ix = ore_miner_delegation::instruction::init_delegate_stake(
+                wallet.pubkey(),
+                wallet.pubkey(),
+            );
+
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+            let blockhash = rpc_client
+                .get_latest_blockhash()
+                .await
+                .expect("should get latest blockhash");
+
+            tx.sign(&[&wallet], blockhash);
+
+            match rpc_client.send_and_confirm_transaction_with_spinner_and_commitment(&tx, CommitmentConfig {
+                commitment: CommitmentLevel::Confirmed
+            }).await {
+                Ok(_) => {
+                    info!("Successfully created miner delegate stake account");
+                },
+                Err(_) => {
+                    error!("Failed to send and confirm tx.");
+                }
+            }
+        }
+    }
+
+    info!("Validating managed stake token account is created");
+    let managed_proof_token_account_addr = get_managed_proof_token_ata(wallet.pubkey());
+    match rpc_client.get_token_account_balance(&get_managed_proof_token_ata(wallet.pubkey())).await {
+        Ok(_) => {
+            info!("Managed proof token account already created.");
+        },
+        Err(_) => {
+            info!("Creating managed proof token account");
+            let ix = create_associated_token_account(&wallet.pubkey(), &managed_proof_token_account_addr, &ore_api::consts::MINT_ADDRESS, &spl_token::id());
+
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+            let blockhash = rpc_client
+                .get_latest_blockhash()
+                .await
+                .expect("should get latest blockhash");
+
+            tx.sign(&[&wallet], blockhash);
+
+            match rpc_client.send_and_confirm_transaction_with_spinner_and_commitment(&tx, CommitmentConfig {
+                commitment: CommitmentLevel::Confirmed
+            }).await {
+                Ok(_) => {
+                    info!("Successfully created managed proof token account");
+                },
+                Err(_) => {
+                    error!("Failed to send and confirm tx.");
+                }
+            }
+        }
+    }
+
     info!("Validating pool exists in db");
     let db_pool = app_database
         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
@@ -310,7 +376,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(_) => {
             info!("Pool missing from database. Inserting...");
-            let proof_pubkey = proof_pubkey(wallet.pubkey());
+            let proof_pubkey = get_proof_pda(wallet.pubkey());
             let result = app_database
                 .add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string())
                 .await;
@@ -1231,6 +1297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/signup", post(post_signup))
         .route("/claim", post(post_claim))
+        .route("/stake", post(post_stake))
         .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
@@ -1750,6 +1817,94 @@ async fn post_claim(
 }
 
 #[derive(Deserialize)]
+struct StakeParams {
+    pubkey: String,
+    amount: u64,
+}
+
+async fn post_stake(
+    query_params: Query<StakeParams>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<Keypair>>,
+    Extension(app_config): Extension<Arc<Config>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!("Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        if !tx.is_signed() {
+            error!("Tx missing signer");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!("Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        let base_ix = ore_miner_delegation::instruction::delegate_stake(user_pubkey, wallet.pubkey(), query_params.amount);
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!("data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            info!("Valid stake tx, submitting.");
+
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+            match result {
+                Ok(_sig) => {
+                    info!("Successfully staked");
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                },
+                Err(e) => {
+                    error!("{} stake transaction failed...", user_pubkey.to_string());
+                    error!("Stake Tx Error: {:?}", e);
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!("stake with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
 struct WsQueryParams {
     timestamp: u64,
 }
@@ -2025,7 +2180,7 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
         if let Ok(ps_client) = ps_client {
             let ps_client = Arc::new(ps_client);
             let app_proof = proof.clone();
-            let account_pubkey = proof_pubkey(app_wallet.pubkey());
+            let account_pubkey = get_proof_pda(app_wallet.pubkey());
             let pubsub = ps_client
                 .account_subscribe(
                     &account_pubkey,
