@@ -1701,6 +1701,15 @@ async fn post_claim(
         }
 
         let amount = query_params.amount;
+
+        // 0.00050000000
+        if amount < 50_000_000 {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("claim minimum is 0.0005".to_string())
+                .unwrap();
+        }
+
         if let Ok(miner_rewards) = app_database
             .get_miner_rewards(user_pubkey.to_string())
             .await
