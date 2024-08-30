@@ -827,7 +827,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 old_proof = latest_proof;
                                                 if let Ok(p) = get_proof(&rpc_client, app_wallet.pubkey()).await {
                                                     let mut found_new_proof = false;
-                                                    if old_proof.challenge.ne(&p.challenge) && latest_proof.challenge.ne(&p.challenge) {
+                                                    if old_proof.challenge.ne(&p.challenge) {
                                                         found_new_proof = true;
                                                         let mut lock = app_proof.lock().await;
                                                         *lock = p;
