@@ -586,7 +586,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let signer = app_wallet.clone();
 
-                    let mut bus = rand::thread_rng().gen_range(0..BUS_COUNT);
+                    let bus = rand::thread_rng().gen_range(0..BUS_COUNT);
 
                     let mut success = false;
                     let reader = app_epoch_hashes.read().await;
@@ -605,18 +605,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             info!("Submission Challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                             let mut loaded_config = None;
                             info!("Getting latest config and busses data.");
-                            if let (Ok(p), Ok(config), Ok(busses)) =
+                            if let (Ok(p), Ok(config), Ok(_busses)) =
                                 get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await
                             {
-                                let mut best_bus = 0;
-                                for (i, bus) in busses.iter().enumerate() {
-                                    if let Ok(bus) = bus {
-                                        if bus.rewards > busses[best_bus].unwrap().rewards {
-                                            best_bus = i;
-                                        }
-                                    }
-                                }
-                                bus = best_bus;
                                 loaded_config = Some(config);
 
                                 info!("Latest Challenge: {}", BASE64_STANDARD.encode(p.challenge));
