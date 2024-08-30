@@ -592,6 +592,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let best_solution = reader.best_hash.solution.clone();
                     let submissions = reader.submissions.clone();
                     drop(reader);
+
                     for i in 0..10 {
                         if let Some(best_solution) = best_solution {
                             let difficulty = best_solution.to_hash().difficulty();
@@ -786,14 +787,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Handle new hash immediately with websocket
                                 let app_app_proof = app_proof.clone();
                                 let app_db = app_database.clone();
-                                let app_nonce = app_nonce.clone();
                                 let app_config = app_config.clone();
                                 //let app_prio_fee = app_prio_fee.clone();
-                                let app_epoch_hashes = app_epoch_hashes.clone();
-                                let app_submission_window = app_submission_window.clone();
+                                let app_app_nonce = app_nonce.clone();
+                                let app_app_epoch_hashes = app_epoch_hashes.clone();
+                                let app_app_submission_window = app_submission_window.clone();
                                 tokio::spawn(async move {
                                     let app_proof = app_app_proof;
                                     let app_database = app_db;
+                                    let app_nonce = app_app_nonce;
+                                    let app_epoch_hashes = app_app_epoch_hashes;
+                                    let app_submission_window = app_app_submission_window.clone();
                                     loop {
                                         info!("Waiting for proof hash update");
                                         let latest_proof = { app_proof.lock().await.clone() };
@@ -846,24 +850,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             //         prio_fee.saturating_sub(decrease_amount);
                                             // }
                                             // reset nonce
-                                            {
-                                                let mut nonce = app_nonce.lock().await;
-                                                *nonce = 0;
-                                            }
+                                            // {
+                                            //     let mut nonce = app_nonce.lock().await;
+                                            //     *nonce = 0;
+                                            // }
                                             // reset epoch hashes
-                                            {
-                                                info!("reset epoch hashes");
-                                                let mut mut_epoch_hashes =
-                                                    app_epoch_hashes.write().await;
-                                                mut_epoch_hashes.best_hash.solution = None;
-                                                mut_epoch_hashes.best_hash.difficulty = 0;
-                                                mut_epoch_hashes.submissions = HashMap::new();
-                                            }
-                                            // Open submission window
-                                            info!("openning submission window.");
-                                            let mut writer = app_submission_window.write().await;
-                                            writer.closed = false;
-                                            drop(writer);
+                                            // {
+                                            //     info!("reset epoch hashes");
+                                            //     let mut mut_epoch_hashes =
+                                            //         app_epoch_hashes.write().await;
+                                            //     mut_epoch_hashes.best_hash.solution = None;
+                                            //     mut_epoch_hashes.best_hash.difficulty = 0;
+                                            //     mut_epoch_hashes.submissions = HashMap::new();
+                                            // }
+                                            // // Open submission window
+                                            // info!("openning submission window.");
+                                            // let mut writer = app_submission_window.write().await;
+                                            // writer.closed = false;
+                                            // drop(writer);
 
                                             break;
                                         }
@@ -894,6 +898,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // stop the tx sender
                                 let _ = tx_message_sender.send(0);
 
+                                let app_nonce = app_nonce.clone();
+                                let app_epoch_hashes = app_epoch_hashes.clone();
+                                let app_submission_window = app_submission_window.clone();
                                 match result {
                                     Ok(sig) => {
                                         // success
@@ -905,6 +912,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             signature: sig.to_string(),
                                             priority_fee: prio_fee as u32,
                                         };
+                                        // reset nonce
+                                        {
+                                            let mut nonce = app_nonce.lock().await;
+                                            *nonce = 0;
+                                        }
+                                        // reset epoch hashes
+                                        {
+                                            info!("reset epoch hashes");
+                                            let mut mut_epoch_hashes =
+                                                app_epoch_hashes.write().await;
+                                            mut_epoch_hashes.best_hash.solution = None;
+                                            mut_epoch_hashes.best_hash.difficulty = 0;
+                                            mut_epoch_hashes.submissions = HashMap::new();
+                                        }
+                                        // Open submission window
+                                        info!("openning submission window.");
+                                        let mut writer = app_submission_window.write().await;
+                                        writer.closed = false;
+                                        drop(writer);
                                         let app_db = app_database.clone();
                                         tokio::spawn(async move {
                                             while let Err(_) = app_db.add_new_txn(itxn.clone()).await {
