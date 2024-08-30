@@ -406,6 +406,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_wallet = wallet_extension.clone();
     let app_proof = proof_ext.clone();
+    let app_rpc_client = rpc_client.clone();
     // Establish webocket connection for tracking pool proof changes.
     tokio::spawn(async move {
         proof_tracking_system(rpc_ws_url, app_wallet, app_proof).await;
@@ -792,12 +793,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let app_app_nonce = app_nonce.clone();
                                 let app_app_epoch_hashes = app_epoch_hashes.clone();
                                 let app_app_submission_window = app_submission_window.clone();
+                                let app_app_wallet = app_wallet.clone();
+                                let app_rpc_client = rpc_client.clone();
                                 tokio::spawn(async move {
                                     let app_proof = app_app_proof;
                                     let app_database = app_db;
-                                    let app_nonce = app_app_nonce;
-                                    let app_epoch_hashes = app_app_epoch_hashes;
-                                    let app_submission_window = app_app_submission_window.clone();
+                                    // let app_nonce = app_app_nonce;
+                                    // let app_epoch_hashes = app_app_epoch_hashes;
+                                    // let app_submission_window = app_app_submission_window.clone();
+                                    let app_wallet = app_app_wallet;
                                     loop {
                                         info!("Waiting for proof hash update");
                                         let latest_proof = { app_proof.lock().await.clone() };
@@ -805,7 +809,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if old_proof.challenge.eq(&latest_proof.challenge) {
                                             info!("Proof challenge not updated yet..");
                                             old_proof = latest_proof;
-                                            tokio::time::sleep(Duration::from_millis(500)).await;
+                                            if let Ok(p) = get_proof(&app_rpc_client, app_wallet.pubkey()).await {
+                                                let mut found_new_proof = false;
+                                                if old_proof.challenge.ne(&p.challenge) && latest_proof.challenge.ne(&p.challenge) {
+                                                    found_new_proof = true;
+                                                    let mut lock = app_proof.lock().await;
+                                                    *lock = p;
+                                                }
+                                                if found_new_proof {
+                                                    info!("Found new proof from rpc call, not websocket...");
+                                                }
+                                            }
+                                            tokio::time::sleep(Duration::from_millis(1000)).await;
                                             continue;
                                         } else {
                                             info!("Adding new challenge to db");
