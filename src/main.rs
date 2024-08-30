@@ -621,6 +621,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 if !best_solution.is_valid(&p.challenge) {
                                     error!("SOLUTION IS NOT VALID ANYMORE!");
+                                    break;
                                 }
                             }
                             let now = SystemTime::now()
