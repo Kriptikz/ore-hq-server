@@ -2791,9 +2791,9 @@ dependencies = [
 
 [[package]]
 name = "ore-miner-delegation"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53af7cf0c3ead796541654d7d6653a5890baf8d58b9622c164536decae8dd13e"
+checksum = "f6f6487e0329d6f4574aadcc953a646138e331072c99322d1a0a36fd7a26cc21"
 dependencies = [
  "bytemuck",
  "drillx",

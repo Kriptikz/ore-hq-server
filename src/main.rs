@@ -312,6 +312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ix = ore_miner_delegation::instruction::init_delegate_stake(
                 wallet.pubkey(),
                 wallet.pubkey(),
+                wallet.pubkey(),
             );
 
             let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
@@ -331,6 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 Err(_) => {
                     error!("Failed to send and confirm tx.");
+                    panic!("Failed to create miner delegate stake account");
                 }
             }
         }
