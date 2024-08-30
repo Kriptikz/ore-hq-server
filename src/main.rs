@@ -784,12 +784,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Ok(response) = results {
                                         let statuses = response.value;
                                         if let Some(status) = &statuses[0] {
-                                            if status.confirmation_status() == TransactionConfirmationStatus::Confirmed {
-                                                if status.err.is_some() {
-                                                    let e_str = format!("Transaction Failed: {:?}", status.err);
-                                                    break Err(e_str);
-                                                }
-                                                break Ok(signature);
+                                            let confirmations = if let Some(confirms) = status.confirmations {
+                                                info!("Confirmations: {}", confirms);
+                                                confirms
+                                            } else {
+                                                0
+                                            };
+                                            if status.confirmation_status() == TransactionConfirmationStatus::Confirmed 
+                                                && confirmations >= 5 {
+                                                    if status.err.is_some() {
+                                                        let e_str = format!("Transaction Failed: {:?}", status.err);
+                                                        break Err(e_str);
+                                                    }
+                                                    break Ok(signature);
                                             }
                                         }
                                     }
