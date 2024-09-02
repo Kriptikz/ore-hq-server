@@ -10,6 +10,7 @@ use ore_api::{
     ID as ORE_ID,
 };
 pub use ore_utils::AccountDeserialize as _;
+use serde::{ser::SerializeStruct, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     account::ReadableAccount, clock::Clock, instruction::Instruction, pubkey::Pubkey, sysvar,
@@ -77,10 +78,10 @@ pub async fn get_delegated_stake_account(client: &RpcClient, staker: Pubkey, min
             if let Ok(delegated_stake) = delegated_stake {
                 return Ok(*delegated_stake);
             } else {
-                return Err("Failed to parse config account".to_string());
+                return Err("Failed to parse delegated stake account".to_string());
             }
         }
-        Err(_) => return Err("Failed to get config account".to_string()),
+        Err(_) => return Err("Failed to get delegated stake account".to_string()),
     }
 
 }
