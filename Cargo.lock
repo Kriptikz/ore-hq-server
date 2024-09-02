@@ -2791,9 +2791,9 @@ dependencies = [
 
 [[package]]
 name = "ore-miner-delegation"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6f6487e0329d6f4574aadcc953a646138e331072c99322d1a0a36fd7a26cc21"
+checksum = "6f3f583fc05bc2c82e3d9d3a928ade37392887d0dc37db1aadf21ff0530b965c"
 dependencies = [
  "bytemuck",
  "drillx",
@@ -2804,6 +2804,7 @@ dependencies = [
  "solana-program",
  "spl-associated-token-account 3.0.4",
  "spl-token",
+ "thiserror",
 ]
 
 [[package]]
