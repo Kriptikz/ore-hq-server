@@ -1360,6 +1360,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/signup", post(post_signup))
         .route("/claim", post(post_claim))
         .route("/stake", post(post_stake))
+        .route("/unstake", post(post_unstake))
         .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
@@ -2080,6 +2081,112 @@ async fn post_stake(
         }
     } else {
         error!("stake with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct UnstakeParams {
+    pubkey: String,
+    amount: u64,
+}
+
+async fn post_unstake(
+    query_params: Query<UnstakeParams>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!("Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!("Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        if let Err(_) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await {
+            error!("Cannot unstake, no delegate stake account is created for {}", user_pubkey.to_string());
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("No delegate stake account exists".to_string())
+                .unwrap();
+        }
+
+        let staker_ata = get_associated_token_address(&user_pubkey, &ore_api::consts::MINT_ADDRESS);
+
+        let base_ix = ore_miner_delegation::instruction::undelegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), staker_ata, query_params.amount);
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!("data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            info!("Valid unstake tx, submitting.");
+
+            let hash = tx.get_recent_blockhash();
+            if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                error!("Failed to partially sign tx");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Server Failed to sign tx.".to_string())
+                    .unwrap();
+            }
+
+            if !tx.is_signed() {
+                error!("Tx missing signer");
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Tx".to_string())
+                    .unwrap();
+            }
+
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+            match result {
+                Ok(sig) => {
+                    let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    info!("Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                },
+                Err(e) => {
+                    error!("{} unstake transaction failed...", user_pubkey.to_string());
+                    error!("Unstake Tx Error: {:?}", e);
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!("unstake with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
