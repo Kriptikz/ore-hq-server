@@ -8,8 +8,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ore_miner_delegation::state::DelegatedStake;
 use rand::seq::SliceRandom;
 use systems::claim_system::claim_system;
+
+use crate::ore_utils::{get_managed_proof_token_ata, get_proof_pda};
 
 use self::models::*;
 use app_rr_database::AppRRDatabase;
@@ -28,23 +31,20 @@ use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
 use ore_utils::{
-    get_auth_ix, get_cutoff, get_mine_ix, get_ore_mint, get_proof,
-    get_proof_and_config_with_busses, get_register_ix, get_reset_ix, proof_pubkey,
-    ORE_TOKEN_DECIMALS,
+    get_auth_ix, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_original_proof, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
 };
 use rand::Rng;
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
-    nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
-    rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTransactionConfig},
+    nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_client::SerializableTransaction, rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTransactionConfig}
 };
 use solana_sdk::{
-    commitment_config::CommitmentConfig, compute_budget::ComputeBudgetInstruction, instruction::InstructionError, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction::{self, transfer}, transaction::{Transaction, TransactionError}
+    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, instruction::InstructionError, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction::{self, transfer}, transaction::{Transaction, TransactionError}
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
-use spl_associated_token_account::get_associated_token_address;
+use spl_associated_token_account::{get_associated_token_address, instruction::create_associated_token_account};
 use tokio::{
     io::AsyncReadExt,
     sync::{
@@ -61,6 +61,9 @@ mod models;
 mod routes;
 mod schema;
 mod systems;
+mod proof_migration;
+
+
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
@@ -69,6 +72,12 @@ struct AppClientConnection {
     pubkey: Pubkey,
     miner_id: i32,
     socket: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+}
+
+#[derive(Clone)]
+struct WalletExtension {
+    miner_wallet: Arc<Keypair>,
+    fee_wallet: Arc<Keypair>,
 }
 
 struct AppState {
@@ -170,7 +179,6 @@ struct Args {
         help = "Enable stats endpoints",
     )]
     stats: bool,
-
 }
 
 #[tokio::main]
@@ -184,6 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
+    let fee_wallet_path_str = std::env::var("FEE_WALLET_PATH").expect("FEE_WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
     let rpc_ws_url = std::env::var("RPC_WS_URL").expect("RPC_WS_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
@@ -243,6 +252,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to load keypair from file: {wallet_path_str}");
     info!("loaded wallet {}", wallet.pubkey().to_string());
 
+    let wallet_path = Path::new(&fee_wallet_path_str);
+
+    if !wallet_path.exists() {
+        tracing::error!("Failed to load fee wallet at: {}", fee_wallet_path_str);
+        return Err("Failed to find fee wallet path.".into());
+    }
+
+    let fee_wallet = read_keypair_file(wallet_path)
+        .expect("Failed to load keypair from file: {wallet_path_str}");
+    info!("loaded fee wallet {}", wallet.pubkey().to_string());
+
     info!("establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
     let jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/transactions".to_string();
@@ -262,6 +282,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
+        info!("LOADED PROOF: \n{:?}", loaded_proof);
         loaded_proof
     } else {
         error!("Failed to load proof.");
@@ -298,6 +319,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
+    info!("Validating miners delegate stake account is created");
+    match get_delegated_stake_account(&rpc_client, wallet.pubkey(), wallet.pubkey()).await {
+        Ok(data) => {
+            info!("Miner Delegated Stake Account: {:?}", data);
+            info!("Miner delegate stake account already created.");
+        },
+        Err(_) => {
+            info!("Creating miner delegate stake account");
+            let ix = ore_miner_delegation::instruction::init_delegate_stake(
+                wallet.pubkey(),
+                wallet.pubkey(),
+                wallet.pubkey(),
+            );
+
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+            let blockhash = rpc_client
+                .get_latest_blockhash()
+                .await
+                .expect("should get latest blockhash");
+
+            tx.sign(&[&wallet], blockhash);
+
+            match rpc_client.send_and_confirm_transaction_with_spinner_and_commitment(&tx, CommitmentConfig {
+                commitment: CommitmentLevel::Confirmed
+            }).await {
+                Ok(_) => {
+                    info!("Successfully created miner delegate stake account");
+                },
+                Err(_) => {
+                    error!("Failed to send and confirm tx.");
+                    panic!("Failed to create miner delegate stake account");
+                }
+            }
+        }
+    }
+
+    info!("Validating managed proof token account is created");
+    let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", wallet.pubkey().as_ref()], &ore_miner_delegation::id());
+
+    let managed_proof_token_account_addr = get_managed_proof_token_ata(wallet.pubkey());
+    match rpc_client.get_token_account_balance(&managed_proof_token_account_addr).await {
+        Ok(_) => {
+            info!("Managed proof token account already created.");
+        },
+        Err(_) => {
+            info!("Creating managed proof token account");
+            let ix = create_associated_token_account(&wallet.pubkey(), &managed_proof.0, &ore_api::consts::MINT_ADDRESS, &spl_token::id());
+
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+            let blockhash = rpc_client
+                .get_latest_blockhash()
+                .await
+                .expect("should get latest blockhash");
+
+            tx.sign(&[&wallet], blockhash);
+
+            match rpc_client.send_and_confirm_transaction_with_spinner_and_commitment(&tx, CommitmentConfig {
+                commitment: CommitmentLevel::Confirmed
+            }).await {
+                Ok(_) => {
+                    info!("Successfully created managed proof token account");
+                },
+                Err(e) => {
+                    error!("Failed to send and confirm tx.\nE: {:?}", e);
+                    panic!("Failed to create managed proof token account");
+                }
+            }
+        }
+    }
+
+    let miner_ore_token_account_addr = get_associated_token_address(&wallet.pubkey(), &ore_api::consts::MINT_ADDRESS);
+    let token_balance = if let Ok(token_balance) = rpc_client.get_token_account_balance(&miner_ore_token_account_addr).await {
+        let bal = token_balance.ui_amount.unwrap() * 10f64.powf(token_balance.decimals as f64);
+        bal as u64
+    } else {
+        error!("Failed to get miner ORE token account balance");
+        panic!("Failed to get ORE token account balance.");
+    };
+
+    info!("Checking original proof, and token account balances.");
+    let original_proof = if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
+        loaded_proof
+    } else {
+    panic!("Failed to get original proof!");
+    };
+    if original_proof.balance > 0 || token_balance > 0 {
+        info!("Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
+        if let Err(e) = proof_migration::migrate(&rpc_client, &wallet, original_proof.balance, token_balance).await {
+            info!("Failed to migrate proof balance.\nError: {}", e);
+            panic!("Failed to migrate proof balance.");
+        } else {
+            info!("Successfully migrated proof balance");
+        }
+    }
+
     info!("Validating pool exists in db");
     let db_pool = app_database
         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
@@ -310,7 +428,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(_) => {
             info!("Pool missing from database. Inserting...");
-            let proof_pubkey = proof_pubkey(wallet.pubkey());
+            let proof_pubkey = get_proof_pda(wallet.pubkey());
             let result = app_database
                 .add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string())
                 .await;
@@ -366,7 +484,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         submissions: HashMap::new(),
     }));
 
-    let wallet_extension = Arc::new(wallet);
+    let wallet_extension = Arc::new(WalletExtension {
+        miner_wallet: Arc::new(wallet),
+        fee_wallet: Arc::new(fee_wallet),
+    });
     let proof_ext = Arc::new(Mutex::new(proof));
     let nonce_ext = Arc::new(Mutex::new(0u64));
 
@@ -394,7 +515,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_claims_queue = claims_queue.clone();
     let app_app_database = app_database.clone();
     tokio::spawn(async move {
-        claim_system(app_claims_queue, app_rpc_client, app_wallet, app_app_database).await;
+        claim_system(app_claims_queue, app_rpc_client, app_wallet.miner_wallet.clone(), app_app_database).await;
     });
 
     // Track client pong timings
@@ -406,10 +527,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_wallet = wallet_extension.clone();
     let app_proof = proof_ext.clone();
-    let app_rpc_client = rpc_client.clone();
     // Establish webocket connection for tracking pool proof changes.
     tokio::spawn(async move {
-        proof_tracking_system(rpc_ws_url, app_wallet, app_proof).await;
+        proof_tracking_system(rpc_ws_url, app_wallet.miner_wallet.clone(), app_proof).await;
     });
 
     let (client_message_sender, client_message_receiver) =
@@ -584,7 +704,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     writer.closed = true;
                     drop(writer);
 
-                    let signer = app_wallet.clone();
+                    let signer = app_wallet.clone().miner_wallet.clone();
 
                     let bus = rand::thread_rng().gen_range(0..BUS_COUNT);
 
@@ -887,7 +1007,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                 tokio::time::sleep(Duration::from_millis(200)).await;
                                                                 while let Err(_) = app_database
                                                                     .update_pool_rewards(
-                                                                        app_wallet.pubkey().to_string(),
+                                                                        app_wallet.miner_wallet.pubkey().to_string(),
                                                                         rewards,
                                                                     )
                                                                     .await
@@ -961,7 +1081,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             if old_proof.challenge.eq(&latest_proof.challenge) {
                                                 info!("Proof challenge not updated yet..");
-                                                if let Ok(p) = get_proof(&rpc_client, app_wallet.pubkey()).await {
+                                                if let Ok(p) = get_proof(&rpc_client, app_wallet.miner_wallet.pubkey()).await {
                                                     info!("OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                     info!("RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
                                                     let mut found_new_proof = false;
@@ -1236,11 +1356,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pause", post(post_pause))
         .route("/latest-blockhash", get(get_latest_blockhash))
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
+        .route("/pool/fee_payer/pubkey", get(get_pool_fee_payer_pubkey))
         .route("/signup", post(post_signup))
         .route("/claim", post(post_claim))
+        .route("/stake", post(post_stake))
+        .route("/unstake", post(post_unstake))
         .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
+        .route("/miner/stake", get(get_miner_stake))
         // App RR Database routes
         .route("/last-challenge-submissions", get(get_last_challenge_submissions))
         .route("/miner/rewards", get(get_miner_rewards))
@@ -1287,12 +1411,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn get_pool_authority_pubkey(
-    Extension(wallet): Extension<Arc<Keypair>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
 ) -> impl IntoResponse {
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/text")
-        .body(wallet.pubkey().to_string())
+        .body(wallet.miner_wallet.pubkey().to_string())
+        .unwrap()
+}
+
+async fn get_pool_fee_payer_pubkey(
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+) -> impl IntoResponse {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/text")
+        .body(wallet.fee_wallet.pubkey().to_string())
         .unwrap()
 }
 
@@ -1348,7 +1482,7 @@ async fn post_signup(
     query_params: Query<SignupParams>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
-    Extension(wallet): Extension<Arc<Keypair>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
     Extension(app_config): Extension<Arc<Config>>,
     body: String,
 ) -> impl IntoResponse {
@@ -1390,7 +1524,7 @@ async fn post_signup(
                     .await
                     .unwrap();
 
-                let wallet_pubkey = wallet.pubkey();
+                let wallet_pubkey = wallet.miner_wallet.pubkey();
                 let pool = app_database
                     .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
                     .await
@@ -1455,7 +1589,7 @@ async fn post_signup(
                 .unwrap();
         }
 
-        let base_ix = system_instruction::transfer(&user_pubkey, &wallet.pubkey(), 1_000_000);
+        let base_ix = system_instruction::transfer(&user_pubkey, &wallet.miner_wallet.pubkey(), 1_000_000);
         let mut accts = Vec::new();
         for account_index in ixs[0].accounts.clone() {
             accts.push(tx.key(0, account_index.into()));
@@ -1490,7 +1624,7 @@ async fn post_signup(
                         .await
                         .unwrap();
 
-                    let wallet_pubkey = wallet.pubkey();
+                    let wallet_pubkey = wallet.miner_wallet.pubkey();
                     let pool = app_database
                         .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
                         .await
@@ -1665,6 +1799,25 @@ async fn get_miner_balance(
     }
 }
 
+async fn get_miner_stake(
+    query_params: Query<PubkeyParam>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        if let Ok(account) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await
+        {
+            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+            let dec_amount = (account.amount as f64).div(decimals);
+            return Ok(dec_amount.to_string());
+        } else {
+            return Err("Failed to get token account balance".to_string());
+        }
+    } else {
+        return Err("Invalid pubkey".to_string());
+    }
+}
+
 async fn get_connected_miners(State(app_state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
     let len = app_state.read().await.sockets.len();
     return Response::builder()
@@ -1758,6 +1911,282 @@ async fn post_claim(
         }
     } else {
         error!("Claim with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct StakeParams {
+    pubkey: String,
+    amount: u64,
+}
+
+async fn post_stake(
+    query_params: Query<StakeParams>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!("Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!("Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        if let Err(_) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await {
+            let init_ix = ore_miner_delegation::instruction::init_delegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), wallet.fee_wallet.pubkey());
+
+            let prio_fee: u32 = 20_000;
+
+            let mut ixs = Vec::new();
+            let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
+            ixs.push(prio_fee_ix);
+            ixs.push(init_ix);
+            if let Ok((hash, _slot)) = rpc_client
+                .get_latest_blockhash_with_commitment(rpc_client.commitment())
+                .await
+            {
+                let expired_timer = Instant::now();
+                let mut tx = Transaction::new_with_payer(&ixs, Some(&wallet.fee_wallet.pubkey()));
+
+                tx.sign(&[wallet.fee_wallet.as_ref()], hash);
+
+                let rpc_config =  RpcSendTransactionConfig {
+                    preflight_commitment: Some(rpc_client.commitment().commitment),
+                    ..RpcSendTransactionConfig::default()
+                };
+
+                let signature;
+                loop {
+                    if let Ok(sig) = rpc_client.send_transaction_with_config(&tx, rpc_config).await {
+                        signature = sig;
+                        break;
+                    } else {
+                        error!("Failed to send claim transaction. retrying in 2 seconds...");
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                    }
+                }
+
+                let result: Result<Signature, String> = loop {
+                    if expired_timer.elapsed().as_secs() >= 200 {
+                        break Err("Transaction Expired".to_string());
+                    }
+                    let results = rpc_client.get_signature_statuses(&[signature]).await;
+                    if let Ok(response) = results {
+                        let statuses = response.value;
+                        if let Some(status) = &statuses[0] {
+                            if status.confirmation_status() == TransactionConfirmationStatus::Confirmed {
+                                if status.err.is_some() {
+                                    let e_str = format!("Transaction Failed: {:?}", status.err);
+                                    break Err(e_str);
+                                }
+                                break Ok(signature);
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                };
+
+                match result {
+                    Ok(sig) => {
+                        info!("Successfully created delegate stake account for: {}", user_pubkey.to_string());
+                    }
+                    Err(e) => {
+                        error!("ERROR: {:?}", e);
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("Failed to init delegate stake account.".to_string())
+                            .unwrap();
+
+                    }
+                }
+
+            } else {
+                error!("Failed to confirm transaction for init delegate stake.");
+            }
+        }
+
+
+        let base_ix = ore_miner_delegation::instruction::delegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), query_params.amount);
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!("data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            info!("Valid stake tx, submitting.");
+
+            let hash = tx.get_recent_blockhash();
+            if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                error!("Failed to partially sign tx");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Server Failed to sign tx.".to_string())
+                    .unwrap();
+            }
+
+            if !tx.is_signed() {
+                error!("Tx missing signer");
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Tx".to_string())
+                    .unwrap();
+            }
+
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+            match result {
+                Ok(sig) => {
+                    let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    info!("Miner {} successfully delegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                },
+                Err(e) => {
+                    error!("{} stake transaction failed...", user_pubkey.to_string());
+                    error!("Stake Tx Error: {:?}", e);
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!("stake with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct UnstakeParams {
+    pubkey: String,
+    amount: u64,
+}
+
+async fn post_unstake(
+    query_params: Query<UnstakeParams>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!("Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!("Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        if let Err(_) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await {
+            error!("Cannot unstake, no delegate stake account is created for {}", user_pubkey.to_string());
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("No delegate stake account exists".to_string())
+                .unwrap();
+        }
+
+        let staker_ata = get_associated_token_address(&user_pubkey, &ore_api::consts::MINT_ADDRESS);
+
+        let base_ix = ore_miner_delegation::instruction::undelegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), staker_ata, query_params.amount);
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!("data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            info!("Valid unstake tx, submitting.");
+
+            let hash = tx.get_recent_blockhash();
+            if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                error!("Failed to partially sign tx");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Server Failed to sign tx.".to_string())
+                    .unwrap();
+            }
+
+            if !tx.is_signed() {
+                error!("Tx missing signer");
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Tx".to_string())
+                    .unwrap();
+            }
+
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+            match result {
+                Ok(sig) => {
+                    let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    info!("Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                },
+                Err(e) => {
+                    error!("{} unstake transaction failed...", user_pubkey.to_string());
+                    error!("Unstake Tx Error: {:?}", e);
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!("unstake with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
@@ -2041,7 +2470,7 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
         if let Ok(ps_client) = ps_client {
             let ps_client = Arc::new(ps_client);
             let app_proof = proof.clone();
-            let account_pubkey = proof_pubkey(app_wallet.pubkey());
+            let account_pubkey = get_proof_pda(app_wallet.pubkey());
             let pubsub = ps_client
                 .account_subscribe(
                     &account_pubkey,
