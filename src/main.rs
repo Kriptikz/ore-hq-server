@@ -31,7 +31,7 @@ use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
 use ore_utils::{
-    get_auth_ix, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_original_proof, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
+    get_auth_ix, get_config, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_original_proof, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
 };
 use rand::Rng;
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
@@ -1365,6 +1365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
         .route("/miner/stake", get(get_miner_stake))
+        .route("/stake-multiplier", get(get_stake_multiplier))
         // App RR Database routes
         .route("/last-challenge-submissions", get(get_last_challenge_submissions))
         .route("/miner/rewards", get(get_miner_rewards))
@@ -1815,6 +1816,31 @@ async fn get_miner_stake(
         }
     } else {
         return Err("Invalid pubkey".to_string());
+    }
+}
+
+async fn get_stake_multiplier(
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(app_config): Extension<Arc<Config>>,
+) -> impl IntoResponse {
+    if app_config.stats_enabled {
+        let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
+        let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, pubkey).await {
+            loaded_proof
+        } else {
+            error!("get_pool_staked: Failed to load proof.");
+            return Err("Stats not enabled for this server.".to_string());
+        };
+
+        if let Ok(config) = get_config(&rpc_client).await
+        {
+            let multiplier = 1.0 + (proof.balance as f64 / config.top_balance as f64).min(1.0f64);
+            return Ok(Json(multiplier));
+        } else {
+            return Err("Failed to get ore config account".to_string());
+        }
+    } else {
+        return Err("Stats not enabled for this server.".to_string());
     }
 }
 
