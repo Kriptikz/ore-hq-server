@@ -734,6 +734,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 if !best_solution.is_valid(&p.challenge) {
                                     error!("SOLUTION IS NOT VALID ANYMORE!");
+                                    info!("Updating to latest proof.");
+                                    let mut lock = app_proof.lock().await;
+                                    *lock = p;
+                                    drop(lock);
                                     break;
                                 }
                             }
