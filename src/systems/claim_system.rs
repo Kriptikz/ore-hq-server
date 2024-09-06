@@ -27,6 +27,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
 
             let prio_fee: u32 = 20_000;
 
+            let mut is_creating_ata = false;
             let mut ixs = Vec::new();
             let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
             ixs.push(prio_fee_ix);
@@ -49,6 +50,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                 }
             } else {
                 info!("Adding create ata ix for miner claim");
+                is_creating_ata = true;
                 ixs.push(
                     spl_associated_token_account::instruction::create_associated_token_account(
                         &wallet.pubkey(),
@@ -59,7 +61,12 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                 )
             }
 
-            let ix = crate::ore_utils::get_claim_ix(wallet.pubkey(), miner_token_account, amount);
+            let mut claim_amount = amount;
+            // 0.00400000000
+            if is_creating_ata {
+                claim_amount = amount - 400_000_000
+            }
+            let ix = crate::ore_utils::get_claim_ix(wallet.pubkey(), miner_token_account, claim_amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client
