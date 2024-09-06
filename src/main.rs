@@ -8,7 +8,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ore_miner_delegation::state::DelegatedStake;
 use rand::seq::SliceRandom;
 use systems::claim_system::claim_system;
 
@@ -103,6 +102,8 @@ pub struct MessageInternalMineSuccess {
     rewards: u64,
     challenge_id: i32,
     total_hashpower: u64,
+    ore_config: Option<ore_api::state::Config>,
+    multiplier: f64,
     submissions: HashMap<Pubkey, (i32, u32, u64)>,
 }
 
@@ -998,6 +999,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                 let latest_proof = { app_proof.lock().await.clone() };
                                                                 let balance = (latest_proof.balance as f64)
                                                                     / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+
+
+                                                                let multiplier = if let Some(config) = loaded_config {
+                                                                    if config.top_balance > 0 {
+                                                                        1.0 + (latest_proof.balance as f64 / config.top_balance as f64).min(1.0f64)
+                                                                    } else {
+                                                                        1.0f64
+                                                                    }
+                                                                } else {
+                                                                    1.0f64
+                                                                };
+
                                                                 let _ = mine_success_sender.send(
                                                                     MessageInternalMineSuccess {
                                                                         difficulty,
@@ -1005,6 +1018,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                         rewards,
                                                                         challenge_id: challenge.id,
                                                                         total_hashpower,
+                                                                        ore_config: loaded_config,
+                                                                        multiplier,
                                                                         submissions,
                                                                     },
                                                                 );
@@ -1277,12 +1292,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             } else {
                                 0.0 // Handle the case where pool_rewards_dec is 0 to avoid division by zero
                             };
+
+                            let top_stake = if let Some(config) = msg.ore_config {
+                                (config.top_balance as f64).div(decimals)
+                            } else {
+                                1.0f64
+                            };
                             
                             let message = format!(
-                                "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11}\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
+                                "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11} ORE\nTop Stake:    {:.11} ORE\nPool Multiplier: {:.2}x\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
                                 msg.difficulty,
                                 pool_rewards_dec,
                                 msg.total_balance,
+                                top_stake,
+                                msg.multiplier,
                                 len,
                                 supplied_diff,
                                 earned_rewards_dec,
@@ -2037,7 +2060,7 @@ async fn post_stake(
                 };
 
                 match result {
-                    Ok(sig) => {
+                    Ok(_sig) => {
                         info!("Successfully created delegate stake account for: {}", user_pubkey.to_string());
                     }
                     Err(e) => {
