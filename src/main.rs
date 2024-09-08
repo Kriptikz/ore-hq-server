@@ -591,7 +591,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let latest_proof = lock.clone();
                     drop(lock);
 
-                    let cutoff = get_cutoff(latest_proof, 7);
+                    let cutoff = get_cutoff(latest_proof, 2);
                     let mut should_mine = true;
                     let cutoff = if cutoff <= 0 {
                         let solution = app_epoch_hashes.read().await.best_hash.solution;
