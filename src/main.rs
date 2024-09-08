@@ -619,6 +619,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
                         info!("Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
+                        info!("With cutoff: {}", cutoff);
                         for client in clients {
                             let nonce_range = {
                                 let mut nonce = app_nonce.lock().await;
@@ -758,7 +759,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let mut prio_fee = *app_prio_fee;
 
                             let _ = app_all_clients_sender.send(MessageInternalAllClients {
-                                text: String::from("Sending mine transaction..."),
+                                text: String::from("Server is sending mine transaction..."),
                             });
 
                             let mut cu_limit = 485_000;
