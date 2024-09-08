@@ -2735,40 +2735,6 @@ async fn client_message_handler_system(
                                 }
                                 drop(epoch_hashes);
                             }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            if let Ok(challenge) = app_database
-                                .get_challenge_by_challenge(challenge.to_vec())
-                                .await
-                            {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
-                                let new_submission = InsertSubmission {
-                                    miner_id,
-                                    challenge_id: challenge.id,
-                                    nonce,
-                                    difficulty: diff as i8,
-                                };
-
-                                tokio::time::sleep(Duration::from_millis(100)).await;
-                                while let Err(_) = app_database
-                                    .add_new_submission(new_submission.clone())
-                                    .await
-                                {
-                                    error!("Failed to add new submission! Retrying...");
-                                    tokio::time::sleep(Duration::from_millis(2000)).await;
-                                }
-                            } else {
-                                error!("Challenge not found in db, :(");
-                                info!("Adding challenge to db.");
-                                let new_challenge = models::InsertChallenge {
-                                    pool_id: app_config.pool_id,
-                                    challenge: challenge.to_vec(),
-                                    rewards_earned: None,
-                                };
-                                if let Err(_) = app_database.add_new_challenge(new_challenge).await
-                                {
-                                    error!("Failed to add challenge to db");
-                                }
-                            }
                         } else {
                             error!("Diff to low, skipping");
                         }
