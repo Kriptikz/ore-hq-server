@@ -1444,92 +1444,93 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut i_rewards = Vec::new();
                     let mut i_submissions = Vec::new();
 
-                    let shared_state = app_shared_state.read().await;
-                    let len = shared_state.sockets.len();
-                    for (_socket_addr, socket_sender) in shared_state.sockets.iter() {
-                        let pubkey = socket_sender.pubkey;
+                    for (miner_pubkey, msg_submission) in msg.submissions.iter() {
+                        let hashpower_percent = (msg_submission.hashpower as u128)
+                            .saturating_mul(1_000_000)
+                            .saturating_div(msg.total_hashpower as u128);
 
-                        if let Some(msg_submission) =
-                            msg.submissions.get(&pubkey)
-                        {
-                            let hashpower_percent = (msg_submission.hashpower as u128)
-                                .saturating_mul(1_000_000)
-                                .saturating_div(msg.total_hashpower as u128);
+                        // TODO: handle overflow/underflow and float imprecision issues
+                        let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                        let earned_rewards = hashpower_percent
+                            .saturating_mul(msg.rewards as u128)
+                            .saturating_div(1_000_000)
+                            as u64;
 
-                            // TODO: handle overflow/underflow and float imprecision issues
-                            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                            let earned_rewards = hashpower_percent
-                                .saturating_mul(msg.rewards as u128)
-                                .saturating_div(1_000_000)
-                                as u64;
+                        let new_earning = InsertEarning {
+                            miner_id: msg_submission.miner_id,
+                            pool_id: app_config.pool_id,
+                            challenge_id: msg.challenge_id,
+                            amount: earned_rewards,
+                        };
 
-                            let new_earning = InsertEarning {
-                                miner_id: msg_submission.miner_id,
-                                pool_id: app_config.pool_id,
-                                challenge_id: msg.challenge_id,
-                                amount: earned_rewards,
-                            };
+                        let new_submission = InsertSubmission {
+                            miner_id: msg_submission.miner_id,
+                            challenge_id: msg.challenge_id,
+                            nonce: msg_submission.supplied_nonce,
+                            difficulty: msg_submission.supplied_diff as i8,
+                        };
 
-                            let new_submission = InsertSubmission {
-                                miner_id: msg_submission.miner_id,
-                                challenge_id: msg.challenge_id,
-                                nonce: msg_submission.supplied_nonce,
-                                difficulty: msg_submission.supplied_diff as i8,
-                            };
+                        let new_reward = UpdateReward {
+                            miner_id: msg_submission.miner_id,
+                            balance: earned_rewards,
+                        };
 
-                            let new_reward = UpdateReward {
-                                miner_id: msg_submission.miner_id,
-                                balance: earned_rewards,
-                            };
+                        i_earnings.push(new_earning);
+                        i_rewards.push(new_reward);
+                        i_submissions.push(new_submission);
+                        //let _ = app_database.add_new_earning(new_earning).await.unwrap();
 
-                            i_earnings.push(new_earning);
-                            i_rewards.push(new_reward);
-                            i_submissions.push(new_submission);
-                            //let _ = app_database.add_new_earning(new_earning).await.unwrap();
+                        let earned_rewards_dec = (earned_rewards as f64).div(decimals);
+                        let pool_rewards_dec = (msg.rewards as f64).div(decimals);
 
-                            let earned_rewards_dec = (earned_rewards as f64).div(decimals);
-                            let pool_rewards_dec = (msg.rewards as f64).div(decimals);
+                        let percentage = if pool_rewards_dec != 0.0 {
+                            (earned_rewards_dec / pool_rewards_dec) * 100.0
+                        } else {
+                            0.0 // Handle the case where pool_rewards_dec is 0 to avoid division by zero
+                        };
 
-                            let percentage = if pool_rewards_dec != 0.0 {
-                                (earned_rewards_dec / pool_rewards_dec) * 100.0
-                            } else {
-                                0.0 // Handle the case where pool_rewards_dec is 0 to avoid division by zero
-                            };
+                        let top_stake = if let Some(config) = msg.ore_config {
+                            (config.top_balance as f64).div(decimals)
+                        } else {
+                            1.0f64
+                        };
+                        
+                        let shared_state = app_shared_state.read().await;
+                        let len = shared_state.sockets.len();
+                        let message = format!(
+                            "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11} ORE\nTop Stake:    {:.11} ORE\nPool Multiplier: {:.2}x\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
+                            msg.difficulty,
+                            pool_rewards_dec,
+                            msg.total_balance,
+                            top_stake,
+                            msg.multiplier,
+                            len,
+                            msg_submission.supplied_diff,
+                            earned_rewards_dec,
+                            percentage
+                        );
 
-                            let top_stake = if let Some(config) = msg.ore_config {
-                                (config.top_balance as f64).div(decimals)
-                            } else {
-                                1.0f64
-                            };
-                            
-                            let message = format!(
-                                "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11} ORE\nTop Stake:    {:.11} ORE\nPool Multiplier: {:.2}x\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
-                                msg.difficulty,
-                                pool_rewards_dec,
-                                msg.total_balance,
-                                top_stake,
-                                msg.multiplier,
-                                len,
-                                msg_submission.supplied_diff,
-                                earned_rewards_dec,
-                                percentage
-                            );
-                            
-                            let socket_sender = socket_sender.clone();
-                            tokio::spawn(async move {
-                                if let Ok(_) = socket_sender
-                                    .socket
-                                    .lock()
-                                    .await
-                                    .send(Message::Text(message))
-                                    .await
-                                {
-                                } else {
-                                    error!("Failed to send client text");
-                                }
-                            });
+                        for (_addr, client_connection) in shared_state.sockets.iter() {
+                            let client_message = message.clone();
+                            if client_connection.pubkey.eq(&miner_pubkey) {
+                                let socket_sender = client_connection.socket.clone();
+                                tokio::spawn(async move {
+                                    if let Ok(_) = socket_sender
+                                        .lock()
+                                        .await
+                                        .send(Message::Text(client_message))
+                                        .await
+                                    {
+                                    } else {
+                                        error!("Failed to send client text");
+                                    }
+                                });
+
+                            }
                         }
+                    
                     }
+
                     if i_earnings.len() > 0 {
                         if let Ok(_) = app_database
                             .add_new_earnings_batch(i_earnings.clone())
