@@ -119,7 +119,7 @@ pub struct SubmissionWithPubkey {
     pub pubkey: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Insertable, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::submissions)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct InsertSubmission {
