@@ -1533,29 +1533,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if i_earnings.len() > 0 {
-                        if let Ok(_) = app_database
+                        while let Err(_) = app_database
                             .add_new_earnings_batch(i_earnings.clone())
                             .await
                         {
-                            info!("Successfully added earnings batch");
-                        } else {
-                            error!("Failed to insert earnings batch");
+                            error!("Failed to add new earnings batch to db. Retrying...");
+                            tokio::time::sleep(Duration::from_millis(500))
+                                .await;
                         }
+                        info!("Successfully added earnings batch");
                     }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                     if i_rewards.len() > 0 {
-                        if let Ok(_) = app_database.update_rewards(i_rewards).await {
-                            info!("Successfully updated rewards");
-                        } else {
-                            error!("Failed to bulk update rewards");
+                        while let Err(_) = app_database
+                            .update_rewards(i_rewards.clone())
+                            .await
+                        {
+                            error!("Failed to update rewards in db. Retrying...");
+                            tokio::time::sleep(Duration::from_millis(500))
+                                .await;
                         }
+                        info!("Successfully updated rewards");
                     }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                     if i_submissions.len() > 0 {
-                        if let Ok(_) = app_database.add_new_submissions_batch(i_submissions).await {
-                            info!("Successfully added submissions batch");
-                        } else {
-                            error!("Failed to insert submissions batch");
+                        while let Err(_) = app_database
+                            .add_new_submissions_batch(i_submissions.clone())
+                            .await
+                        {
+                            error!("Failed to add new submissions batch. Retrying...");
+                            tokio::time::sleep(Duration::from_millis(500))
+                                .await;
                         }
+                        info!("Successfully added submissions batch");
                     }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                     while let Err(_) = app_database
                         .update_pool_rewards(
                             app_wallet.miner_wallet.pubkey().to_string(),

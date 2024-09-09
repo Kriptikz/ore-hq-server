@@ -171,7 +171,7 @@ pub struct InsertReward {
     pub pool_id: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::rewards)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct UpdateReward {
