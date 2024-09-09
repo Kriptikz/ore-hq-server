@@ -732,10 +732,10 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => match interaction {
                     Ok(query) => {
+                        info!(target: "server_log", "Earnings inserted: {}", query);
                         if query == 0 {
                             return Err(AppDatabaseError::FailedToInsertRow);
                         }
-                        info!(target: "server_log", "Updated challenge rewards!");
                         return Ok(());
                     }
                     Err(e) => {
