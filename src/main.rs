@@ -636,8 +636,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let challenge = latest_proof.challenge;
 
 
-                        info!(target: "server_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
-                        info!(target: "server_log", "With cutoff: {}", cutoff);
                         info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
                         info!(target: "submission_log", "With cutoff: {}", cutoff);
                         for client in clients {
