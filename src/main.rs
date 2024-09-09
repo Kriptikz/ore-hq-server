@@ -780,7 +780,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 text: String::from("Server is sending mine transaction..."),
                             });
 
-                            let mut cu_limit = 485_000;
+                            let mut cu_limit = 495_000;
                             let should_add_reset_ix = if let Some(config) = loaded_config {
                                 let time_until_reset = (config.last_reset_at + 300) - now as i64;
                                 if time_until_reset <= 5 {
