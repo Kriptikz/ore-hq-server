@@ -52,12 +52,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -83,12 +83,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -114,12 +114,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -152,13 +152,13 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
-                        error!("QUERY: {}", query);
+                        error!(target: "server_log", "{:?}", e);
+                        error!(target: "server_log", "QUERY: {}", query);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -188,12 +188,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -225,12 +225,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -255,12 +255,12 @@ impl AppDatabase {
                         return Ok(query.id);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -290,16 +290,16 @@ impl AppDatabase {
                         if query != 1 {
                             return Err(AppDatabaseError::FailedToUpdateRow);
                         }
-                        info!("Updated challenge rewards!");
+                        info!(target: "server_log", "Updated challenge rewards!");
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -330,12 +330,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -361,12 +361,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -401,12 +401,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -434,16 +434,16 @@ impl AppDatabase {
                         if query != 1 {
                             return Err(AppDatabaseError::FailedToUpdateRow);
                         }
-                        info!("Successfully updated pool rewards");
+                        info!(target: "server_log", "Successfully updated pool rewards");
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -474,12 +474,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -509,12 +509,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -543,12 +543,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -574,12 +574,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -604,12 +604,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -638,12 +638,12 @@ impl AppDatabase {
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -668,12 +668,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -702,12 +702,12 @@ impl AppDatabase {
     //                     return Ok(());
     //                 }
     //                 Err(e) => {
-    //                     error!("{:?}", e);
+    //                     error!(target: "server_log", "{:?}", e);
     //                     return Err(AppDatabaseError::QueryFailed);
     //                 }
     //             },
     //             Err(e) => {
-    //                 error!("{:?}", e);
+    //                 error!(target: "server_log", "{:?}", e);
     //                 return Err(AppDatabaseError::InteractionFailed);
     //             }
     //         }
@@ -735,16 +735,16 @@ impl AppDatabase {
                         if query == 0 {
                             return Err(AppDatabaseError::FailedToInsertRow);
                         }
-                        info!("Updated challenge rewards!");
+                        info!(target: "server_log", "Updated challenge rewards!");
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -769,18 +769,19 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => match interaction {
                     Ok(query) => {
+                        info!(target: "server_log", "Submissions inserted: {}", query);
                         if query == 0 {
                             return Err(AppDatabaseError::FailedToInsertRow);
                         }
                         return Ok(());
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
@@ -805,12 +806,12 @@ impl AppDatabase {
                         return Ok(query);
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(target: "server_log", "{:?}", e);
                         return Err(AppDatabaseError::QueryFailed);
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    error!(target: "server_log", "{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }

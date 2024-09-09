@@ -10,6 +10,7 @@ use std::{
 
 use rand::seq::SliceRandom;
 use systems::claim_system::claim_system;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::ore_utils::{get_managed_proof_token_ata, get_proof_pda};
 
@@ -198,9 +199,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     let args = Args::parse();
 
-    let file_appender = tracing_appender::rolling::daily("./logs", "ore-hq-server.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::fmt().with_writer(non_blocking).init();
+    let server_logs = tracing_appender::rolling::daily("./logs", "ore-hq-server.log");
+    let (server_logs, _guard) = tracing_appender::non_blocking(server_logs);
+    let server_log_layer = tracing_subscriber::fmt::layer()
+        .with_writer(server_logs)
+        .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+            metadata.target() == "server_log"
+        }));
+
+    let submission_logs = tracing_appender::rolling::daily("./logs", "ore-hq-submissions.log");
+    let (submission_logs, _guard) = tracing_appender::non_blocking(submission_logs);
+    let submission_log_layer = tracing_subscriber::fmt::layer()
+        .with_writer(submission_logs)
+        .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+            metadata.target() == "submission_log"
+        }));
+
+    tracing_subscriber::registry()
+        .with(server_log_layer)
+        .with(submission_log_layer)
+        .init();
 
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
@@ -235,7 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "Failed to create pubkey from line {} with value: {}",
                             i, line
                         );
-                        error!(err);
+                        error!(target: "server_log", err);
                     }
                 }
             } else {
@@ -256,49 +274,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet_path = Path::new(&wallet_path_str);
 
     if !wallet_path.exists() {
-        tracing::error!("Failed to load wallet at: {}", wallet_path_str);
+        tracing::error!(target: "server_log", "Failed to load wallet at: {}", wallet_path_str);
         return Err("Failed to find wallet path.".into());
     }
 
     let wallet = read_keypair_file(wallet_path)
         .expect("Failed to load keypair from file: {wallet_path_str}");
-    info!("loaded wallet {}", wallet.pubkey().to_string());
+    info!(target: "server_log", "loaded wallet {}", wallet.pubkey().to_string());
 
     let wallet_path = Path::new(&fee_wallet_path_str);
 
     if !wallet_path.exists() {
-        tracing::error!("Failed to load fee wallet at: {}", fee_wallet_path_str);
+        tracing::error!(target: "server_log", "Failed to load fee wallet at: {}", fee_wallet_path_str);
         return Err("Failed to find fee wallet path.".into());
     }
 
     let fee_wallet = read_keypair_file(wallet_path)
         .expect("Failed to load keypair from file: {wallet_path_str}");
-    info!("loaded fee wallet {}", wallet.pubkey().to_string());
+    info!(target: "server_log", "loaded fee wallet {}", wallet.pubkey().to_string());
 
-    info!("establishing rpc connection...");
+    info!(target: "server_log", "establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
     let jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/transactions".to_string();
     let jito_client = RpcClient::new(jito_url);
 
-    info!("loading sol balance...");
+    info!(target: "server_log", "loading sol balance...");
     let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
         balance
     } else {
         return Err("Failed to load balance".into());
     };
 
-    info!("Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
+    info!(target: "server_log", "Balance: {:.2}", balance as f64 / LAMPORTS_PER_SOL as f64);
 
     if balance < 1_000_000 {
         return Err("Sol balance is too low!".into());
     }
 
     let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, wallet.pubkey()).await {
-        info!("LOADED PROOF: \n{:?}", loaded_proof);
+        info!(target: "server_log", "LOADED PROOF: \n{:?}", loaded_proof);
         loaded_proof
     } else {
-        error!("Failed to load proof.");
-        info!("Creating proof account...");
+        error!(target: "server_log", "Failed to load proof.");
+        info!(target: "server_log", "Creating proof account...");
 
         let ix = get_register_ix(wallet.pubkey());
 
@@ -318,7 +336,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await;
 
             if let Ok(sig) = result {
-                info!("Sig: {}", sig.to_string());
+                info!(target: "server_log", "Sig: {}", sig.to_string());
             } else {
                 return Err("Failed to create proof account".into());
             }
@@ -331,14 +349,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         proof
     };
 
-    info!("Validating miners delegate stake account is created");
+    info!(target: "server_log", "Validating miners delegate stake account is created");
     match get_delegated_stake_account(&rpc_client, wallet.pubkey(), wallet.pubkey()).await {
         Ok(data) => {
-            info!("Miner Delegated Stake Account: {:?}", data);
-            info!("Miner delegate stake account already created.");
+            info!(target: "server_log", "Miner Delegated Stake Account: {:?}", data);
+            info!(target: "server_log", "Miner delegate stake account already created.");
         },
         Err(_) => {
-            info!("Creating miner delegate stake account");
+            info!(target: "server_log", "Creating miner delegate stake account");
             let ix = ore_miner_delegation::instruction::init_delegate_stake(
                 wallet.pubkey(),
                 wallet.pubkey(),
@@ -358,26 +376,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 commitment: CommitmentLevel::Confirmed
             }).await {
                 Ok(_) => {
-                    info!("Successfully created miner delegate stake account");
+                    info!(target: "server_log", "Successfully created miner delegate stake account");
                 },
                 Err(_) => {
-                    error!("Failed to send and confirm tx.");
+                    error!(target: "server_log", "Failed to send and confirm tx.");
                     panic!("Failed to create miner delegate stake account");
                 }
             }
         }
     }
 
-    info!("Validating managed proof token account is created");
+    info!(target: "server_log", "Validating managed proof token account is created");
     let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", wallet.pubkey().as_ref()], &ore_miner_delegation::id());
 
     let managed_proof_token_account_addr = get_managed_proof_token_ata(wallet.pubkey());
     match rpc_client.get_token_account_balance(&managed_proof_token_account_addr).await {
         Ok(_) => {
-            info!("Managed proof token account already created.");
+            info!(target: "server_log", "Managed proof token account already created.");
         },
         Err(_) => {
-            info!("Creating managed proof token account");
+            info!(target: "server_log", "Creating managed proof token account");
             let ix = create_associated_token_account(&wallet.pubkey(), &managed_proof.0, &ore_api::consts::MINT_ADDRESS, &spl_token::id());
 
             let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
@@ -393,10 +411,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 commitment: CommitmentLevel::Confirmed
             }).await {
                 Ok(_) => {
-                    info!("Successfully created managed proof token account");
+                    info!(target: "server_log", "Successfully created managed proof token account");
                 },
                 Err(e) => {
-                    error!("Failed to send and confirm tx.\nE: {:?}", e);
+                    error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
                     panic!("Failed to create managed proof token account");
                 }
             }
@@ -408,27 +426,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bal = token_balance.ui_amount.unwrap() * 10f64.powf(token_balance.decimals as f64);
         bal as u64
     } else {
-        error!("Failed to get miner ORE token account balance");
+        error!(target: "server_log", "Failed to get miner ORE token account balance");
         panic!("Failed to get ORE token account balance.");
     };
 
-    info!("Checking original proof, and token account balances.");
+    info!(target: "server_log", "Checking original proof, and token account balances.");
     let original_proof = if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
         loaded_proof
     } else {
     panic!("Failed to get original proof!");
     };
     if original_proof.balance > 0 || token_balance > 0 {
-        info!("Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
+        info!(target: "server_log", "Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
         if let Err(e) = proof_migration::migrate(&rpc_client, &wallet, original_proof.balance, token_balance).await {
-            info!("Failed to migrate proof balance.\nError: {}", e);
+            info!(target: "server_log", "Failed to migrate proof balance.\nError: {}", e);
             panic!("Failed to migrate proof balance.");
         } else {
-            info!("Successfully migrated proof balance");
+            info!(target: "server_log", "Successfully migrated proof balance");
         }
     }
 
-    info!("Validating pool exists in db");
+    info!(target: "server_log", "Validating pool exists in db");
     let db_pool = app_database
         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
         .await;
@@ -439,7 +457,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("Failed to get database pool connection");
         }
         Err(_) => {
-            info!("Pool missing from database. Inserting...");
+            info!(target: "server_log", "Pool missing from database. Inserting...");
             let proof_pubkey = get_proof_pda(wallet.pubkey());
             let result = app_database
                 .add_new_pool(wallet.pubkey().to_string(), proof_pubkey.to_string())
@@ -456,7 +474,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .unwrap();
 
-    info!("Validating current challenge for pool exists in db");
+    info!(target: "server_log", "Validating current challenge for pool exists in db");
     let result = app_database
         .get_challenge_by_challenge(proof.challenge.to_vec())
         .await;
@@ -467,7 +485,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("Failed to get database pool connection");
         }
         Err(_) => {
-            info!("Challenge missing from database. Inserting...");
+            info!(target: "server_log", "Challenge missing from database. Inserting...");
             let new_challenge = models::InsertChallenge {
                 pool_id: db_pool.id,
                 challenge: proof.challenge.to_vec(),
@@ -618,8 +636,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let challenge = latest_proof.challenge;
 
 
-                        info!("Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
-                        info!("With cutoff: {}", cutoff);
+                        info!(target: "server_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
+                        info!(target: "server_log", "With cutoff: {}", cutoff);
+                        info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
+                        info!(target: "submission_log", "With cutoff: {}", cutoff);
                         for client in clients {
                             let nonce_range = {
                                 let mut nonce = app_nonce.lock().await;
@@ -666,7 +686,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
             } else {
-                info!("Mining is paused");
+                info!(target: "server_log", "Mining is paused");
                 tokio::time::sleep(Duration::from_secs(30)).await;
             }
 
@@ -709,7 +729,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(reader);
                 if solution.is_some() {
                     // Close submission window
-                    info!("Submission window closed.");
+                    info!(target: "server_log", "Submission window closed.");
                     let mut writer = app_submission_window.write().await;
                     writer.closed = true;
                     drop(writer);
@@ -728,23 +748,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(best_solution) = best_solution {
                             let difficulty = best_solution.to_hash().difficulty();
 
-                            info!(
+                            info!(target: "server_log", 
                                 "Starting mine submission attempt {} with difficulty {}.",
                                 i, difficulty
                             );
-                            info!("Submission Challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
+                            info!(target: "server_log", "Submission Challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                             let mut loaded_config = None;
-                            info!("Getting latest config and busses data.");
+                            info!(target: "server_log", "Getting latest config and busses data.");
                             if let (Ok(p), Ok(config), Ok(_busses)) =
                                 get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await
                             {
                                 loaded_config = Some(config);
 
-                                info!("Latest Challenge: {}", BASE64_STANDARD.encode(p.challenge));
+                                info!(target: "server_log", "Latest Challenge: {}", BASE64_STANDARD.encode(p.challenge));
 
                                 if !best_solution.is_valid(&p.challenge) {
-                                    error!("SOLUTION IS NOT VALID ANYMORE!");
-                                    info!("Updating to latest proof.");
+                                    error!(target: "server_log", "SOLUTION IS NOT VALID ANYMORE!");
+                                    info!(target: "server_log", "Updating to latest proof.");
                                     let mut lock = app_proof.lock().await;
                                     *lock = p;
                                     drop(lock);
@@ -768,7 +788,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if time_until_reset <= 5 {
                                     cu_limit = 500_000;
                                     prio_fee += 50_000;
-                                    info!("Including reset tx.");
+                                    info!(target: "server_log", "Including reset tx.");
                                     true
                                 } else {
                                     false
@@ -777,7 +797,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 false
                             };
 
-                            info!("using priority fee of {}", prio_fee);
+                            info!(target: "server_log", "using priority fee of {}", prio_fee);
 
                             let cu_limit_ix =
                                 ComputeBudgetInstruction::set_compute_unit_limit(cu_limit);
@@ -811,7 +831,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             jito_tip,
                                         ));
 
-                                        info!("Jito tip: {} SOL", lamports_to_sol(jito_tip));
+                                        info!(target: "server_log", "Jito tip: {} SOL", lamports_to_sol(jito_tip));
                                     }
 
                             let noop_ix = get_auth_ix(signer.pubkey());
@@ -835,8 +855,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let expired_timer = Instant::now();
                                 tx.sign(&[&signer], hash);
-                                info!("Sending signed tx...");
-                                info!("attempt: {}", i + 1);
+                                info!(target: "server_log", "Sending signed tx...");
+                                info!(target: "server_log", "attempt: {}", i + 1);
                                 let send_client = if jito_tip > 0 {
                                     jito_client.clone()
                                 } else {
@@ -861,7 +881,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(tx_error) = result.value.err {
                                         if tx_error == TransactionError::InstructionError(4, InstructionError::Custom(1))
                                         || tx_error == TransactionError::InstructionError(5, InstructionError::Custom(1)) {
-                                            error!("Custom program error: Invalid Hash");
+                                            error!(target: "server_log", "Custom program error: Invalid Hash");
                                             break;
                                         }
                                     }
@@ -875,7 +895,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         
                                         },
                                         Err(_e) => {
-                                            error!("Attempt {} Failed to send mine transaction. retrying in 1 seconds...", rpc_send_attempts);
+                                            error!(target: "server_log", "Attempt {} Failed to send mine transaction. retrying in 1 seconds...", rpc_send_attempts);
                                             rpc_send_attempts += 1;
 
                                             if rpc_send_attempts >= 5 {
@@ -919,24 +939,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             // Transaction has succeeded or expired
                                             break;
                                         } else {
-                                            info!("Resending signed tx...");
+                                            info!(target: "server_log", "Resending signed tx...");
                                             let _ = app_send_client.send_transaction_with_config(&tx, rpc_config).await;
 
                                             // Wait 500ms then check for updated proof
                                             tokio::time::sleep(Duration::from_millis(500)).await;
 
-                                            info!("Checking for proof hash update.");
+                                            info!(target: "server_log", "Checking for proof hash update.");
                                             let lock = app_proof.lock().await;
                                             let latest_proof = lock.clone();
                                             drop(lock);
 
                                             if old_proof.challenge.eq(&latest_proof.challenge) {
-                                                info!("Proof challenge not updated yet..");
+                                                info!(target: "server_log", "Proof challenge not updated yet..");
                                                 if let Ok(p) = get_proof(&app_rpc_client, app_wallet.miner_wallet.pubkey()).await {
-                                                    info!("OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                    info!("RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
+                                                    info!(target: "server_log", "OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                    info!(target: "server_log", "RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
                                                     if old_proof.challenge.ne(&p.challenge) {
-                                                        info!("Found new proof from rpc call, not websocket...");
+                                                        info!(target: "server_log", "Found new proof from rpc call, not websocket...");
                                                         let mut lock = app_proof.lock().await;
                                                         *lock = p;
                                                         drop(lock);
@@ -951,7 +971,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         }
                                                         // reset epoch hashes
                                                         {
-                                                            info!("reset epoch hashes");
+                                                            info!(target: "server_log", "reset epoch hashes");
                                                             let mut mut_epoch_hashes =
                                                                 app_epoch_hashes.write().await;
                                                             mut_epoch_hashes.challenge = p.challenge;
@@ -960,12 +980,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             mut_epoch_hashes.submissions = HashMap::new();
                                                         }
                                                         // Open submission window
-                                                        info!("openning submission window.");
+                                                        info!(target: "server_log", "openning submission window.");
                                                         let mut writer = app_submission_window.write().await;
                                                         writer.closed = false;
                                                         drop(writer);
 
-                                                        info!("Adding new challenge to db");
+                                                        info!(target: "server_log", "Adding new challenge to db");
                                                         let new_challenge = InsertChallenge {
                                                             pool_id: app_config.pool_id,
                                                             challenge: latest_proof.challenge.to_vec(),
@@ -976,23 +996,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             .add_new_challenge(new_challenge.clone())
                                                             .await
                                                         {
-                                                            error!("Failed to add new challenge to db.");
-                                                            info!("Verifying challenge does not already exist.");
+                                                            error!(target: "server_log", "Failed to add new challenge to db.");
+                                                            info!(target: "server_log", "Verifying challenge does not already exist.");
                                                             if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
-                                                                info!("Challenge already exists, continuing");
+                                                                info!(target: "server_log", "Challenge already exists, continuing");
                                                                 break;
                                                             }
 
                                                             tokio::time::sleep(Duration::from_millis(1000))
                                                                 .await;
                                                         }
-                                                        info!("New challenge successfully added to db");
+                                                        info!(target: "server_log", "New challenge successfully added to db");
 
                                                         break;
                                                     }
                                                 }
                                             } else {
-                                                info!("Adding new challenge to db");
+                                                info!(target: "server_log", "Adding new challenge to db");
                                                 let new_challenge = InsertChallenge {
                                                     pool_id: app_config.pool_id,
                                                     challenge: latest_proof.challenge.to_vec(),
@@ -1003,17 +1023,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     .add_new_challenge(new_challenge.clone())
                                                     .await
                                                 {
-                                                    error!("Failed to add new challenge to db.");
-                                                    info!("Verifying challenge does not already exist.");
+                                                    error!(target: "server_log", "Failed to add new challenge to db.");
+                                                    info!(target: "server_log", "Verifying challenge does not already exist.");
                                                     if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
-                                                        info!("Challenge already exists, continuing");
+                                                        info!(target: "server_log", "Challenge already exists, continuing");
                                                         break;
                                                     }
 
                                                     tokio::time::sleep(Duration::from_millis(1000))
                                                         .await;
                                                 }
-                                                info!("New challenge successfully added to db");
+                                                info!(target: "server_log", "New challenge successfully added to db");
 
 
                                                 // Reset mining data
@@ -1040,7 +1060,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 }
                                                 // reset epoch hashes
                                                 {
-                                                    info!("reset epoch hashes");
+                                                    info!(target: "server_log", "reset epoch hashes");
                                                     let mut mut_epoch_hashes =
                                                         app_epoch_hashes.write().await;
                                                     mut_epoch_hashes.challenge = latest_proof.challenge;
@@ -1049,7 +1069,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     mut_epoch_hashes.submissions = HashMap::new();
                                                 }
                                                 // Open submission window
-                                                info!("openning submission window.");
+                                                info!(target: "server_log", "openning submission window.");
                                                 let mut writer = app_submission_window.write().await;
                                                 writer.closed = false;
                                                 drop(writer);
@@ -1071,7 +1091,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Ok(response) = results {
                                         let statuses = response.value;
                                         if let Some(status) = &statuses[0] {
-                                            info!("Status: {:?}", status);
+                                            info!(target: "server_log", "Status: {:?}", status);
                                             if status.confirmation_status() == TransactionConfirmationStatus::Finalized {
                                                     if status.err.is_some() {
                                                         let e_str = format!("Transaction Failed: {:?}", status.err);
@@ -1091,8 +1111,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Ok(sig) => {
                                         // success
                                         success = true;
-                                        info!("Success!!");
-                                        info!("Sig: {}", sig);
+                                        info!(target: "server_log", "Success!!");
+                                        info!(target: "server_log", "Sig: {}", sig);
                                         let itxn = InsertTxn {
                                             txn_type: "mine".to_string(),
                                             signature: sig.to_string(),
@@ -1101,7 +1121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let app_db = app_database.clone();
                                         tokio::spawn(async move {
                                             while let Err(_) = app_db.add_new_txn(itxn.clone()).await {
-                                                error!("Failed to add tx to db! Retrying...");
+                                                error!(target: "server_log", "Failed to add tx to db! Retrying...");
                                                 tokio::time::sleep(Duration::from_millis(2000)).await;
                                             }
                                         });
@@ -1132,7 +1152,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             let bytes = BASE64_STANDARD.decode(data.data.0).unwrap();
 
                                                             if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEvent>(&bytes) {
-                                                                info!("MineEvent: {:?}", mine_event);
+                                                                info!(target: "server_log", "MineEvent: {:?}", mine_event);
+                                                                info!(target: "submission_log", "MineEvent: {:?}", mine_event);
+                                                                info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                                info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                                 let rewards = mine_event.reward;
                                                                 // handle sending mine success message
                                                                 let mut total_hashpower: u64 = 0;
@@ -1150,7 +1173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                         challenge = c;
                                                                         break;
                                                                     } else {
-                                                                        error!(
+                                                                        error!(target: "server_log", 
                                                                             "Failed to get challenge by challenge! Inserting if necessary..."
                                                                         );
                                                                         let new_challenge = InsertChallenge {
@@ -1162,17 +1185,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                             .add_new_challenge(new_challenge.clone())
                                                                             .await
                                                                         {
-                                                                            error!("Failed to add new challenge to db.");
-                                                                            info!("Verifying challenge does not already exist.");
+                                                                            error!(target: "server_log", "Failed to add new challenge to db.");
+                                                                            info!(target: "server_log", "Verifying challenge does not already exist.");
                                                                             if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
-                                                                                info!("Challenge already exists, continuing");
+                                                                                info!(target: "server_log", "Challenge already exists, continuing");
                                                                                 break;
                                                                             }
 
                                                                             tokio::time::sleep(Duration::from_millis(1000))
                                                                                 .await;
                                                                         }
-                                                                        info!("New challenge successfully added to db");
+                                                                        info!(target: "server_log", "New challenge successfully added to db");
                                                                         tokio::time::sleep(Duration::from_millis(1000)).await;
                                                                     }
                                                                 }
@@ -1209,18 +1232,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                 );
                                                                 tokio::time::sleep(Duration::from_millis(200)).await;
                                                             } else {
-                                                                error!("Failed get MineEvent data from transaction... wtf...");
+                                                                error!(target: "server_log", "Failed get MineEvent data from transaction... wtf...");
                                                                 break;
                                                             }
 
                                                         },
                                                         solana_transaction_status::option_serializer::OptionSerializer::None => {
-                                                            error!("RPC gave no transaction metadata....");
+                                                            error!(target: "server_log", "RPC gave no transaction metadata....");
                                                             tokio::time::sleep(Duration::from_millis(2000)).await;
                                                             continue;
                                                         },
                                                         solana_transaction_status::option_serializer::OptionSerializer::Skip => {
-                                                            error!("RPC gave transaction metadata should skip...");
+                                                            error!(target: "server_log", "RPC gave transaction metadata should skip...");
                                                             tokio::time::sleep(Duration::from_millis(2000)).await;
                                                             continue;
 
@@ -1228,25 +1251,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                     break;
                                                 } else {
-                                                    error!("Failed to get confirmed transaction... Come on rpc...");
+                                                    error!(target: "server_log", "Failed to get confirmed transaction... Come on rpc...");
                                                     tokio::time::sleep(Duration::from_millis(2000)).await;
                                                 }
                                             }
                                         });
 
                                         loop {
-                                            info!("Checking for proof hash update.");
+                                            info!(target: "server_log", "Checking for proof hash update.");
                                             let lock = app_proof.lock().await;
                                             let latest_proof = lock.clone();
                                             drop(lock);
 
                                             if old_proof.challenge.eq(&latest_proof.challenge) {
-                                                info!("Proof challenge not updated yet..");
+                                                info!(target: "server_log", "Proof challenge not updated yet..");
                                                 if let Ok(p) = get_proof(&rpc_client, app_wallet.miner_wallet.pubkey()).await {
-                                                    info!("OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                    info!("RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
+                                                    info!(target: "server_log", "OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                    info!(target: "server_log", "RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
                                                     if old_proof.challenge.ne(&p.challenge) {
-                                                        info!("Found new proof after finalized from rpc call, not websocket...");
+                                                        info!(target: "server_log", "Found new proof after finalized from rpc call, not websocket...");
                                                         let mut lock = app_proof.lock().await;
                                                         *lock = p;
                                                         drop(lock);
@@ -1261,7 +1284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         }
                                                         // reset epoch hashes
                                                         {
-                                                            info!("reset epoch hashes");
+                                                            info!(target: "server_log", "reset epoch hashes");
                                                             let mut mut_epoch_hashes =
                                                                 app_epoch_hashes.write().await;
                                                             mut_epoch_hashes.challenge = p.challenge;
@@ -1270,12 +1293,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             mut_epoch_hashes.submissions = HashMap::new();
                                                         }
                                                         // Open submission window
-                                                        info!("openning submission window.");
+                                                        info!(target: "server_log", "openning submission window.");
                                                         let mut writer = app_submission_window.write().await;
                                                         writer.closed = false;
                                                         drop(writer);
 
-                                                        info!("Adding new challenge to db");
+                                                        info!(target: "server_log", "Adding new challenge to db");
                                                         let new_challenge = InsertChallenge {
                                                             pool_id: app_config.pool_id,
                                                             challenge: latest_proof.challenge.to_vec(),
@@ -1286,17 +1309,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             .add_new_challenge(new_challenge.clone())
                                                             .await
                                                         {
-                                                            error!("Failed to add new challenge to db.");
-                                                            info!("Verifying challenge does not already exist.");
+                                                            error!(target: "server_log", "Failed to add new challenge to db.");
+                                                            info!(target: "server_log", "Verifying challenge does not already exist.");
                                                             if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
-                                                                info!("Challenge already exists, continuing");
+                                                                info!(target: "server_log", "Challenge already exists, continuing");
                                                                 break;
                                                             }
 
                                                             tokio::time::sleep(Duration::from_millis(1000))
                                                                 .await;
                                                         }
-                                                        info!("New challenge successfully added to db");
+                                                        info!(target: "server_log", "New challenge successfully added to db");
 
                                                         break;
                                                     }
@@ -1308,10 +1331,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                                 if latest_proof.challenge.eq(&epoch_hashes_challenge) {
                                                     // epoch_hashes challenge was already updated
-                                                    info!("Epoch hashes challenge already up to date!");
+                                                    info!(target: "server_log", "Epoch hashes challenge already up to date!");
                                                     break;
                                                 } else {
-                                                    info!("Epoch hashes challenge was not updated yet. Updating...");
+                                                    info!(target: "server_log", "Epoch hashes challenge was not updated yet. Updating...");
                                                     // Reset mining data
                                                     // {
                                                     //     let mut prio_fee = app_prio_fee.lock().await;
@@ -1336,7 +1359,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                     // reset epoch hashes
                                                     {
-                                                        info!("reset epoch hashes");
+                                                        info!(target: "server_log", "reset epoch hashes");
                                                         let mut mut_epoch_hashes =
                                                             app_epoch_hashes.write().await;
                                                         mut_epoch_hashes.challenge = latest_proof.challenge;
@@ -1345,11 +1368,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         mut_epoch_hashes.submissions = HashMap::new();
                                                     }
                                                     // Open submission window
-                                                    info!("openning submission window.");
+                                                    info!(target: "server_log", "openning submission window.");
                                                     let mut writer = app_submission_window.write().await;
                                                     writer.closed = false;
                                                     drop(writer);
-                                                    info!("Adding new challenge to db");
+                                                    info!(target: "server_log", "Adding new challenge to db");
                                                     let new_challenge = InsertChallenge {
                                                         pool_id: app_config.pool_id,
                                                         challenge: latest_proof.challenge.to_vec(),
@@ -1360,17 +1383,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         .add_new_challenge(new_challenge.clone())
                                                         .await
                                                     {
-                                                        error!("Failed to add new challenge to db.");
-                                                        info!("Verifying challenge does not already exist.");
+                                                        error!(target: "server_log", "Failed to add new challenge to db.");
+                                                        info!(target: "server_log", "Verifying challenge does not already exist.");
                                                         if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
-                                                            info!("Challenge already exists, continuing");
+                                                            info!(target: "server_log", "Challenge already exists, continuing");
                                                             break;
                                                         }
 
                                                         tokio::time::sleep(Duration::from_millis(1000))
                                                             .await;
                                                     }
-                                                    info!("New challenge successfully added to db");
+                                                    info!(target: "server_log", "New challenge successfully added to db");
                                                     break;
                                                 }
                                             }
@@ -1378,9 +1401,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         break;
                                     },
                                     Err(e) => {
-                                        error!("Failed to send and confirm txn");
-                                        error!("Error: {:?}", e);
-                                        // info!("increasing prio fees");
+                                        error!(target: "server_log", "Failed to send and confirm txn");
+                                        error!(target: "server_log", "Error: {:?}", e);
+                                        // info!(target: "server_log", "increasing prio fees");
                                         // {
                                         //     let mut prio_fee = app_prio_fee.lock().await;
                                         //     if *prio_fee < 1_000_000 {
@@ -1391,16 +1414,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             } else {
-                                error!("Failed to get latest blockhash. retrying...");
+                                error!(target: "server_log", "Failed to get latest blockhash. retrying...");
                                 tokio::time::sleep(Duration::from_millis(1_000)).await;
                             }
                         } else {
-                            error!("Solution is_some but got none on best hash re-check?");
+                            error!(target: "server_log", "Solution is_some but got none on best hash re-check?");
                             tokio::time::sleep(Duration::from_millis(1_000)).await;
                         }
                     }
                     if !success {
-                        info!("Failed to send tx. Discarding and refreshing data.");
+                        info!(target: "server_log", "Failed to send tx. Discarding and refreshing data.");
                         // reset nonce
                         {
                             let mut nonce = app_nonce.lock().await;
@@ -1408,14 +1431,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         // reset epoch hashes
                         {
-                            info!("reset epoch hashes");
+                            info!(target: "server_log", "reset epoch hashes");
                             let mut mut_epoch_hashes = app_epoch_hashes.write().await;
                             mut_epoch_hashes.best_hash.solution = None;
                             mut_epoch_hashes.best_hash.difficulty = 0;
                             mut_epoch_hashes.submissions = HashMap::new();
                         }
                         // Open submission window
-                        info!("openning submission window.");
+                        info!(target: "server_log", "openning submission window.");
                         let mut writer = app_submission_window.write().await;
                         writer.closed = false;
                         drop(writer);
@@ -1423,7 +1446,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 } else {
-                    error!("No best solution yet.");
+                    error!(target: "server_log", "No best solution yet.");
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
             } else {
@@ -1523,7 +1546,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .await
                                     {
                                     } else {
-                                        error!("Failed to send client text");
+                                        error!(target: "server_log", "Failed to send client text");
                                     }
                                 });
 
@@ -1537,11 +1560,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .add_new_earnings_batch(i_earnings.clone())
                             .await
                         {
-                            error!("Failed to add new earnings batch to db. Retrying...");
+                            error!(target: "server_log", "Failed to add new earnings batch to db. Retrying...");
                             tokio::time::sleep(Duration::from_millis(500))
                                 .await;
                         }
-                        info!("Successfully added earnings batch");
+                        info!(target: "server_log", "Successfully added earnings batch");
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     if i_rewards.len() > 0 {
@@ -1549,23 +1572,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .update_rewards(i_rewards.clone())
                             .await
                         {
-                            error!("Failed to update rewards in db. Retrying...");
+                            error!(target: "server_log", "Failed to update rewards in db. Retrying...");
                             tokio::time::sleep(Duration::from_millis(500))
                                 .await;
                         }
-                        info!("Successfully updated rewards");
+                        info!(target: "server_log", "Successfully updated rewards");
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     if i_submissions.len() > 0 {
+
+                        info!(target: "server_log", "Submissions batch size: {}", i_submissions.len());
                         while let Err(_) = app_database
                             .add_new_submissions_batch(i_submissions.clone())
                             .await
                         {
-                            error!("Failed to add new submissions batch. Retrying...");
+                            error!(target: "server_log", "Failed to add new submissions batch. Retrying...");
                             tokio::time::sleep(Duration::from_millis(500))
                                 .await;
                         }
-                        info!("Successfully added submissions batch");
+                        info!(target: "server_log", "Successfully added submissions batch");
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     while let Err(_) = app_database
@@ -1575,7 +1600,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .await
                     {
-                        error!(
+                        error!(target: "server_log", 
                             "Failed to update pool rewards! Retrying..."
                         );
                         tokio::time::sleep(Duration::from_millis(1000))
@@ -1583,30 +1608,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     tokio::time::sleep(Duration::from_millis(200)).await;
-                    let submission_id;
-                    loop {
-                        if let Ok(s) = app_database.get_submission_id_with_nonce(msg.best_nonce)
-                        .await {
-                            submission_id = s;
-                            break;
-                        } else {
-                            error!("Failed to get submission id with nonce! Retrying...");
-                            tokio::time::sleep(Duration::from_millis(1000))
-                                .await;
+
+                    if let Ok(s) = app_database.get_submission_id_with_nonce(msg.best_nonce)
+                    .await {
+                        if let Err(_) = app_database
+                            .update_challenge_rewards(
+                                msg.challenge.to_vec(),
+                                s,
+                                msg.rewards,
+                            )
+                            .await
+                        {
+                            error!(target: "server_log", "Failed to update challenge rewards! Skipping! Devs check!");
+                            let err_str = format!("Challenge UPDATE FAILED - Challenge: {:?}\nSubmission ID: {}\nRewards: {}\n", msg.challenge.to_vec(), s, msg.rewards);
+                            error!(target: "server_log", err_str);
                         }
-                    }
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    if let Err(_) = app_database
-                        .update_challenge_rewards(
-                            msg.challenge.to_vec(),
-                            submission_id,
-                            msg.rewards,
-                        )
-                        .await
-                    {
-                        error!("Failed to update challenge rewards! Skipping! Devs check!");
-                        let err_str = format!("Challenge UPDATE FAILED - Challenge: {:?}\nSubmission ID: {}\nRewards: {}\n", msg.challenge.to_vec(), submission_id, msg.rewards);
-                        error!(err_str);
+                    } else {
+                        error!(target: "server_log", "Failed to get submission id with nonce!");
+                        error!(target: "server_log", "Failed update challenge rewards!");
                     }
                 }
             }
@@ -1627,7 +1646,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 socket.socket.lock().await.send(Message::Text(text)).await
                             {
                             } else {
-                                error!("Failed to send client text");
+                                error!(target: "server_log", "Failed to send client text");
                             }
                         });
                     }
@@ -1685,7 +1704,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
-    tracing::info!("listening on {}", listener.local_addr().unwrap());
+    tracing::info!(target: "server_log", "listening on {}", listener.local_addr().unwrap());
 
     let app_shared_state = shared_state.clone();
     tokio::spawn(async move {
@@ -1786,7 +1805,7 @@ async fn post_signup(
         match db_miner {
             Ok(miner) => {
                 if miner.enabled {
-                    info!("Miner account already enabled!");
+                    info!(target: "server_log", "Miner account already enabled!");
                     return Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "text/text")
@@ -1795,14 +1814,14 @@ async fn post_signup(
                 }
             }
             Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
-                error!("Failed to get database pool connection");
+                error!(target: "server_log", "Failed to get database pool connection");
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to get db pool connection".to_string())
                     .unwrap();
             }
             Err(_) => {
-                info!("No miner account exists. Signing up new user.");
+                info!(target: "server_log", "No miner account exists. Signing up new user.");
             }
         }
 
@@ -1836,14 +1855,14 @@ async fn post_signup(
                             .body("SUCCESS".to_string())
                             .unwrap();
                     } else {
-                        error!("Failed to add miner rewards tracker to database");
+                        error!(target: "server_log", "Failed to add miner rewards tracker to database");
                         return Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .body("Failed to add miner rewards tracker to database".to_string())
                             .unwrap();
                     }
                 } else {
-                    error!("Failed to add miner to database");
+                    error!(target: "server_log", "Failed to add miner to database");
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to add miner to database".to_string())
@@ -1856,7 +1875,7 @@ async fn post_signup(
         let tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
             tx
         } else {
-            error!("Failed to deserialize tx");
+            error!(target: "server_log", "Failed to deserialize tx");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -1864,7 +1883,7 @@ async fn post_signup(
         };
 
         if !tx.is_signed() {
-            error!("Tx missing signer");
+            error!(target: "server_log", "Tx missing signer");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -1874,7 +1893,7 @@ async fn post_signup(
         let ixs = tx.message.instructions.clone();
 
         if ixs.len() > 1 {
-            error!("Too many instructions");
+            error!(target: "server_log", "Too many instructions");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -1888,7 +1907,7 @@ async fn post_signup(
         }
 
         if accts.len() != 2 {
-            error!("too many accts");
+            error!(target: "server_log", "too many accts");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -1896,13 +1915,13 @@ async fn post_signup(
         }
 
         if ixs[0].data.ne(&base_ix.data) {
-            error!("data missmatch");
+            error!(target: "server_log", "data missmatch");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
                 .unwrap();
         } else {
-            info!("Valid signup tx, submitting.");
+            info!(target: "server_log", "Valid signup tx, submitting.");
 
             let result = rpc_client.send_and_confirm_transaction(&tx).await;
 
@@ -1936,14 +1955,14 @@ async fn post_signup(
                                 .body("SUCCESS".to_string())
                                 .unwrap();
                         } else {
-                            error!("Failed to add miner rewards tracker to database");
+                            error!(target: "server_log", "Failed to add miner rewards tracker to database");
                             return Response::builder()
                                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                                 .body("Failed to add miner rewards tracker to database".to_string())
                                 .unwrap();
                         }
                     } else {
-                        error!("Failed to add miner to database");
+                        error!(target: "server_log", "Failed to add miner to database");
                         return Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .body("Failed to add user to database".to_string())
@@ -1951,8 +1970,8 @@ async fn post_signup(
                     }
                 },
                 Err(e) => {
-                    error!("{} signup transaction failed...", user_pubkey.to_string());
-                    error!("Signup Tx Error: {:?}", e);
+                    error!(target: "server_log", "{} signup transaction failed...", user_pubkey.to_string());
+                    error!(target: "server_log", "Signup Tx Error: {:?}", e);
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to send tx".to_string())
@@ -1961,7 +1980,7 @@ async fn post_signup(
             }
         }
     } else {
-        error!("Signup with invalid pubkey");
+        error!(target: "server_log", "Signup with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
@@ -1994,7 +2013,7 @@ async fn get_miner_rewards(
                     .unwrap();
             }
             Err(_) => {
-                error!("get_miner_rewards: failed to get rewards balance from db for {}", user_pubkey.to_string());
+                error!(target: "server_log", "get_miner_rewards: failed to get rewards balance from db for {}", user_pubkey.to_string());
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to get balance".to_string())
@@ -2119,7 +2138,7 @@ async fn get_stake_multiplier(
         let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, pubkey).await {
             loaded_proof
         } else {
-            error!("get_pool_staked: Failed to load proof.");
+            error!(target: "server_log", "get_pool_staked: Failed to load proof.");
             return Err("Stats not enabled for this server.".to_string());
         };
 
@@ -2227,7 +2246,7 @@ async fn post_claim(
                 .unwrap();
         }
     } else {
-        error!("Claim with invalid pubkey");
+        error!(target: "server_log", "Claim with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
@@ -2252,7 +2271,7 @@ async fn post_stake(
         let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
             tx
         } else {
-            error!("Failed to deserialize tx");
+            error!(target: "server_log", "Failed to deserialize tx");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -2262,7 +2281,7 @@ async fn post_stake(
         let ixs = tx.message.instructions.clone();
 
         if ixs.len() > 1 {
-            error!("Too many instructions");
+            error!(target: "server_log", "Too many instructions");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -2298,7 +2317,7 @@ async fn post_stake(
                         signature = sig;
                         break;
                     } else {
-                        error!("Failed to send claim transaction. retrying in 2 seconds...");
+                        error!(target: "server_log", "Failed to send claim transaction. retrying in 2 seconds...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
                 }
@@ -2325,10 +2344,10 @@ async fn post_stake(
 
                 match result {
                     Ok(_sig) => {
-                        info!("Successfully created delegate stake account for: {}", user_pubkey.to_string());
+                        info!(target: "server_log", "Successfully created delegate stake account for: {}", user_pubkey.to_string());
                     }
                     Err(e) => {
-                        error!("ERROR: {:?}", e);
+                        error!(target: "server_log", "ERROR: {:?}", e);
                         return Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .body("Failed to init delegate stake account.".to_string())
@@ -2338,7 +2357,7 @@ async fn post_stake(
                 }
 
             } else {
-                error!("Failed to confirm transaction for init delegate stake.");
+                error!(target: "server_log", "Failed to confirm transaction for init delegate stake.");
             }
         }
 
@@ -2350,17 +2369,17 @@ async fn post_stake(
         }
 
         if ixs[0].data.ne(&base_ix.data) {
-            error!("data missmatch");
+            error!(target: "server_log", "data missmatch");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
                 .unwrap();
         } else {
-            info!("Valid stake tx, submitting.");
+            info!(target: "server_log", "Valid stake tx, submitting.");
 
             let hash = tx.get_recent_blockhash();
             if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
-                error!("Failed to partially sign tx");
+                error!(target: "server_log", "Failed to partially sign tx");
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Server Failed to sign tx.".to_string())
@@ -2368,7 +2387,7 @@ async fn post_stake(
             }
 
             if !tx.is_signed() {
-                error!("Tx missing signer");
+                error!(target: "server_log", "Tx missing signer");
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body("Invalid Tx".to_string())
@@ -2380,15 +2399,15 @@ async fn post_stake(
             match result {
                 Ok(sig) => {
                     let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                    info!("Miner {} successfully delegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                    info!(target: "server_log", "Miner {} successfully delegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
                     return Response::builder()
                         .status(StatusCode::OK)
                         .body("SUCCESS".to_string())
                         .unwrap();
                 },
                 Err(e) => {
-                    error!("{} stake transaction failed...", user_pubkey.to_string());
-                    error!("Stake Tx Error: {:?}", e);
+                    error!(target: "server_log", "{} stake transaction failed...", user_pubkey.to_string());
+                    error!(target: "server_log", "Stake Tx Error: {:?}", e);
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to send tx".to_string())
@@ -2397,7 +2416,7 @@ async fn post_stake(
             }
         }
     } else {
-        error!("stake with invalid pubkey");
+        error!(target: "server_log", "stake with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
@@ -2422,7 +2441,7 @@ async fn post_unstake(
         let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
             tx
         } else {
-            error!("Failed to deserialize tx");
+            error!(target: "server_log", "Failed to deserialize tx");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -2432,7 +2451,7 @@ async fn post_unstake(
         let ixs = tx.message.instructions.clone();
 
         if ixs.len() > 1 {
-            error!("Too many instructions");
+            error!(target: "server_log", "Too many instructions");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
@@ -2440,7 +2459,7 @@ async fn post_unstake(
         }
 
         if let Err(_) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await {
-            error!("Cannot unstake, no delegate stake account is created for {}", user_pubkey.to_string());
+            error!(target: "server_log", "Cannot unstake, no delegate stake account is created for {}", user_pubkey.to_string());
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("No delegate stake account exists".to_string())
@@ -2456,17 +2475,17 @@ async fn post_unstake(
         }
 
         if ixs[0].data.ne(&base_ix.data) {
-            error!("data missmatch");
+            error!(target: "server_log", "data missmatch");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("Invalid Tx".to_string())
                 .unwrap();
         } else {
-            info!("Valid unstake tx, submitting.");
+            info!(target: "server_log", "Valid unstake tx, submitting.");
 
             let hash = tx.get_recent_blockhash();
             if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
-                error!("Failed to partially sign tx");
+                error!(target: "server_log", "Failed to partially sign tx");
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Server Failed to sign tx.".to_string())
@@ -2474,7 +2493,7 @@ async fn post_unstake(
             }
 
             if !tx.is_signed() {
-                error!("Tx missing signer");
+                error!(target: "server_log", "Tx missing signer");
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body("Invalid Tx".to_string())
@@ -2486,15 +2505,15 @@ async fn post_unstake(
             match result {
                 Ok(sig) => {
                     let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                    info!("Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                    info!(target: "server_log", "Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
                     return Response::builder()
                         .status(StatusCode::OK)
                         .body("SUCCESS".to_string())
                         .unwrap();
                 },
                 Err(e) => {
-                    error!("{} unstake transaction failed...", user_pubkey.to_string());
-                    error!("Unstake Tx Error: {:?}", e);
+                    error!(target: "server_log", "{} unstake transaction failed...", user_pubkey.to_string());
+                    error!(target: "server_log", "Unstake Tx Error: {:?}", e);
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to send tx".to_string())
@@ -2503,7 +2522,7 @@ async fn post_unstake(
             }
         }
     } else {
-        error!("unstake with invalid pubkey");
+        error!(target: "server_log", "unstake with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
@@ -2581,11 +2600,11 @@ async fn ws_handler(
                 ));
             }
             Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
-                error!("Failed to get database pool connection.");
+                error!(target: "server_log", "Failed to get database pool connection.");
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
             }
             Err(_) => {
-                error!("DB Error: Catch all.");
+                error!(target: "server_log", "DB Error: Catch all.");
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
             }
         }
@@ -2598,7 +2617,7 @@ async fn ws_handler(
             let ts_msg = msg_timestamp.to_le_bytes();
 
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
-                info!("Client: {addr} connected with pubkey {pubkey}.");
+                info!(target: "server_log", "Client: {addr} connected with pubkey {pubkey}.");
                 return Ok(ws.on_upgrade(move |socket| {
                     handle_socket(
                         socket,
@@ -2635,7 +2654,7 @@ async fn handle_socket(
     {
         tracing::debug!("Pinged {who}...");
     } else {
-        error!("could not ping {who}");
+        error!(target: "server_log", "could not ping {who}");
 
         // if we can't ping we can't do anything, return to close the connection
         return;
@@ -2644,7 +2663,7 @@ async fn handle_socket(
     let (sender, mut receiver) = socket.split();
     let mut app_state = rw_app_state.write().await;
     if app_state.sockets.contains_key(&who) {
-        info!("Socket addr: {who} already has an active connection");
+        info!(target: "server_log", "Socket addr: {who} already has an active connection");
         return;
     } else {
         let new_app_client_connection = AppClientConnection {
@@ -2669,7 +2688,7 @@ async fn handle_socket(
     app_state.sockets.remove(&who);
     drop(app_state);
 
-    info!("Client: {} disconnected!", who_pubkey.to_string());
+    info!(target: "server_log", "Client: {} disconnected!", who_pubkey.to_string());
 }
 
 fn process_message(
@@ -2732,28 +2751,29 @@ fn process_message(
                                 let msg = ClientMessage::BestSolution(who, solution, pubkey);
                                 let _ = client_channel.send(msg);
                             } else {
-                                error!("Client submission sig verification failed.");
+                                error!(target: "server_log", "Client submission sig verification failed.");
                             }
                         } else {
-                            error!("Failed to parse into Signature.");
+                            error!(target: "server_log", "Failed to parse into Signature.");
                         }
                     } else {
-                        error!("Failed to parse signed message from client.");
+                        error!(target: "server_log", "Failed to parse signed message from client.");
                     }
                 }
                 _ => {
-                    error!(">>> {} sent an invalid message", who);
+                    error!(target: "server_log", ">>> {} sent an invalid message", who);
                 }
             }
         }
         Message::Close(c) => {
             if let Some(cf) = c {
                 info!(
+                    target: "server_log", 
                     ">>> {} sent close with code {} and reason `{}`",
                     who, cf.code, cf.reason
                 );
             } else {
-                info!(">>> {who} somehow sent close message without CloseFrame");
+                info!(target: "server_log", ">>> {who} somehow sent close message without CloseFrame");
             }
             return ControlFlow::Break(());
         }
@@ -2771,17 +2791,17 @@ fn process_message(
 
 async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<Mutex<Proof>>) {
     loop {
-        info!("Establishing rpc websocket connection...");
+        info!(target: "server_log", "Establishing rpc websocket connection...");
         let mut ps_client = PubsubClient::new(&ws_url).await;
         let mut attempts = 0;
 
         while ps_client.is_err() && attempts < 3 {
-            error!("Failed to connect to websocket, retrying...");
+            error!(target: "server_log", "Failed to connect to websocket, retrying...");
             ps_client = PubsubClient::new(&ws_url).await;
             tokio::time::sleep(Duration::from_millis(1000)).await;
             attempts += 1;
         }
-        info!("RPC WS connection established!");
+        info!(target: "server_log", "RPC WS connection established!");
 
         let app_wallet = wallet.clone();
         if let Ok(ps_client) = ps_client {
@@ -2800,7 +2820,7 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
                 )
                 .await;
 
-            info!("Tracking pool proof updates with websocket");
+            info!(target: "server_log", "Tracking pool proof updates with websocket");
             if let Ok((mut account_sub_notifications, _account_unsub)) = pubsub {
                 while let Some(response) = account_sub_notifications.next().await {
                     let data = response.value.data.decode();
@@ -2812,8 +2832,8 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
                         //     let _ = sender.send(AccountUpdatesData::TreasuryConfigData(*ore_config));
                         // }
                         if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
-                            info!("Got new proof data");
-                            info!("Challenge: {}", BASE64_STANDARD.encode(new_proof.challenge));
+                            info!(target: "server_log", "Got new proof data");
+                            info!(target: "server_log", "Challenge: {}", BASE64_STANDARD.encode(new_proof.challenge));
                             // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
                             //
                             {
@@ -2878,7 +2898,7 @@ async fn client_message_handler_system(
                 });
             }
             ClientMessage::Mining(addr) => {
-                info!("Client {} has started mining!", addr.to_string());
+                info!(target: "server_log", "Client {} has started mining!", addr.to_string());
             }
             ClientMessage::BestSolution(addr, solution, pubkey) => {
                 let app_epoch_hashes = epoch_hashes.clone();
@@ -2896,14 +2916,14 @@ async fn client_message_handler_system(
                     drop(reader);
 
                     if submission_windows_closed {
-                        error!("{} submitted after submission window was closed!", pubkey);
+                        error!(target: "server_log", "{} submitted after submission window was closed!", pubkey);
 
                         let reader = app_state.read().await;
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
                             let msg = format!("Late submission. Please make sure your hash time is under 60 seconds.");
                             let _ = app_client_socket.socket.lock().await.send(Message::Text(msg)).await;
                         } else {
-                            error!("Failed to get client socket for addr: {}", addr);
+                            error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                             return;
                         }
                         drop(reader);
@@ -2917,7 +2937,7 @@ async fn client_message_handler_system(
                         if let Some(nr) = reader.get(&pubkey) {
                             nr.clone()
                         } else {
-                            error!("Client nonce range not set!");
+                            error!(target: "server_log", "Client nonce range not set!");
                             return;
                         }
                     };
@@ -2926,7 +2946,7 @@ async fn client_message_handler_system(
                     let nonce = u64::from_le_bytes(solution.n);
 
                     if !nonce_range.contains(&nonce) {
-                        error!("Client submitted nonce out of assigned range");
+                        error!(target: "server_log", "Client submitted nonce out of assigned range");
                         return;
                     }
 
@@ -2935,7 +2955,7 @@ async fn client_message_handler_system(
                     if let Some(app_client_socket) = reader.sockets.get(&addr) {
                         miner_id = app_client_socket.miner_id;
                     } else {
-                        error!("Failed to get client socket for addr: {}", addr);
+                        error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                         return;
                     }
                     drop(reader);
@@ -2945,7 +2965,7 @@ async fn client_message_handler_system(
                     drop(lock);
                     if solution.is_valid(&challenge) {
                         let diff = solution.to_hash().difficulty();
-                        info!("{} found diff: {}", pubkey_str, diff);
+                        info!(target: "submission_log", "{} found diff: {}", pubkey_str, diff);
                         if diff >= MIN_DIFF {
                             // calculate rewards
                             let mut hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
@@ -2964,23 +2984,24 @@ async fn client_message_handler_system(
                                     }
                                 );
                                 if diff > epoch_hashes.best_hash.difficulty {
-                                    info!("New best diff: {}", diff);
+                                    info!(target: "server_log", "New best diff: {}", diff);
+                                    info!(target: "submission_log", "New best diff: {}", diff);
                                     epoch_hashes.best_hash.difficulty = diff;
                                     epoch_hashes.best_hash.solution = Some(solution);
                                 }
                                 drop(epoch_hashes);
                             }
                         } else {
-                            error!("Diff to low, skipping");
+                            error!(target: "server_log", "Diff to low, skipping");
                         }
                     } else {
-                        error!("{} returned an invalid solution!", pubkey);
+                        error!(target: "server_log", "{} returned an invalid solution!", pubkey);
 
                         let reader = app_state.read().await;
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
                             let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
                         } else {
-                            error!("Failed to get client socket for addr: {}", addr);
+                            error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                             return;
                         }
                         drop(reader);
@@ -3026,7 +3047,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 }
                 Ok(None) => {}
                 Err(_) => {
-                    error!("Got error sending ping to client.");
+                    error!(target: "server_log", "Got error sending ping to client.");
                 }
             }
         }
