@@ -731,7 +731,11 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query == 0 {
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
+                        info!("Updated challenge rewards!");
                         return Ok(());
                     }
                     Err(e) => {
@@ -764,7 +768,10 @@ impl AppDatabase {
 
             match res {
                 Ok(interaction) => match interaction {
-                    Ok(_query) => {
+                    Ok(query) => {
+                        if query == 0 {
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
                         return Ok(());
                     }
                     Err(e) => {
