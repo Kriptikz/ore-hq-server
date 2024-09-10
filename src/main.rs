@@ -192,6 +192,13 @@ struct Args {
         help = "Enable stats endpoints",
     )]
     stats: bool,
+    #[arg(
+        long,
+        short,
+        action,
+        help = "Migrate balance from original proof to delegate stake managed proof",
+    )]
+    migrate: bool,
 }
 
 #[tokio::main]
@@ -430,19 +437,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         panic!("Failed to get ORE token account balance.");
     };
 
-    info!(target: "server_log", "Checking original proof, and token account balances.");
-    let original_proof = if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
-        loaded_proof
-    } else {
-    panic!("Failed to get original proof!");
-    };
-    if original_proof.balance > 0 || token_balance > 0 {
-        info!(target: "server_log", "Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
-        if let Err(e) = proof_migration::migrate(&rpc_client, &wallet, original_proof.balance, token_balance).await {
-            info!(target: "server_log", "Failed to migrate proof balance.\nError: {}", e);
-            panic!("Failed to migrate proof balance.");
+    if args.migrate {
+        info!(target: "server_log", "Checking original proof, and token account balances for migration.");
+        let original_proof = if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
+            loaded_proof
         } else {
-            info!(target: "server_log", "Successfully migrated proof balance");
+            panic!("Failed to get original proof!");
+        };
+        if original_proof.balance > 0 || token_balance > 0 {
+            info!(target: "server_log", "Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
+            if let Err(e) = proof_migration::migrate(&rpc_client, &wallet, original_proof.balance, token_balance).await {
+                info!(target: "server_log", "Failed to migrate proof balance.\nError: {}", e);
+                panic!("Failed to migrate proof balance.");
+            } else {
+                info!(target: "server_log", "Successfully migrated proof balance");
+            }
+        } else {
+            info!(target: "server_log", "Balances are 0, nothing to migrate.");
         }
     }
 
@@ -1617,6 +1628,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     tokio::time::sleep(Duration::from_millis(200)).await;
 
+
                     if let Ok(s) = app_database.get_submission_id_with_nonce(msg.best_nonce)
                     .await {
                         if let Err(_) = app_database
@@ -1632,7 +1644,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             error!(target: "server_log", err_str);
                         }
                     } else {
-                        error!(target: "server_log", "Failed to get submission id with nonce!");
+                        error!(target: "server_log", "Failed to get submission id with nonce: {} for challenge_id: {}", msg.best_nonce, msg.challenge_id);
                         error!(target: "server_log", "Failed update challenge rewards!");
                     }
                 }
