@@ -3005,23 +3005,51 @@ async fn client_message_handler_system(
                                 hashpower = 81_920;
                             }
                             {
-                                let mut epoch_hashes = epoch_hashes.write().await;
-                                epoch_hashes
-                                    .submissions
-                                    .insert(pubkey, InternalMessageSubmission {
-                                        miner_id,
-                                        supplied_nonce: nonce,
-                                        supplied_diff: diff,
-                                        hashpower,
+                                let reader = epoch_hashes.read().await;
+                                let subs = reader.submissions.clone();
+                                drop(reader);
+
+                                if let Some(old_sub) = subs.get(&pubkey) {
+                                    if diff > old_sub.supplied_diff {
+                                        let mut epoch_hashes = epoch_hashes.write().await;
+                                        epoch_hashes
+                                            .submissions
+                                            .insert(pubkey, InternalMessageSubmission {
+                                                miner_id,
+                                                supplied_nonce: nonce,
+                                                supplied_diff: diff,
+                                                hashpower,
+                                            }
+                                        );
+                                        if diff > epoch_hashes.best_hash.difficulty {
+                                            info!(target: "server_log", "New best diff: {}", diff);
+                                            info!(target: "submission_log", "New best diff: {}", diff);
+                                            epoch_hashes.best_hash.difficulty = diff;
+                                            epoch_hashes.best_hash.solution = Some(solution);
+                                        }
+                                        drop(epoch_hashes);
+                                    } else {
+                                        info!(target: "server_log", "Miner submitted lower diff than a previous submission, discarding lower diff");
                                     }
-                                );
-                                if diff > epoch_hashes.best_hash.difficulty {
-                                    info!(target: "server_log", "New best diff: {}", diff);
-                                    info!(target: "submission_log", "New best diff: {}", diff);
-                                    epoch_hashes.best_hash.difficulty = diff;
-                                    epoch_hashes.best_hash.solution = Some(solution);
+                                } else {
+                                    let mut epoch_hashes = epoch_hashes.write().await;
+                                    epoch_hashes
+                                        .submissions
+                                        .insert(pubkey, InternalMessageSubmission {
+                                            miner_id,
+                                            supplied_nonce: nonce,
+                                            supplied_diff: diff,
+                                            hashpower,
+                                        }
+                                    );
+                                    if diff > epoch_hashes.best_hash.difficulty {
+                                        info!(target: "server_log", "New best diff: {}", diff);
+                                        info!(target: "submission_log", "New best diff: {}", diff);
+                                        epoch_hashes.best_hash.difficulty = diff;
+                                        epoch_hashes.best_hash.solution = Some(solution);
+                                    }
+                                    drop(epoch_hashes);
                                 }
-                                drop(epoch_hashes);
                             }
                         } else {
                             error!(target: "server_log", "Diff to low, skipping");
