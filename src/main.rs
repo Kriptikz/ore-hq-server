@@ -1628,7 +1628,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     tokio::time::sleep(Duration::from_millis(200)).await;
 
-
                     if let Ok(s) = app_database.get_submission_id_with_nonce(msg.best_nonce)
                     .await {
                         if let Err(_) = app_database
@@ -1646,6 +1645,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         error!(target: "server_log", "Failed to get submission id with nonce: {} for challenge_id: {}", msg.best_nonce, msg.challenge_id);
                         error!(target: "server_log", "Failed update challenge rewards!");
+                        let mut found_best_nonce = false;
+                        for submission in i_submissions {
+                            if submission.nonce == msg.best_nonce {
+                                found_best_nonce = true;
+                                break;
+                            }
+                        }
+
+                        if found_best_nonce {
+                            info!(target: "server_log", "Found best nonce in i_submissions");
+                        } else {
+                            info!(target: "server_log", "Failed to find best nonce in i_submissions");
+                        }
                     }
                 }
             }
