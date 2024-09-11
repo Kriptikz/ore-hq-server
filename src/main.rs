@@ -2594,22 +2594,6 @@ async fn ws_handler(
 
     // verify client
     if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
-        {
-            let mut already_connected = false;
-            for (_, app_client_connection) in app_state.read().await.sockets.iter() {
-                if user_pubkey == app_client_connection.pubkey {
-                    already_connected = true;
-                    break;
-                }
-            }
-            if already_connected {
-                return Err((
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "A client is already connected with that wallet",
-                ));
-            }
-        };
-
         let db_miner = app_database
             .get_miner_by_pubkey_str(pubkey.to_string())
             .await;
