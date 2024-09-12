@@ -653,9 +653,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let nonce_range = {
                                 let mut nonce = app_nonce.lock().await;
                                 let start = *nonce;
-                                // max hashes possible in 60s for a single client
                                 *nonce += 4_000_000;
-                                let end = *nonce;
+                                drop(nonce);
+                                // max hashes possible in 60s for a single client
+                                //
+                                let nonce_end = start + 3_999_999;
+                                let end = nonce_end;
                                 start..end
                             };
                             // message type is 8 bytes = 1 u8
@@ -684,10 +687,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .send(Message::Binary(bin_data.to_vec()))
                                         .await;
                                     let _ = ready_clients.lock().await.remove(&client);
-                                    let _ = app_client_nonce_ranges
+                                    let reader = app_client_nonce_ranges.read().await;
+                                    let current_nonce_ranges = if let Some(val) = reader.get(&sender.pubkey) {
+                                        Some(val.clone())
+                                    } else {
+                                        None
+                                    };
+                                    drop(reader);
+
+                                    if let Some(nonce_ranges) = current_nonce_ranges {
+                                        let mut new_nonce_ranges = nonce_ranges.to_vec();
+                                        new_nonce_ranges.push(nonce_range);
+
+                                        app_client_nonce_ranges
                                         .write()
                                         .await
-                                        .insert(sender.pubkey, nonce_range);
+                                        .insert(sender.pubkey, new_nonce_ranges);
+                                    } else {
+                                        let new_nonce_ranges = vec![nonce_range];
+                                        app_client_nonce_ranges
+                                        .write()
+                                        .await
+                                        .insert(sender.pubkey, new_nonce_ranges);
+                                    }
                                 });
                             }
                         }
@@ -721,6 +743,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_app_database = app_database.clone();
     let app_all_clients_sender = all_clients_sender.clone();
     let app_submission_window = submission_window.clone();
+    let app_client_nonce_ranges = client_nonce_ranges.clone();
     tokio::spawn(async move {
         let rpc_client = app_rpc_client;
         let jito_client = app_jito_client;
@@ -932,6 +955,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let app_app_wallet = app_wallet.clone();
                                 let app_app_epoch_hashes = app_epoch_hashes.clone();
                                 let app_app_submission_window = app_submission_window.clone();
+                                let app_app_client_nonce_ranges = app_client_nonce_ranges.clone();
                                 tokio::spawn(async move {
                                     let mut stop_reciever = tx_message_receiver;
                                     let app_nonce = app_app_nonce;
@@ -942,6 +966,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let app_wallet = app_app_wallet;
                                     let app_epoch_hashes = app_app_epoch_hashes;
                                     let app_submission_window = app_app_submission_window;
+                                    let app_client_nonce_ranges = app_app_client_nonce_ranges;
                                     tokio::time::sleep(Duration::from_millis(2000)).await;
                                     loop {
                                         if let Ok(_) = stop_reciever.try_recv() {
@@ -977,6 +1002,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         {
                                                             let mut nonce = app_nonce.lock().await;
                                                             *nonce = 0;
+                                                        }
+                                                        // reset client nonce ranges
+                                                        {
+                                                            let mut writer = app_client_nonce_ranges.write().await;
+                                                            *writer = HashMap::new();
+                                                            drop(writer);
                                                         }
                                                         // reset epoch hashes
                                                         {
@@ -1067,6 +1098,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     let mut nonce = app_nonce.lock().await;
                                                     *nonce = 0;
                                                 }
+                                                // reset client nonce ranges
+                                                {
+                                                    let mut writer = app_client_nonce_ranges.write().await;
+                                                    *writer = HashMap::new();
+                                                    drop(writer);
+                                                }
                                                 // reset epoch hashes
                                                 {
                                                     info!(target: "server_log", "reset epoch hashes");
@@ -1142,12 +1179,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let app_mine_success_sender = Arc::new(mine_success_sender.clone());
                                         let app_app_proof = app_proof.clone();
                                         let app_app_config = app_config.clone();
+                                        let app_app_client_nonce_ranges = app_client_nonce_ranges.clone();
                                         tokio::spawn(async move {
                                             let rpc_client = app_rpc_client;
                                             let app_database = app_app_database;
                                             let mine_success_sender = app_mine_success_sender;
                                             let app_proof = app_app_proof;
                                             let app_config = app_app_config;
+                                            let app_client_nonce_ranges = app_app_client_nonce_ranges.clone();
                                             loop {
                                                 if let Ok(txn_result) = rpc_client.get_transaction_with_config(&sig, RpcTransactionConfig {
                                                     encoding: Some(UiTransactionEncoding::Base64),
@@ -1291,6 +1330,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             let mut nonce = app_nonce.lock().await;
                                                             *nonce = 0;
                                                         }
+                                                        // reset client nonce ranges
+                                                        {
+                                                            let mut writer = app_client_nonce_ranges.write().await;
+                                                            *writer = HashMap::new();
+                                                            drop(writer);
+                                                        }
                                                         // reset epoch hashes
                                                         {
                                                             info!(target: "server_log", "reset epoch hashes");
@@ -1366,6 +1411,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         let mut nonce = app_nonce.lock().await;
                                                         *nonce = 0;
                                                     }
+                                                    // reset client nonce ranges
+                                                    {
+                                                        let mut writer = app_client_nonce_ranges.write().await;
+                                                        *writer = HashMap::new();
+                                                        drop(writer);
+                                                    }
                                                     // reset epoch hashes
                                                     {
                                                         info!(target: "server_log", "reset epoch hashes");
@@ -1437,6 +1488,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         {
                             let mut nonce = app_nonce.lock().await;
                             *nonce = 0;
+                        }
+                        // reset client nonce ranges
+                        {
+                            let mut writer = app_client_nonce_ranges.write().await;
+                            *writer = HashMap::new();
+                            drop(writer);
                         }
                         // reset epoch hashes
                         {
@@ -2894,7 +2951,7 @@ async fn client_message_handler_system(
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     proof: Arc<Mutex<Proof>>,
     epoch_hashes: Arc<RwLock<EpochHashes>>,
-    client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Range<u64>>>>,
+    client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Vec<Range<u64>>>>>,
     app_state: Arc<RwLock<AppState>>,
     app_pongs: Arc<RwLock<LastPong>>,
     app_submission_window: Arc<RwLock<SubmissionWindow>>,
@@ -2949,7 +3006,7 @@ async fn client_message_handler_system(
                     let pubkey_str = pubkey.to_string();
 
                     let reader = client_nonce_ranges.read().await;
-                    let nonce_range: Range<u64> = {
+                    let nonce_ranges: Vec<Range<u64>> = {
                         if let Some(nr) = reader.get(&pubkey) {
                             nr.clone()
                         } else {
@@ -2961,7 +3018,16 @@ async fn client_message_handler_system(
 
                     let nonce = u64::from_le_bytes(solution.n);
 
-                    if !nonce_range.contains(&nonce) {
+                    let mut in_range = false;
+
+                    for nonce_range in nonce_ranges.iter() {
+                        if nonce_range.contains(&nonce) {
+                            in_range = true;
+                            break;
+                        }
+                    }
+
+                    if !in_range {
                         error!(target: "server_log", "Client submitted nonce out of assigned range");
                         return;
                     }
