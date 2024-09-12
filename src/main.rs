@@ -2243,12 +2243,49 @@ async fn get_stake_multiplier(
     }
 }
 
-async fn get_connected_miners(State(app_state): State<Arc<RwLock<AppState>>>) -> impl IntoResponse {
-    let len = app_state.read().await.sockets.len();
-    return Response::builder()
-        .status(StatusCode::OK)
-        .body(len.to_string())
-        .unwrap();
+#[derive(Deserialize)]
+struct ConnectedMinersParams {
+    pubkey: Option<String>,
+}
+
+async fn get_connected_miners(
+    query_params: Query<ConnectedMinersParams>,
+    State(app_state): State<Arc<RwLock<AppState>>>
+) -> impl IntoResponse {
+
+    let reader = app_state.read().await;
+    let sockets = reader.sockets.clone();
+    drop(reader);
+
+    if let Some(pubkey_str) = &query_params.pubkey {
+        if let Ok(user_pubkey) = Pubkey::from_str(&pubkey_str) {
+            let mut connection_count = 0;
+
+            for (_addr, client_connection) in sockets.iter() {
+                if user_pubkey.eq(&client_connection.pubkey) {
+                    connection_count += 1;
+                }
+            }
+
+            return Response::builder()
+                .status(StatusCode::OK)
+                .body(connection_count.to_string())
+                .unwrap();
+
+        } else {
+            error!(target: "server_log", "Get connected miners with invalid pubkey");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Pubkey".to_string())
+                .unwrap();
+        }
+    } else {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .body(sockets.len().to_string())
+            .unwrap();
+    }
+
 }
 
 async fn get_timestamp() -> impl IntoResponse {
