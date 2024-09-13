@@ -1769,6 +1769,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/last-challenge-submissions", get(get_last_challenge_submissions))
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/submissions", get(get_miner_submissions))
+        .route("/miner/last-claim", get(get_miner_last_claim))
         .route("/challenges", get(get_challenges))
         .route("/pool", get(routes::get_pool))
         .route("/pool/staked", get(routes::get_pool_staked))
@@ -2161,6 +2162,38 @@ async fn get_miner_submissions(
                 }
                 Err(_) => {
                     Err("Failed to get submissions for miner".to_string())
+                }
+            }
+        } else {
+            Err("Invalid public key".to_string())
+        }
+    } else {
+        return Err("Stats not enabled for this server.".to_string());
+    }
+}
+
+#[derive(Deserialize)]
+struct GetLastClaimParams {
+    pubkey: String,
+}
+
+async fn get_miner_last_claim(
+    query_params: Query<GetLastClaimParams>,
+    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+    Extension(app_config): Extension<Arc<Config>>,
+) -> Result<Json<LastClaim>, String> {
+    if app_config.stats_enabled {
+        if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+            let res = app_rr_database
+                .get_last_claim_by_pubkey(user_pubkey.to_string())
+                .await;
+
+            match res {
+                Ok(last_claim) => {
+                    Ok(Json(last_claim))
+                }
+                Err(_) => {
+                    Err("Failed to get last claim for miner".to_string())
                 }
             }
         } else {

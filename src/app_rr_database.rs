@@ -266,4 +266,34 @@ impl AppRRDatabase {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
     }
+
+    pub async fn get_last_claim_by_pubkey(&self, pubkey: String) -> Result<models::LastClaim, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT c.created_at FROM claims c JOIN miners m ON c.miner_id = m.id WHERE m.pubkey = ? ORDER BY c.id DESC LIMIT 1")
+                        .bind::<Text, _>(pubkey)
+                        .get_result::<models::LastClaim>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
 }
