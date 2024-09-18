@@ -1588,32 +1588,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         
                         let shared_state = app_shared_state.read().await;
                         let len = shared_state.sockets.len();
-                        let message = format!(
-                            "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11} ORE\nTop Stake:    {:.11} ORE\nPool Multiplier: {:.2}x\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
-                            msg.difficulty,
-                            pool_rewards_dec,
-                            msg.total_balance,
-                            top_stake,
-                            msg.multiplier,
-                            len,
-                            msg_submission.supplied_diff,
-                            earned_rewards_dec,
-                            percentage
-                        );
-
 
                         for (_addr, client_connection) in shared_state.sockets.iter() {
-                            let client_message = message.clone();
                             if client_connection.pubkey.eq(&miner_pubkey) {
                                 let socket_sender = client_connection.socket.clone();
 
                                 match client_connection.client_version {
                                     ClientVersion::V1 => {
+                                        let message = format!(
+                                            "Pool Submitted Difficulty: {}\nPool Earned:  {:.11} ORE\nPool Balance: {:.11} ORE\nTop Stake:    {:.11} ORE\nPool Multiplier: {:.2}x\n----------------------\nActive Miners: {}\n----------------------\nMiner Submitted Difficulty: {}\nMiner Earned: {:.11} ORE\n{:.2}% of total pool reward",
+                                            msg.difficulty,
+                                            pool_rewards_dec,
+                                            msg.total_balance,
+                                            top_stake,
+                                            msg.multiplier,
+                                            len,
+                                            msg_submission.supplied_diff,
+                                            earned_rewards_dec,
+                                            percentage
+                                        );
                                         tokio::spawn(async move {
                                             if let Ok(_) = socket_sender
                                                 .lock()
                                                 .await
-                                                .send(Message::Text(client_message))
+                                                .send(Message::Text(message))
                                                 .await
                                             {
                                             } else {
@@ -1643,7 +1641,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 .await
                                             {
                                             } else {
-                                                error!(target: "server_log", "Failed to send client text");
+                                                error!(target: "server_log", "Failed to send client pool submission result binary message");
                                             }
                                         });
                                     },
@@ -1786,7 +1784,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_shared_state = shared_state.clone();
     let app = Router::new()
         .route("/", get(ws_handler))
-        .route("/v2/ws", get(ws_handler))
+        .route("/v2/ws", get(ws_handler_v2))
         .route("/pause", post(post_pause))
         .route("/latest-blockhash", get(get_latest_blockhash))
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
@@ -2884,7 +2882,7 @@ async fn ws_handler_v2(
             let ts_msg = msg_timestamp.to_le_bytes();
 
             if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
-                info!(target: "server_log", "Client: {addr} connected with pubkey {pubkey}.");
+                info!(target: "server_log", "Client: {addr} connected with pubkey {pubkey} on V2.");
                 return Ok(ws.on_upgrade(move |socket| {
                     handle_socket(
                         socket,
@@ -2938,7 +2936,7 @@ async fn handle_socket(
         let new_app_client_connection = AppClientConnection {
             pubkey: who_pubkey,
             miner_id: who_miner_id,
-            client_version: ClientVersion::V1,
+            client_version,
             socket: Arc::new(Mutex::new(sender)),
         };
         app_state.sockets.insert(who, new_app_client_connection);

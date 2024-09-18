@@ -77,7 +77,7 @@ impl ServerMessagePoolSubmissionResult {
 
     pub fn to_message_binary(&self) -> Vec<u8> {
         let mut bin_data = Vec::new();
-        bin_data.push(0u8);
+        bin_data.push(1u8);
         bin_data.extend_from_slice(&self.difficulty.to_le_bytes());
         bin_data.extend_from_slice(&self.total_balance.to_le_bytes());
         bin_data.extend_from_slice(&self.total_rewards.to_le_bytes());
