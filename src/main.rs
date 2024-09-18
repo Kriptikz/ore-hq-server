@@ -8,6 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use message::{ServerMessagePoolSubmissionResult, ServerMessageStartMining};
 use rand::seq::SliceRandom;
 use systems::claim_system::claim_system;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
@@ -60,6 +61,7 @@ mod app_database;
 mod models;
 mod routes;
 mod schema;
+mod message;
 mod systems;
 mod proof_migration;
 
@@ -68,9 +70,16 @@ const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
 #[derive(Clone)]
+enum ClientVersion {
+    V1,
+    V2
+}
+
+#[derive(Clone)]
 struct AppClientConnection {
     pubkey: Pubkey,
     miner_id: i32,
+    client_version: ClientVersion,
     socket: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
 
@@ -661,16 +670,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let end = nonce_end;
                                 start..end
                             };
-                            // message type is 8 bytes = 1 u8
-                            // challenge is 256 bytes = 32 u8
-                            // cutoff is 64 bytes = 8 u8
-                            // nonce_range is 128 bytes, start is 64 bytes, end is 64 bytes = 16 u8
-                            let mut bin_data = [0; 57];
-                            bin_data[00..1].copy_from_slice(&0u8.to_le_bytes());
-                            bin_data[01..33].copy_from_slice(&challenge);
-                            bin_data[33..41].copy_from_slice(&cutoff.to_le_bytes());
-                            bin_data[41..49].copy_from_slice(&nonce_range.start.to_le_bytes());
-                            bin_data[49..57].copy_from_slice(&nonce_range.end.to_le_bytes());
+
+                            let start_mining_message = ServerMessageStartMining::new(challenge, cutoff, nonce_range.start, nonce_range.end);
 
                             let app_client_nonce_ranges = app_client_nonce_ranges.clone();
                             let shared_state = app_shared_state.read().await;
@@ -684,7 +685,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .socket
                                         .lock()
                                         .await
-                                        .send(Message::Binary(bin_data.to_vec()))
+                                        .send(Message::Binary(start_mining_message.to_message_binary()))
                                         .await;
                                     let _ = ready_clients.lock().await.remove(&client);
                                     let reader = app_client_nonce_ranges.read().await;
@@ -1600,21 +1601,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             percentage
                         );
 
+
                         for (_addr, client_connection) in shared_state.sockets.iter() {
                             let client_message = message.clone();
                             if client_connection.pubkey.eq(&miner_pubkey) {
                                 let socket_sender = client_connection.socket.clone();
-                                tokio::spawn(async move {
-                                    if let Ok(_) = socket_sender
-                                        .lock()
-                                        .await
-                                        .send(Message::Text(client_message))
-                                        .await
-                                    {
-                                    } else {
-                                        error!(target: "server_log", "Failed to send client text");
-                                    }
-                                });
+
+                                match client_connection.client_version {
+                                    ClientVersion::V1 => {
+                                        tokio::spawn(async move {
+                                            if let Ok(_) = socket_sender
+                                                .lock()
+                                                .await
+                                                .send(Message::Text(client_message))
+                                                .await
+                                            {
+                                            } else {
+                                                error!(target: "server_log", "Failed to send client text");
+                                            }
+                                        });
+                                    },
+                                    ClientVersion::V2 => {
+                                        let server_message = ServerMessagePoolSubmissionResult::new(
+                                            msg.difficulty,
+                                            msg.total_balance,
+                                            pool_rewards_dec,
+                                            top_stake,
+                                            msg.multiplier,
+                                            len as u32,
+                                            msg.challenge,
+                                            msg.best_nonce,
+                                            msg_submission.supplied_diff as u32,
+                                            earned_rewards_dec,
+                                            percentage
+                                        );
+                                        tokio::spawn(async move {
+                                            if let Ok(_) = socket_sender
+                                                .lock()
+                                                .await
+                                                .send(Message::Binary(server_message.to_message_binary()))
+                                                .await
+                                            {
+                                            } else {
+                                                error!(target: "server_log", "Failed to send client text");
+                                            }
+                                        });
+                                    },
+
+                                }
 
                             }
                         }
@@ -1752,6 +1786,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_shared_state = shared_state.clone();
     let app = Router::new()
         .route("/", get(ws_handler))
+        .route("/v2/ws", get(ws_handler))
         .route("/pause", post(post_pause))
         .route("/latest-blockhash", get(get_latest_blockhash))
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
@@ -2767,6 +2802,96 @@ async fn ws_handler(
                         addr,
                         user_pubkey,
                         miner.id,
+                        ClientVersion::V1,
+                        app_state,
+                        client_channel,
+                    )
+                }));
+            } else {
+                return Err((StatusCode::UNAUTHORIZED, "Sig verification failed"));
+            }
+        } else {
+            return Err((StatusCode::UNAUTHORIZED, "Invalid signature"));
+        }
+    } else {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid pubkey"));
+    }
+}
+
+async fn ws_handler_v2(
+    ws: WebSocketUpgrade,
+    TypedHeader(auth_header): TypedHeader<axum_extra::headers::Authorization<Basic>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(app_state): State<Arc<RwLock<AppState>>>,
+    //Extension(app_config): Extension<Arc<Config>>,
+    Extension(client_channel): Extension<UnboundedSender<ClientMessage>>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+    query_params: Query<WsQueryParams>,
+) -> impl IntoResponse {
+    let msg_timestamp = query_params.timestamp;
+
+    let pubkey = auth_header.username();
+    let signed_msg = auth_header.password();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs();
+
+    // Signed authentication message is only valid for 30 seconds
+    if (now - query_params.timestamp) >= 30 {
+        return Err((StatusCode::UNAUTHORIZED, "Timestamp too old."));
+    }
+
+    // verify client
+    if let Ok(user_pubkey) = Pubkey::from_str(pubkey) {
+        let db_miner = app_database
+            .get_miner_by_pubkey_str(pubkey.to_string())
+            .await;
+
+        let miner;
+        match db_miner {
+            Ok(db_miner) => {
+                miner = db_miner;
+            }
+            Err(AppDatabaseError::QueryFailed) => {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "pubkey is not authorized to mine. please sign up.",
+                ));
+            }
+            Err(AppDatabaseError::InteractionFailed) => {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "pubkey is not authorized to mine. please sign up.",
+                ));
+            }
+            Err(AppDatabaseError::FailedToGetConnectionFromPool) => {
+                error!(target: "server_log", "Failed to get database pool connection.");
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
+            }
+            Err(_) => {
+                error!(target: "server_log", "DB Error: Catch all.");
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
+            }
+        }
+
+        if !miner.enabled {
+            return Err((StatusCode::UNAUTHORIZED, "pubkey is not authorized to mine"));
+        }
+
+        if let Ok(signature) = Signature::from_str(signed_msg) {
+            let ts_msg = msg_timestamp.to_le_bytes();
+
+            if signature.verify(&user_pubkey.to_bytes(), &ts_msg) {
+                info!(target: "server_log", "Client: {addr} connected with pubkey {pubkey}.");
+                return Ok(ws.on_upgrade(move |socket| {
+                    handle_socket(
+                        socket,
+                        addr,
+                        user_pubkey,
+                        miner.id,
+                        ClientVersion::V2,
                         app_state,
                         client_channel,
                     )
@@ -2787,6 +2912,7 @@ async fn handle_socket(
     who: SocketAddr,
     who_pubkey: Pubkey,
     who_miner_id: i32,
+    client_version: ClientVersion,
     rw_app_state: Arc<RwLock<AppState>>,
     client_channel: UnboundedSender<ClientMessage>,
 ) {
@@ -2812,6 +2938,7 @@ async fn handle_socket(
         let new_app_client_connection = AppClientConnection {
             pubkey: who_pubkey,
             miner_id: who_miner_id,
+            client_version: ClientVersion::V1,
             socket: Arc::new(Mutex::new(sender)),
         };
         app_state.sockets.insert(who, new_app_client_connection);
