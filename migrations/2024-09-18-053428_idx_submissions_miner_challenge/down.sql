@@ -1,0 +1,1 @@
+ALTER TABLE submissions DROP INDEX idx_submissions_miner_challenge
