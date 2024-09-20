@@ -75,7 +75,7 @@ diesel::table! {
 
 diesel::table! {
     submissions (id) {
-        id -> Integer,
+        id -> Bigint,
         miner_id -> Integer,
         challenge_id -> Integer,
         difficulty -> Tinyint,

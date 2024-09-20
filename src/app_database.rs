@@ -239,7 +239,7 @@ impl AppDatabase {
         };
     }
 
-    pub async fn get_submission_id_with_nonce(&self, nonce: u64) -> Result<i32, AppDatabaseError> {
+    pub async fn get_submission_id_with_nonce(&self, nonce: u64) -> Result<i64, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
@@ -272,14 +272,14 @@ impl AppDatabase {
     pub async fn update_challenge_rewards(
         &self,
         challenge: Vec<u8>,
-        submission_id: i32,
+        submission_id: i64,
         rewards: u64,
     ) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn.interact(move |conn: &mut MysqlConnection| {
                 diesel::sql_query("UPDATE challenges SET rewards_earned = ?, submission_id = ? WHERE challenge = ?")
                 .bind::<Nullable<Unsigned<BigInt>>, _>(Some(rewards))
-                .bind::<Nullable<Integer>, _>(submission_id)
+                .bind::<Nullable<BigInt>, _>(submission_id)
                 .bind::<Binary, _>(challenge)
                 .execute(conn)
             }).await;

@@ -93,7 +93,7 @@ pub struct Pool {
 #[diesel(table_name = crate::schema::submissions)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Submission {
-    pub id: i32,
+    pub id: i64,
     pub miner_id: i32,
     pub challenge_id: i32,
     pub nonce: u64,
@@ -103,8 +103,8 @@ pub struct Submission {
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct SubmissionWithPubkey {
-    #[diesel(sql_type = Integer)]
-    pub id: i32,
+    #[diesel(sql_type = BigInt)]
+    pub id: i64,
     #[diesel(sql_type = Integer)]
     pub miner_id: i32,
     #[diesel(sql_type = Integer)]
@@ -133,7 +133,7 @@ pub struct InsertSubmission {
 #[diesel(table_name = crate::schema::submissions)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct SubmissionWithId {
-    pub id: i32,
+    pub id: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
