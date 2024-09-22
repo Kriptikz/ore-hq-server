@@ -3123,6 +3123,8 @@ async fn pong_tracking_system(
         let pongs = reader.pongs.clone();
         drop(reader);
 
+        info!(target: "server_log", "App pongs length: {}", pongs.len());
+
         for pong in pongs.iter() {
             if pong.1.elapsed().as_secs() > 45 {
                 let mut writer = app_state.write().await;
