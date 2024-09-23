@@ -1,15 +1,13 @@
-use deadpool_diesel::{
-    mysql::{Manager, Pool},
-};
+use deadpool_diesel::mysql::{Manager, Pool};
 use diesel::{
     connection::SimpleConnection,
     insert_into,
-    sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, TinyInt, Unsigned},
+    sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, Unsigned},
     MysqlConnection, RunQueryDsl,
 };
 use tracing::{error, info};
 
-use crate::{models, InsertReward, Miner, Submission, SubmissionWithId};
+use crate::{models, InsertReward, Miner, SubmissionWithId};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
@@ -202,50 +200,15 @@ impl AppDatabase {
         };
     }
 
-    pub async fn add_new_submission(
-        &self,
-        submission: models::InsertSubmission,
-    ) -> Result<(), AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("INSERT INTO submissions (miner_id, challenge_id, nonce, difficulty) VALUES (?, ?, ?, ?)")
-                .bind::<Integer, _>(submission.miner_id)
-                .bind::<Integer, _>(submission.challenge_id)
-                .bind::<Unsigned<BigInt>, _>(submission.nonce)
-                .bind::<TinyInt, _>(submission.difficulty)
-                .execute(conn)
-            }).await;
-
-            match res {
-                Ok(interaction) => match interaction {
-                    Ok(query) => {
-                        if query == 0 {
-                            return Err(AppDatabaseError::FailedToInsertRow);
-                        }
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "{:?}", e);
-                        return Err(AppDatabaseError::QueryFailed);
-                    }
-                },
-                Err(e) => {
-                    error!(target: "server_log", "{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-    }
-
     pub async fn get_submission_id_with_nonce(&self, nonce: u64) -> Result<i64, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT id FROM submissions WHERE submissions.nonce = ? ORDER BY id DESC")
-                        .bind::<Unsigned<BigInt>, _>(nonce)
-                        .get_result::<SubmissionWithId>(conn)
+                    diesel::sql_query(
+                        "SELECT id FROM submissions WHERE submissions.nonce = ? ORDER BY id DESC",
+                    )
+                    .bind::<Unsigned<BigInt>, _>(nonce)
+                    .get_result::<SubmissionWithId>(conn)
                 })
                 .await;
 
@@ -588,13 +551,18 @@ impl AppDatabase {
         };
     }
 
-    pub async fn get_last_claim(&self, miner_id: i32) -> Result<models::LastClaim, AppDatabaseError> {
+    pub async fn get_last_claim(
+        &self,
+        miner_id: i32,
+    ) -> Result<models::LastClaim, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT created_at FROM claims WHERE miner_id = ? ORDER BY id DESC")
-                        .bind::<Integer, _>(miner_id)
-                        .get_result::<models::LastClaim>(conn)
+                    diesel::sql_query(
+                        "SELECT created_at FROM claims WHERE miner_id = ? ORDER BY id DESC",
+                    )
+                    .bind::<Integer, _>(miner_id)
+                    .get_result::<models::LastClaim>(conn)
                 })
                 .await;
 
@@ -774,36 +742,6 @@ impl AppDatabase {
                             return Err(AppDatabaseError::FailedToInsertRow);
                         }
                         return Ok(());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "{:?}", e);
-                        return Err(AppDatabaseError::QueryFailed);
-                    }
-                },
-                Err(e) => {
-                    error!(target: "server_log", "{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-    }
-
-    pub async fn get_miner_submissions(&self, pubkey: String) -> Result<Vec<Submission>, AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn
-                .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT s.* FROM submissions s JOIN miners m ON s.miner_id = m.id WHERE m.pubkey = ? ORDER BY s.created_at DESC LIMIT 100")
-                        .bind::<Text, _>(pubkey)
-                        .load::<Submission>(conn)
-                })
-                .await;
-
-            match res {
-                Ok(interaction) => match interaction {
-                    Ok(query) => {
-                        return Ok(query);
                     }
                     Err(e) => {
                         error!(target: "server_log", "{:?}", e);

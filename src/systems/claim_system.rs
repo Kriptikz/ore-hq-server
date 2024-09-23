@@ -1,16 +1,30 @@
 use std::{sync::Arc, time::Duration};
 
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
-use solana_sdk::{compute_budget::ComputeBudgetInstruction, native_token::lamports_to_sol, signature::{Keypair, Signature}, signer::Signer, transaction::Transaction};
+use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
+    native_token::lamports_to_sol,
+    signature::{Keypair, Signature},
+    signer::Signer,
+    transaction::Transaction,
+};
 use solana_transaction_status::TransactionConfirmationStatus;
 use spl_associated_token_account::get_associated_token_address;
 use tokio::time::Instant;
 use tracing::{error, info};
 
-use crate::{app_database::AppDatabase, ore_utils::{get_ore_mint, ORE_TOKEN_DECIMALS}, ClaimsQueue, InsertClaim, InsertTxn};
+use crate::{
+    app_database::AppDatabase,
+    ore_utils::{get_ore_mint, ORE_TOKEN_DECIMALS},
+    ClaimsQueue, InsertClaim, InsertTxn,
+};
 
-
-pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcClient>, wallet: Arc<Keypair>, app_database: Arc<AppDatabase>) {
+pub async fn claim_system(
+    claims_queue: Arc<ClaimsQueue>,
+    rpc_client: Arc<RpcClient>,
+    wallet: Arc<Keypair>,
+    app_database: Arc<AppDatabase>,
+) {
     loop {
         let mut claim = None;
         let reader = claims_queue.queue.read().await;
@@ -66,7 +80,8 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
             if is_creating_ata {
                 claim_amount = amount - 400_000_000
             }
-            let ix = crate::ore_utils::get_claim_ix(wallet.pubkey(), miner_token_account, claim_amount);
+            let ix =
+                crate::ore_utils::get_claim_ix(wallet.pubkey(), miner_token_account, claim_amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client
@@ -78,14 +93,17 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
 
                 tx.sign(&[&wallet], hash);
 
-                let rpc_config =  RpcSendTransactionConfig {
+                let rpc_config = RpcSendTransactionConfig {
                     preflight_commitment: Some(rpc_client.commitment().commitment),
                     ..RpcSendTransactionConfig::default()
                 };
 
                 let signature;
                 loop {
-                    if let Ok(sig) = rpc_client.send_transaction_with_config(&tx, rpc_config).await {
+                    if let Ok(sig) = rpc_client
+                        .send_transaction_with_config(&tx, rpc_config)
+                        .await
+                    {
                         signature = sig;
                         break;
                     } else {
@@ -102,7 +120,9 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                     if let Ok(response) = results {
                         let statuses = response.value;
                         if let Some(status) = &statuses[0] {
-                            if status.confirmation_status() == TransactionConfirmationStatus::Confirmed {
+                            if status.confirmation_status()
+                                == TransactionConfirmationStatus::Confirmed
+                            {
                                 if status.err.is_some() {
                                     let e_str = format!("Transaction Failed: {:?}", status.err);
                                     break Err(e_str);
@@ -128,9 +148,8 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                             .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
                             .await
                             .unwrap();
-                        while let Err(_) = app_database
-                            .decrease_miner_reward(miner.id, amount)
-                            .await 
+                        while let Err(_) =
+                            app_database.decrease_miner_reward(miner.id, amount).await
                         {
                             error!(target: "server_log", "Failed to decrease miner rewards! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -164,7 +183,6 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                             }
                         }
 
-
                         let iclaim = InsertClaim {
                             miner_id: miner.id,
                             pool_id: db_pool.id,
@@ -181,7 +199,6 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                         drop(writer);
 
                         info!(target: "server_log", "Claim successfully processed!");
-
                     }
                     Err(e) => {
                         error!(target: "server_log", "ERROR: {:?}", e);
@@ -190,7 +207,6 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
             } else {
                 error!(target: "server_log", "Failed to confirm transaction, will retry on next iteration.");
             }
-
         }
 
         tokio::time::sleep(Duration::from_secs(10)).await;

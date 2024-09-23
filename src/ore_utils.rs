@@ -9,6 +9,7 @@ use ore_api::{
     state::{Config, Proof, Treasury},
     ID as ORE_ID,
 };
+use ore_miner_delegation::{instruction, state::DelegatedStake, utils::AccountDeserialize};
 pub use ore_utils::AccountDeserialize as _;
 use serde::{ser::SerializeStruct, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -16,7 +17,6 @@ use solana_sdk::{
     account::ReadableAccount, clock::Clock, instruction::Instruction, pubkey::Pubkey, sysvar,
 };
 use spl_associated_token_account::get_associated_token_address;
-use ore_miner_delegation::{instruction, state::DelegatedStake, utils::AccountDeserialize};
 
 pub const ORE_TOKEN_DECIMALS: u8 = TOKEN_DECIMALS;
 
@@ -59,19 +59,31 @@ pub fn get_ore_decimals() -> u8 {
 }
 
 pub fn get_managed_proof_token_ata(miner: Pubkey) -> Pubkey {
-    let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", miner.as_ref()], &ore_miner_delegation::id());
+    let managed_proof = Pubkey::find_program_address(
+        &[b"managed-proof-account", miner.as_ref()],
+        &ore_miner_delegation::id(),
+    );
 
     get_associated_token_address(&managed_proof.0, &ore_api::consts::MINT_ADDRESS)
 }
 
 pub fn get_proof_pda(miner: Pubkey) -> Pubkey {
-    let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", miner.as_ref()], &ore_miner_delegation::id());
+    let managed_proof = Pubkey::find_program_address(
+        &[b"managed-proof-account", miner.as_ref()],
+        &ore_miner_delegation::id(),
+    );
 
     proof_pubkey(managed_proof.0)
 }
 
-pub async fn get_delegated_stake_account(client: &RpcClient, staker: Pubkey, miner: Pubkey) -> Result<ore_miner_delegation::state::DelegatedStake, String> {
-    let data = client.get_account_data(&get_delegated_stake_pda(staker, miner)).await;
+pub async fn get_delegated_stake_account(
+    client: &RpcClient,
+    staker: Pubkey,
+    miner: Pubkey,
+) -> Result<ore_miner_delegation::state::DelegatedStake, String> {
+    let data = client
+        .get_account_data(&get_delegated_stake_pda(staker, miner))
+        .await;
     match data {
         Ok(data) => {
             let delegated_stake = DelegatedStake::try_from_bytes(&data);
@@ -83,13 +95,23 @@ pub async fn get_delegated_stake_account(client: &RpcClient, staker: Pubkey, min
         }
         Err(_) => return Err("Failed to get delegated stake account".to_string()),
     }
-
 }
 
 pub fn get_delegated_stake_pda(staker: Pubkey, miner: Pubkey) -> Pubkey {
-    let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", miner.as_ref()], &ore_miner_delegation::id());
+    let managed_proof = Pubkey::find_program_address(
+        &[b"managed-proof-account", miner.as_ref()],
+        &ore_miner_delegation::id(),
+    );
 
-    Pubkey::find_program_address(&[b"delegated-stake", staker.as_ref(), managed_proof.0.as_ref()], &ore_miner_delegation::id()).0
+    Pubkey::find_program_address(
+        &[
+            b"delegated-stake",
+            staker.as_ref(),
+            managed_proof.0.as_ref(),
+        ],
+        &ore_miner_delegation::id(),
+    )
+    .0
 }
 
 pub async fn get_config(client: &RpcClient) -> Result<ore_api::state::Config, String> {

@@ -16,7 +16,7 @@ impl ServerMessageStartMining {
             challenge,
             cutoff,
             nonce_range_start,
-            nonce_range_end
+            nonce_range_end,
         }
     }
 
@@ -43,7 +43,7 @@ pub struct ServerMessagePoolSubmissionResult {
     best_nonce: u64,
     miner_supplied_difficulty: u32,
     miner_earned_rewards: f64,
-    miner_percentage: f64
+    miner_percentage: f64,
 }
 
 impl ServerMessagePoolSubmissionResult {
@@ -71,7 +71,7 @@ impl ServerMessagePoolSubmissionResult {
             best_nonce,
             miner_supplied_difficulty,
             miner_earned_rewards,
-            miner_percentage
+            miner_percentage,
         }
     }
 

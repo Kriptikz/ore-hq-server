@@ -16,14 +16,18 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use crate::ore_utils::{get_managed_proof_token_ata, get_proof_pda};
 
 use self::models::*;
-use app_rr_database::AppRRDatabase;
 use ::ore_utils::AccountDeserialize;
 use app_database::{AppDatabase, AppDatabaseError};
+use app_rr_database::AppRRDatabase;
 use axum::{
     extract::{
         ws::{Message, WebSocket},
         ConnectInfo, Query, State, WebSocketUpgrade,
-    }, http::{Method, Response, StatusCode}, response::IntoResponse, routing::{get, post}, Extension, Json, Router
+    },
+    http::{Method, Response, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+    Extension, Json, Router,
 };
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -32,39 +36,59 @@ use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
 use ore_utils::{
-    get_auth_ix, get_config, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint, get_original_proof, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix, ORE_TOKEN_DECIMALS
+    get_auth_ix, get_config, get_cutoff, get_delegated_stake_account, get_mine_ix, get_ore_mint,
+    get_original_proof, get_proof, get_proof_and_config_with_busses, get_register_ix, get_reset_ix,
+    ORE_TOKEN_DECIMALS,
 };
 use rand::Rng;
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
-    nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_client::SerializableTransaction, rpc_config::{RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTransactionConfig}
+    nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
+    rpc_client::SerializableTransaction,
+    rpc_config::{
+        RpcAccountInfoConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig,
+        RpcTransactionConfig,
+    },
 };
 use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, instruction::InstructionError, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction::{self, transfer}, transaction::{Transaction, TransactionError}
+    commitment_config::{CommitmentConfig, CommitmentLevel},
+    compute_budget::ComputeBudgetInstruction,
+    instruction::InstructionError,
+    native_token::{lamports_to_sol, LAMPORTS_PER_SOL},
+    pubkey::Pubkey,
+    signature::{read_keypair_file, Keypair, Signature},
+    signer::Signer,
+    system_instruction::{self, transfer},
+    transaction::{Transaction, TransactionError},
 };
 use solana_transaction_status::{TransactionConfirmationStatus, UiTransactionEncoding};
-use spl_associated_token_account::{get_associated_token_address, instruction::create_associated_token_account};
+use spl_associated_token_account::{
+    get_associated_token_address, instruction::create_associated_token_account,
+};
 use tokio::{
     io::AsyncReadExt,
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender},
         Mutex, RwLock,
-    }, time::Instant,
+    },
+    time::Instant,
 };
-use tower_http::{cors::CorsLayer, trace::{DefaultMakeSpan, TraceLayer}};
+use tower_http::{
+    cors::CorsLayer,
+    trace::{DefaultMakeSpan, TraceLayer},
+};
 use tracing::{error, info};
 
-mod app_rr_database;
 mod app_database;
+mod app_rr_database;
+mod message;
 mod models;
+mod proof_migration;
 mod routes;
 mod schema;
-mod message;
 mod systems;
-mod proof_migration;
-
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
@@ -72,7 +96,7 @@ const MIN_HASHPOWER: u64 = 5;
 #[derive(Clone)]
 enum ClientVersion {
     V1,
-    V2
+    V2,
 }
 
 #[derive(Clone)]
@@ -99,7 +123,7 @@ struct ClaimsQueue {
 }
 
 struct SubmissionWindow {
-    closed: bool
+    closed: bool,
 }
 
 pub struct MessageInternalAllClients {
@@ -128,7 +152,7 @@ pub struct MessageInternalMineSuccess {
 }
 
 pub struct LastPong {
-    pongs: HashMap<SocketAddr, Instant>
+    pongs: HashMap<SocketAddr, Instant>,
 }
 
 #[derive(Debug)]
@@ -194,18 +218,13 @@ struct Args {
         global = true
     )]
     signup_cost: u64,
-    #[arg(
-        long,
-        short,
-        action,
-        help = "Enable stats endpoints",
-    )]
+    #[arg(long, short, action, help = "Enable stats endpoints")]
     stats: bool,
     #[arg(
         long,
         short,
         action,
-        help = "Migrate balance from original proof to delegate stake managed proof",
+        help = "Migrate balance from original proof to delegate stake managed proof"
     )]
     migrate: bool,
 }
@@ -238,7 +257,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
-    let fee_wallet_path_str = std::env::var("FEE_WALLET_PATH").expect("FEE_WALLET_PATH must be set.");
+    let fee_wallet_path_str =
+        std::env::var("FEE_WALLET_PATH").expect("FEE_WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
     let rpc_ws_url = std::env::var("RPC_WS_URL").expect("RPC_WS_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
@@ -370,7 +390,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(data) => {
             info!(target: "server_log", "Miner Delegated Stake Account: {:?}", data);
             info!(target: "server_log", "Miner delegate stake account already created.");
-        },
+        }
         Err(_) => {
             info!(target: "server_log", "Creating miner delegate stake account");
             let ix = ore_miner_delegation::instruction::init_delegate_stake(
@@ -388,12 +408,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tx.sign(&[&wallet], blockhash);
 
-            match rpc_client.send_and_confirm_transaction_with_spinner_and_commitment(&tx, CommitmentConfig {
-                commitment: CommitmentLevel::Confirmed
-            }).await {
+            match rpc_client
+                .send_and_confirm_transaction_with_spinner_and_commitment(
+                    &tx,
+                    CommitmentConfig {
+                        commitment: CommitmentLevel::Confirmed,
+                    },
+                )
+                .await
+            {
                 Ok(_) => {
                     info!(target: "server_log", "Successfully created miner delegate stake account");
-                },
+                }
                 Err(_) => {
                     error!(target: "server_log", "Failed to send and confirm tx.");
                     panic!("Failed to create miner delegate stake account");
@@ -403,16 +429,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!(target: "server_log", "Validating managed proof token account is created");
-    let managed_proof = Pubkey::find_program_address(&[b"managed-proof-account", wallet.pubkey().as_ref()], &ore_miner_delegation::id());
+    let managed_proof = Pubkey::find_program_address(
+        &[b"managed-proof-account", wallet.pubkey().as_ref()],
+        &ore_miner_delegation::id(),
+    );
 
     let managed_proof_token_account_addr = get_managed_proof_token_ata(wallet.pubkey());
-    match rpc_client.get_token_account_balance(&managed_proof_token_account_addr).await {
+    match rpc_client
+        .get_token_account_balance(&managed_proof_token_account_addr)
+        .await
+    {
         Ok(_) => {
             info!(target: "server_log", "Managed proof token account already created.");
-        },
+        }
         Err(_) => {
             info!(target: "server_log", "Creating managed proof token account");
-            let ix = create_associated_token_account(&wallet.pubkey(), &managed_proof.0, &ore_api::consts::MINT_ADDRESS, &spl_token::id());
+            let ix = create_associated_token_account(
+                &wallet.pubkey(),
+                &managed_proof.0,
+                &ore_api::consts::MINT_ADDRESS,
+                &spl_token::id(),
+            );
 
             let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
 
@@ -423,12 +460,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tx.sign(&[&wallet], blockhash);
 
-            match rpc_client.send_and_confirm_transaction_with_spinner_and_commitment(&tx, CommitmentConfig {
-                commitment: CommitmentLevel::Confirmed
-            }).await {
+            match rpc_client
+                .send_and_confirm_transaction_with_spinner_and_commitment(
+                    &tx,
+                    CommitmentConfig {
+                        commitment: CommitmentLevel::Confirmed,
+                    },
+                )
+                .await
+            {
                 Ok(_) => {
                     info!(target: "server_log", "Successfully created managed proof token account");
-                },
+                }
                 Err(e) => {
                     error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
                     panic!("Failed to create managed proof token account");
@@ -437,8 +480,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let miner_ore_token_account_addr = get_associated_token_address(&wallet.pubkey(), &ore_api::consts::MINT_ADDRESS);
-    let token_balance = if let Ok(token_balance) = rpc_client.get_token_account_balance(&miner_ore_token_account_addr).await {
+    let miner_ore_token_account_addr =
+        get_associated_token_address(&wallet.pubkey(), &ore_api::consts::MINT_ADDRESS);
+    let token_balance = if let Ok(token_balance) = rpc_client
+        .get_token_account_balance(&miner_ore_token_account_addr)
+        .await
+    {
         let bal = token_balance.ui_amount.unwrap() * 10f64.powf(token_balance.decimals as f64);
         bal as u64
     } else {
@@ -448,14 +495,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.migrate {
         info!(target: "server_log", "Checking original proof, and token account balances for migration.");
-        let original_proof = if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
-            loaded_proof
-        } else {
-            panic!("Failed to get original proof!");
-        };
+        let original_proof =
+            if let Ok(loaded_proof) = get_original_proof(&rpc_client, wallet.pubkey()).await {
+                loaded_proof
+            } else {
+                panic!("Failed to get original proof!");
+            };
         if original_proof.balance > 0 || token_balance > 0 {
             info!(target: "server_log", "Proof balance has {} tokens. Miner ORE token account has {} tokens.\nMigrating...", original_proof.balance, token_balance);
-            if let Err(e) = proof_migration::migrate(&rpc_client, &wallet, original_proof.balance, token_balance).await {
+            if let Err(e) = proof_migration::migrate(
+                &rpc_client,
+                &wallet,
+                original_proof.balance,
+                token_balance,
+            )
+            .await
+            {
                 info!(target: "server_log", "Failed to migrate proof balance.\nError: {}", e);
                 panic!("Failed to migrate proof balance.");
             } else {
@@ -550,10 +605,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
     let ready_clients = Arc::new(Mutex::new(HashSet::new()));
 
-    let pongs = Arc::new(RwLock::new(LastPong { pongs: HashMap::new() }));
+    let pongs = Arc::new(RwLock::new(LastPong {
+        pongs: HashMap::new(),
+    }));
 
     let claims_queue = Arc::new(ClaimsQueue {
-        queue: RwLock::new(HashMap::new())
+        queue: RwLock::new(HashMap::new()),
     });
 
     let submission_window = Arc::new(RwLock::new(SubmissionWindow { closed: false }));
@@ -566,7 +623,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_claims_queue = claims_queue.clone();
     let app_app_database = app_database.clone();
     tokio::spawn(async move {
-        claim_system(app_claims_queue, app_rpc_client, app_wallet.miner_wallet.clone(), app_app_database).await;
+        claim_system(
+            app_claims_queue,
+            app_rpc_client,
+            app_wallet.miner_wallet.clone(),
+            app_app_database,
+        )
+        .await;
     });
 
     // Track client pong timings
@@ -603,7 +666,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_client_nonce_ranges,
             app_state,
             app_pongs,
-            app_submission_window
+            app_submission_window,
         )
         .await;
     });
@@ -617,7 +680,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = shared_state.clone();
     tokio::spawn(async move {
         loop {
-
             let reader = app_state.read().await;
             let paused = reader.paused.clone();
             drop(reader);
@@ -655,7 +717,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         drop(lock);
                         let challenge = latest_proof.challenge;
 
-
                         info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
                         info!(target: "submission_log", "With cutoff: {}", cutoff);
                         for client in clients {
@@ -671,7 +732,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 start..end
                             };
 
-                            let start_mining_message = ServerMessageStartMining::new(challenge, cutoff, nonce_range.start, nonce_range.end);
+                            let start_mining_message = ServerMessageStartMining::new(
+                                challenge,
+                                cutoff,
+                                nonce_range.start,
+                                nonce_range.end,
+                            );
 
                             let app_client_nonce_ranges = app_client_nonce_ranges.clone();
                             let shared_state = app_shared_state.read().await;
@@ -685,15 +751,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .socket
                                         .lock()
                                         .await
-                                        .send(Message::Binary(start_mining_message.to_message_binary()))
+                                        .send(Message::Binary(
+                                            start_mining_message.to_message_binary(),
+                                        ))
                                         .await;
                                     let _ = ready_clients.lock().await.remove(&client);
                                     let reader = app_client_nonce_ranges.read().await;
-                                    let current_nonce_ranges = if let Some(val) = reader.get(&sender.pubkey) {
-                                        Some(val.clone())
-                                    } else {
-                                        None
-                                    };
+                                    let current_nonce_ranges =
+                                        if let Some(val) = reader.get(&sender.pubkey) {
+                                            Some(val.clone())
+                                        } else {
+                                            None
+                                        };
                                     drop(reader);
 
                                     if let Some(nonce_ranges) = current_nonce_ranges {
@@ -701,22 +770,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         new_nonce_ranges.push(nonce_range);
 
                                         app_client_nonce_ranges
-                                        .write()
-                                        .await
-                                        .insert(sender.pubkey, new_nonce_ranges);
+                                            .write()
+                                            .await
+                                            .insert(sender.pubkey, new_nonce_ranges);
                                     } else {
                                         let new_nonce_ranges = vec![nonce_range];
                                         app_client_nonce_ranges
-                                        .write()
-                                        .await
-                                        .insert(sender.pubkey, new_nonce_ranges);
+                                            .write()
+                                            .await
+                                            .insert(sender.pubkey, new_nonce_ranges);
                                     }
                                 });
                             }
                         }
                     }
                 }
-
             } else {
                 info!(target: "server_log", "Mining is paused");
                 tokio::time::sleep(Duration::from_secs(30)).await;
@@ -781,7 +849,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(best_solution) = best_solution {
                             let difficulty = best_solution.to_hash().difficulty();
 
-                            info!(target: "server_log", 
+                            info!(target: "server_log",
                                 "Starting mine submission attempt {} with difficulty {}.",
                                 i, difficulty
                             );
@@ -842,30 +910,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             let jito_tip = *app_jito_tip;
                             if jito_tip > 0 {
-                                        let tip_accounts = [
-                                            "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-                                            "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
-                                            "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
-                                            "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
-                                            "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
-                                            "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
-                                            "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
-                                            "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
-                                        ];
-                                        ixs.push(transfer(
-                                            &signer.pubkey(),
-                                            &Pubkey::from_str(
-                                                &tip_accounts
-                                                    .choose(&mut rand::thread_rng())
-                                                    .unwrap()
-                                                    .to_string(),
-                                            )
-                                            .unwrap(),
-                                            jito_tip,
-                                        ));
+                                let tip_accounts = [
+                                    "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+                                    "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+                                    "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+                                    "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+                                    "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+                                    "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+                                    "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+                                    "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
+                                ];
+                                ixs.push(transfer(
+                                    &signer.pubkey(),
+                                    &Pubkey::from_str(
+                                        &tip_accounts
+                                            .choose(&mut rand::thread_rng())
+                                            .unwrap()
+                                            .to_string(),
+                                    )
+                                    .unwrap(),
+                                    jito_tip,
+                                ));
 
-                                        info!(target: "server_log", "Jito tip: {} SOL", lamports_to_sol(jito_tip));
-                                    }
+                                info!(target: "server_log", "Jito tip: {} SOL", lamports_to_sol(jito_tip));
+                            }
 
                             let noop_ix = get_auth_ix(signer.pubkey());
                             ixs.push(noop_ix);
@@ -874,7 +942,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let reset_ix = get_reset_ix(signer.pubkey());
                                 ixs.push(reset_ix);
                             }
-
 
                             let ix_mine = get_mine_ix(signer.pubkey(), best_solution, bus);
                             ixs.push(ix_mine);
@@ -896,24 +963,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     rpc_client.clone()
                                 };
 
-                                let rpc_config =  RpcSendTransactionConfig {
+                                let rpc_config = RpcSendTransactionConfig {
                                     skip_preflight: false,
                                     preflight_commitment: Some(rpc_client.commitment().commitment),
                                     ..RpcSendTransactionConfig::default()
                                 };
 
-                                let rpc_sim_config =  RpcSimulateTransactionConfig {
+                                let rpc_sim_config = RpcSimulateTransactionConfig {
                                     sig_verify: false,
                                     ..RpcSimulateTransactionConfig::default()
                                 };
 
-
                                 let sim_tx = tx.clone();
 
-                                if let Ok(result) = rpc_client.simulate_transaction_with_config(&sim_tx, rpc_sim_config).await {
+                                if let Ok(result) = rpc_client
+                                    .simulate_transaction_with_config(&sim_tx, rpc_sim_config)
+                                    .await
+                                {
                                     if let Some(tx_error) = result.value.err {
-                                        if tx_error == TransactionError::InstructionError(4, InstructionError::Custom(1))
-                                        || tx_error == TransactionError::InstructionError(5, InstructionError::Custom(1)) {
+                                        if tx_error
+                                            == TransactionError::InstructionError(
+                                                4,
+                                                InstructionError::Custom(1),
+                                            )
+                                            || tx_error
+                                                == TransactionError::InstructionError(
+                                                    5,
+                                                    InstructionError::Custom(1),
+                                                )
+                                        {
                                             error!(target: "server_log", "Custom program error: Invalid Hash");
                                             break;
                                         }
@@ -922,18 +1000,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let mut rpc_send_attempts = 1;
                                 let signature = loop {
-                                    match send_client.send_transaction_with_config(&tx, rpc_config).await {
+                                    match send_client
+                                        .send_transaction_with_config(&tx, rpc_config)
+                                        .await
+                                    {
                                         Ok(sig) => {
                                             break Ok(sig);
-                                        
-                                        },
+                                        }
                                         Err(_e) => {
                                             error!(target: "server_log", "Attempt {} Failed to send mine transaction. retrying in 1 seconds...", rpc_send_attempts);
                                             rpc_send_attempts += 1;
 
                                             if rpc_send_attempts >= 5 {
                                                 break Err("Failed to send tx");
-
                                             }
                                             tokio::time::sleep(Duration::from_millis(1500)).await;
                                         }
@@ -975,7 +1054,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             break;
                                         } else {
                                             info!(target: "server_log", "Resending signed tx...");
-                                            let _ = app_send_client.send_transaction_with_config(&tx, rpc_config).await;
+                                            let _ = app_send_client
+                                                .send_transaction_with_config(&tx, rpc_config)
+                                                .await;
 
                                             // Wait 500ms then check for updated proof
                                             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -987,7 +1068,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             if old_proof.challenge.eq(&latest_proof.challenge) {
                                                 info!(target: "server_log", "Proof challenge not updated yet..");
-                                                if let Ok(p) = get_proof(&app_rpc_client, app_wallet.miner_wallet.pubkey()).await {
+                                                if let Ok(p) = get_proof(
+                                                    &app_rpc_client,
+                                                    app_wallet.miner_wallet.pubkey(),
+                                                )
+                                                .await
+                                                {
                                                     info!(target: "server_log", "OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                     info!(target: "server_log", "RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
                                                     if old_proof.challenge.ne(&p.challenge) {
@@ -1006,7 +1092,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         }
                                                         // reset client nonce ranges
                                                         {
-                                                            let mut writer = app_client_nonce_ranges.write().await;
+                                                            let mut writer =
+                                                                app_client_nonce_ranges
+                                                                    .write()
+                                                                    .await;
                                                             *writer = HashMap::new();
                                                             drop(writer);
                                                         }
@@ -1015,37 +1104,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             info!(target: "server_log", "reset epoch hashes");
                                                             let mut mut_epoch_hashes =
                                                                 app_epoch_hashes.write().await;
-                                                            mut_epoch_hashes.challenge = p.challenge;
-                                                            mut_epoch_hashes.best_hash.solution = None;
-                                                            mut_epoch_hashes.best_hash.difficulty = 0;
-                                                            mut_epoch_hashes.submissions = HashMap::new();
+                                                            mut_epoch_hashes.challenge =
+                                                                p.challenge;
+                                                            mut_epoch_hashes.best_hash.solution =
+                                                                None;
+                                                            mut_epoch_hashes.best_hash.difficulty =
+                                                                0;
+                                                            mut_epoch_hashes.submissions =
+                                                                HashMap::new();
                                                         }
                                                         // Open submission window
                                                         info!(target: "server_log", "openning submission window.");
-                                                        let mut writer = app_submission_window.write().await;
+                                                        let mut writer =
+                                                            app_submission_window.write().await;
                                                         writer.closed = false;
                                                         drop(writer);
 
                                                         info!(target: "server_log", "Adding new challenge to db");
                                                         let new_challenge = InsertChallenge {
                                                             pool_id: app_config.pool_id,
-                                                            challenge: latest_proof.challenge.to_vec(),
+                                                            challenge: latest_proof
+                                                                .challenge
+                                                                .to_vec(),
                                                             rewards_earned: None,
                                                         };
 
                                                         while let Err(_) = app_database
-                                                            .add_new_challenge(new_challenge.clone())
+                                                            .add_new_challenge(
+                                                                new_challenge.clone(),
+                                                            )
                                                             .await
                                                         {
                                                             error!(target: "server_log", "Failed to add new challenge to db.");
                                                             info!(target: "server_log", "Verifying challenge does not already exist.");
-                                                            if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
+                                                            if let Ok(_) = app_database
+                                                                .get_challenge_by_challenge(
+                                                                    new_challenge.challenge.clone(),
+                                                                )
+                                                                .await
+                                                            {
                                                                 info!(target: "server_log", "Challenge already exists, continuing");
                                                                 break;
                                                             }
 
-                                                            tokio::time::sleep(Duration::from_millis(1000))
-                                                                .await;
+                                                            tokio::time::sleep(
+                                                                Duration::from_millis(1000),
+                                                            )
+                                                            .await;
                                                         }
                                                         info!(target: "server_log", "New challenge successfully added to db");
 
@@ -1066,7 +1171,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 {
                                                     error!(target: "server_log", "Failed to add new challenge to db.");
                                                     info!(target: "server_log", "Verifying challenge does not already exist.");
-                                                    if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
+                                                    if let Ok(_) = app_database
+                                                        .get_challenge_by_challenge(
+                                                            new_challenge.challenge.clone(),
+                                                        )
+                                                        .await
+                                                    {
                                                         info!(target: "server_log", "Challenge already exists, continuing");
                                                         break;
                                                     }
@@ -1075,7 +1185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         .await;
                                                 }
                                                 info!(target: "server_log", "New challenge successfully added to db");
-
 
                                                 // Reset mining data
                                                 // {
@@ -1101,7 +1210,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 }
                                                 // reset client nonce ranges
                                                 {
-                                                    let mut writer = app_client_nonce_ranges.write().await;
+                                                    let mut writer =
+                                                        app_client_nonce_ranges.write().await;
                                                     *writer = HashMap::new();
                                                     drop(writer);
                                                 }
@@ -1110,14 +1220,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     info!(target: "server_log", "reset epoch hashes");
                                                     let mut mut_epoch_hashes =
                                                         app_epoch_hashes.write().await;
-                                                    mut_epoch_hashes.challenge = latest_proof.challenge;
+                                                    mut_epoch_hashes.challenge =
+                                                        latest_proof.challenge;
                                                     mut_epoch_hashes.best_hash.solution = None;
                                                     mut_epoch_hashes.best_hash.difficulty = 0;
                                                     mut_epoch_hashes.submissions = HashMap::new();
                                                 }
                                                 // Open submission window
                                                 info!(target: "server_log", "openning submission window.");
-                                                let mut writer = app_submission_window.write().await;
+                                                let mut writer =
+                                                    app_submission_window.write().await;
                                                 writer.closed = false;
                                                 drop(writer);
 
@@ -1126,25 +1238,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                         tokio::time::sleep(Duration::from_millis(1000)).await;
                                     }
-                                    return
-
+                                    return;
                                 });
 
                                 let result: Result<Signature, String> = loop {
                                     if expired_timer.elapsed().as_secs() >= 200 {
                                         break Err("Transaction Expired".to_string());
                                     }
-                                    let results = rpc_client.get_signature_statuses(&[signature]).await;
+                                    let results =
+                                        rpc_client.get_signature_statuses(&[signature]).await;
                                     if let Ok(response) = results {
                                         let statuses = response.value;
                                         if let Some(status) = &statuses[0] {
                                             info!(target: "server_log", "Status: {:?}", status);
-                                            if status.confirmation_status() == TransactionConfirmationStatus::Finalized {
-                                                    if status.err.is_some() {
-                                                        let e_str = format!("Transaction Failed: {:?}", status.err);
-                                                        break Err(e_str);
-                                                    }
-                                                    break Ok(signature);
+                                            if status.confirmation_status()
+                                                == TransactionConfirmationStatus::Finalized
+                                            {
+                                                if status.err.is_some() {
+                                                    let e_str = format!(
+                                                        "Transaction Failed: {:?}",
+                                                        status.err
+                                                    );
+                                                    break Err(e_str);
+                                                }
+                                                break Ok(signature);
                                             }
                                         }
                                     }
@@ -1167,9 +1284,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         };
                                         let app_db = app_database.clone();
                                         tokio::spawn(async move {
-                                            while let Err(_) = app_db.add_new_txn(itxn.clone()).await {
+                                            while let Err(_) =
+                                                app_db.add_new_txn(itxn.clone()).await
+                                            {
                                                 error!(target: "server_log", "Failed to add tx to db! Retrying...");
-                                                tokio::time::sleep(Duration::from_millis(2000)).await;
+                                                tokio::time::sleep(Duration::from_millis(2000))
+                                                    .await;
                                             }
                                         });
 
@@ -1177,24 +1297,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         // and clients
                                         let app_rpc_client = rpc_client.clone();
                                         let app_app_database = app_database.clone();
-                                        let app_mine_success_sender = Arc::new(mine_success_sender.clone());
+                                        let app_mine_success_sender =
+                                            Arc::new(mine_success_sender.clone());
                                         let app_app_proof = app_proof.clone();
                                         let app_app_config = app_config.clone();
-                                        let app_app_client_nonce_ranges = app_client_nonce_ranges.clone();
+                                        let app_app_client_nonce_ranges =
+                                            app_client_nonce_ranges.clone();
                                         tokio::spawn(async move {
                                             let rpc_client = app_rpc_client;
                                             let app_database = app_app_database;
                                             let mine_success_sender = app_mine_success_sender;
                                             let app_proof = app_app_proof;
                                             let app_config = app_app_config;
-                                            let app_client_nonce_ranges = app_app_client_nonce_ranges.clone();
+                                            let app_client_nonce_ranges =
+                                                app_app_client_nonce_ranges.clone();
                                             loop {
-                                                if let Ok(txn_result) = rpc_client.get_transaction_with_config(&sig, RpcTransactionConfig {
-                                                    encoding: Some(UiTransactionEncoding::Base64),
-                                                    commitment: Some(rpc_client.commitment()),
-                                                    max_supported_transaction_version: None,
-                                                }).await {
-                                                    let data = txn_result.transaction.meta.unwrap().return_data;
+                                                if let Ok(txn_result) = rpc_client
+                                                    .get_transaction_with_config(
+                                                        &sig,
+                                                        RpcTransactionConfig {
+                                                            encoding: Some(
+                                                                UiTransactionEncoding::Base64,
+                                                            ),
+                                                            commitment: Some(
+                                                                rpc_client.commitment(),
+                                                            ),
+                                                            max_supported_transaction_version: None,
+                                                        },
+                                                    )
+                                                    .await
+                                                {
+                                                    let data = txn_result
+                                                        .transaction
+                                                        .meta
+                                                        .unwrap()
+                                                        .return_data;
 
                                                     match data {
                                                         solana_transaction_status::option_serializer::OptionSerializer::Some(data) => {
@@ -1301,7 +1438,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     break;
                                                 } else {
                                                     error!(target: "server_log", "Failed to get confirmed transaction... Come on rpc...");
-                                                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                                                    tokio::time::sleep(Duration::from_millis(2000))
+                                                        .await;
                                                 }
                                             }
                                         });
@@ -1314,7 +1452,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             if old_proof.challenge.eq(&latest_proof.challenge) {
                                                 info!(target: "server_log", "Proof challenge not updated yet..");
-                                                if let Ok(p) = get_proof(&rpc_client, app_wallet.miner_wallet.pubkey()).await {
+                                                if let Ok(p) = get_proof(
+                                                    &rpc_client,
+                                                    app_wallet.miner_wallet.pubkey(),
+                                                )
+                                                .await
+                                                {
                                                     info!(target: "server_log", "OLD PROOF CHALLENGE: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                     info!(target: "server_log", "RPC PROOF CHALLENGE: {}", BASE64_STANDARD.encode(p.challenge));
                                                     if old_proof.challenge.ne(&p.challenge) {
@@ -1333,7 +1476,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         }
                                                         // reset client nonce ranges
                                                         {
-                                                            let mut writer = app_client_nonce_ranges.write().await;
+                                                            let mut writer =
+                                                                app_client_nonce_ranges
+                                                                    .write()
+                                                                    .await;
                                                             *writer = HashMap::new();
                                                             drop(writer);
                                                         }
@@ -1342,37 +1488,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             info!(target: "server_log", "reset epoch hashes");
                                                             let mut mut_epoch_hashes =
                                                                 app_epoch_hashes.write().await;
-                                                            mut_epoch_hashes.challenge = p.challenge;
-                                                            mut_epoch_hashes.best_hash.solution = None;
-                                                            mut_epoch_hashes.best_hash.difficulty = 0;
-                                                            mut_epoch_hashes.submissions = HashMap::new();
+                                                            mut_epoch_hashes.challenge =
+                                                                p.challenge;
+                                                            mut_epoch_hashes.best_hash.solution =
+                                                                None;
+                                                            mut_epoch_hashes.best_hash.difficulty =
+                                                                0;
+                                                            mut_epoch_hashes.submissions =
+                                                                HashMap::new();
                                                         }
                                                         // Open submission window
                                                         info!(target: "server_log", "openning submission window.");
-                                                        let mut writer = app_submission_window.write().await;
+                                                        let mut writer =
+                                                            app_submission_window.write().await;
                                                         writer.closed = false;
                                                         drop(writer);
 
                                                         info!(target: "server_log", "Adding new challenge to db");
                                                         let new_challenge = InsertChallenge {
                                                             pool_id: app_config.pool_id,
-                                                            challenge: latest_proof.challenge.to_vec(),
+                                                            challenge: latest_proof
+                                                                .challenge
+                                                                .to_vec(),
                                                             rewards_earned: None,
                                                         };
 
                                                         while let Err(_) = app_database
-                                                            .add_new_challenge(new_challenge.clone())
+                                                            .add_new_challenge(
+                                                                new_challenge.clone(),
+                                                            )
                                                             .await
                                                         {
                                                             error!(target: "server_log", "Failed to add new challenge to db.");
                                                             info!(target: "server_log", "Verifying challenge does not already exist.");
-                                                            if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
+                                                            if let Ok(_) = app_database
+                                                                .get_challenge_by_challenge(
+                                                                    new_challenge.challenge.clone(),
+                                                                )
+                                                                .await
+                                                            {
                                                                 info!(target: "server_log", "Challenge already exists, continuing");
                                                                 break;
                                                             }
 
-                                                            tokio::time::sleep(Duration::from_millis(1000))
-                                                                .await;
+                                                            tokio::time::sleep(
+                                                                Duration::from_millis(1000),
+                                                            )
+                                                            .await;
                                                         }
                                                         info!(target: "server_log", "New challenge successfully added to db");
 
@@ -1384,7 +1546,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let epoch_hashes_challenge = reader.challenge;
                                                 drop(reader);
 
-                                                if latest_proof.challenge.eq(&epoch_hashes_challenge) {
+                                                if latest_proof
+                                                    .challenge
+                                                    .eq(&epoch_hashes_challenge)
+                                                {
                                                     // epoch_hashes challenge was already updated
                                                     info!(target: "server_log", "Epoch hashes challenge already up to date!");
                                                     break;
@@ -1414,7 +1579,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                     // reset client nonce ranges
                                                     {
-                                                        let mut writer = app_client_nonce_ranges.write().await;
+                                                        let mut writer =
+                                                            app_client_nonce_ranges.write().await;
                                                         *writer = HashMap::new();
                                                         drop(writer);
                                                     }
@@ -1423,14 +1589,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         info!(target: "server_log", "reset epoch hashes");
                                                         let mut mut_epoch_hashes =
                                                             app_epoch_hashes.write().await;
-                                                        mut_epoch_hashes.challenge = latest_proof.challenge;
+                                                        mut_epoch_hashes.challenge =
+                                                            latest_proof.challenge;
                                                         mut_epoch_hashes.best_hash.solution = None;
                                                         mut_epoch_hashes.best_hash.difficulty = 0;
-                                                        mut_epoch_hashes.submissions = HashMap::new();
+                                                        mut_epoch_hashes.submissions =
+                                                            HashMap::new();
                                                     }
                                                     // Open submission window
                                                     info!(target: "server_log", "openning submission window.");
-                                                    let mut writer = app_submission_window.write().await;
+                                                    let mut writer =
+                                                        app_submission_window.write().await;
                                                     writer.closed = false;
                                                     drop(writer);
                                                     info!(target: "server_log", "Adding new challenge to db");
@@ -1446,13 +1615,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     {
                                                         error!(target: "server_log", "Failed to add new challenge to db.");
                                                         info!(target: "server_log", "Verifying challenge does not already exist.");
-                                                        if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
+                                                        if let Ok(_) = app_database
+                                                            .get_challenge_by_challenge(
+                                                                new_challenge.challenge.clone(),
+                                                            )
+                                                            .await
+                                                        {
                                                             info!(target: "server_log", "Challenge already exists, continuing");
                                                             break;
                                                         }
 
-                                                        tokio::time::sleep(Duration::from_millis(1000))
-                                                            .await;
+                                                        tokio::time::sleep(Duration::from_millis(
+                                                            1000,
+                                                        ))
+                                                        .await;
                                                     }
                                                     info!(target: "server_log", "New challenge successfully added to db");
                                                     break;
@@ -1460,7 +1636,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                         }
                                         break;
-                                    },
+                                    }
                                     Err(e) => {
                                         error!(target: "server_log", "Failed to send and confirm txn");
                                         error!(target: "server_log", "Error: {:?}", e);
@@ -1509,7 +1685,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut writer = app_submission_window.write().await;
                         writer.closed = false;
                         drop(writer);
-
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 } else {
@@ -1585,7 +1760,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             1.0f64
                         };
-                        
+
                         let shared_state = app_shared_state.read().await;
                         let len = shared_state.sockets.len();
 
@@ -1618,7 +1793,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 error!(target: "server_log", "Failed to send client text");
                                             }
                                         });
-                                    },
+                                    }
                                     ClientVersion::V2 => {
                                         let server_message = ServerMessagePoolSubmissionResult::new(
                                             msg.difficulty,
@@ -1631,36 +1806,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             msg.best_nonce,
                                             msg_submission.supplied_diff as u32,
                                             earned_rewards_dec,
-                                            percentage
+                                            percentage,
                                         );
                                         tokio::spawn(async move {
                                             if let Ok(_) = socket_sender
                                                 .lock()
                                                 .await
-                                                .send(Message::Binary(server_message.to_message_binary()))
+                                                .send(Message::Binary(
+                                                    server_message.to_message_binary(),
+                                                ))
                                                 .await
                                             {
                                             } else {
                                                 error!(target: "server_log", "Failed to send client pool submission result binary message");
                                             }
                                         });
-                                    },
+                                    }
                                 }
                             }
                         }
-                    
                     }
 
                     let batch_size = 200;
                     if i_earnings.len() > 0 {
                         for batch in i_earnings.chunks(batch_size) {
-                            while let Err(_) = app_database
-                                .add_new_earnings_batch(batch.to_vec())
-                                .await
+                            while let Err(_) =
+                                app_database.add_new_earnings_batch(batch.to_vec()).await
                             {
                                 error!(target: "server_log", "Failed to add new earnings batch to db. Retrying...");
-                                tokio::time::sleep(Duration::from_millis(500))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                             }
                             tokio::time::sleep(Duration::from_millis(200)).await;
                         }
@@ -1669,13 +1843,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     if i_rewards.len() > 0 {
                         for batch in i_rewards.chunks(batch_size) {
-                            while let Err(_) = app_database
-                                .update_rewards(batch.to_vec())
-                                .await
-                            {
+                            while let Err(_) = app_database.update_rewards(batch.to_vec()).await {
                                 error!(target: "server_log", "Failed to update rewards in db. Retrying...");
-                                tokio::time::sleep(Duration::from_millis(500))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                             }
                             tokio::time::sleep(Duration::from_millis(200)).await;
                         }
@@ -1685,13 +1855,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if i_submissions.len() > 0 {
                         for batch in i_submissions.chunks(batch_size) {
                             info!(target: "server_log", "Submissions batch size: {}", i_submissions.len());
-                            while let Err(_) = app_database
-                                .add_new_submissions_batch(batch.to_vec())
-                                .await
+                            while let Err(_) =
+                                app_database.add_new_submissions_batch(batch.to_vec()).await
                             {
                                 error!(target: "server_log", "Failed to add new submissions batch. Retrying...");
-                                tokio::time::sleep(Duration::from_millis(500))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                             }
                             tokio::time::sleep(Duration::from_millis(200)).await;
                         }
@@ -1706,23 +1874,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .await
                     {
-                        error!(target: "server_log", 
+                        error!(target: "server_log",
                             "Failed to update pool rewards! Retrying..."
                         );
-                        tokio::time::sleep(Duration::from_millis(1000))
-                            .await;
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
                     }
 
                     tokio::time::sleep(Duration::from_millis(200)).await;
 
-                    if let Ok(s) = app_database.get_submission_id_with_nonce(msg.best_nonce)
-                    .await {
+                    if let Ok(s) = app_database
+                        .get_submission_id_with_nonce(msg.best_nonce)
+                        .await
+                    {
                         if let Err(_) = app_database
-                            .update_challenge_rewards(
-                                msg.challenge.to_vec(),
-                                s,
-                                msg.rewards,
-                            )
+                            .update_challenge_rewards(msg.challenge.to_vec(), s, msg.rewards)
                             .await
                         {
                             error!(target: "server_log", "Failed to update challenge rewards! Skipping! Devs check!");
@@ -1797,7 +1962,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/stake", get(get_miner_stake))
         .route("/stake-multiplier", get(get_stake_multiplier))
         // App RR Database routes
-        .route("/last-challenge-submissions", get(get_last_challenge_submissions))
+        .route(
+            "/last-challenge-submissions",
+            get(get_last_challenge_submissions),
+        )
         .route("/miner/rewards", get(get_miner_rewards))
         .route("/miner/submissions", get(get_miner_submissions))
         .route("/miner/last-claim", get(get_miner_last_claim))
@@ -2021,7 +2189,8 @@ async fn post_signup(
                 .unwrap();
         }
 
-        let base_ix = system_instruction::transfer(&user_pubkey, &wallet.miner_wallet.pubkey(), 1_000_000);
+        let base_ix =
+            system_instruction::transfer(&user_pubkey, &wallet.miner_wallet.pubkey(), 1_000_000);
         let mut accts = Vec::new();
         for account_index in ixs[0].accounts.clone() {
             accts.push(tx.key(0, account_index.into()));
@@ -2089,7 +2258,7 @@ async fn post_signup(
                             .body("Failed to add user to database".to_string())
                             .unwrap();
                     }
-                },
+                }
                 Err(e) => {
                     error!(target: "server_log", "{} signup transaction failed...", user_pubkey.to_string());
                     error!(target: "server_log", "Signup Tx Error: {:?}", e);
@@ -2154,17 +2323,11 @@ async fn get_last_challenge_submissions(
     Extension(app_config): Extension<Arc<Config>>,
 ) -> Result<Json<Vec<SubmissionWithPubkey>>, String> {
     if app_config.stats_enabled {
-        let res = app_rr_database
-            .get_last_challenge_submissions()
-            .await;
+        let res = app_rr_database.get_last_challenge_submissions().await;
 
         match res {
-            Ok(submissions) => {
-                Ok(Json(submissions))
-            }
-            Err(_) => {
-                Err("Failed to get submissions for miner".to_string())
-            }
+            Ok(submissions) => Ok(Json(submissions)),
+            Err(_) => Err("Failed to get submissions for miner".to_string()),
         }
     } else {
         return Err("Stats not enabled for this server.".to_string());
@@ -2188,12 +2351,8 @@ async fn get_miner_submissions(
                 .await;
 
             match res {
-                Ok(submissions) => {
-                    Ok(Json(submissions))
-                }
-                Err(_) => {
-                    Err("Failed to get submissions for miner".to_string())
-                }
+                Ok(submissions) => Ok(Json(submissions)),
+                Err(_) => Err("Failed to get submissions for miner".to_string()),
             }
         } else {
             Err("Invalid public key".to_string())
@@ -2220,12 +2379,8 @@ async fn get_miner_last_claim(
                 .await;
 
             match res {
-                Ok(last_claim) => {
-                    Ok(Json(last_claim))
-                }
-                Err(_) => {
-                    Err("Failed to get last claim for miner".to_string())
-                }
+                Ok(last_claim) => Ok(Json(last_claim)),
+                Err(_) => Err("Failed to get last claim for miner".to_string()),
             }
         } else {
             Err("Invalid public key".to_string())
@@ -2269,7 +2424,9 @@ async fn get_miner_stake(
     Extension(wallet): Extension<Arc<WalletExtension>>,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        if let Ok(account) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await
+        if let Ok(account) =
+            get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey())
+                .await
         {
             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
             let dec_amount = (account.amount as f64).div(decimals);
@@ -2295,8 +2452,7 @@ async fn get_stake_multiplier(
             return Err("Stats not enabled for this server.".to_string());
         };
 
-        if let Ok(config) = get_config(&rpc_client).await
-        {
+        if let Ok(config) = get_config(&rpc_client).await {
             let multiplier = 1.0 + (proof.balance as f64 / config.top_balance as f64).min(1.0f64);
             return Ok(Json(multiplier));
         } else {
@@ -2314,9 +2470,8 @@ struct ConnectedMinersParams {
 
 async fn get_connected_miners(
     query_params: Query<ConnectedMinersParams>,
-    State(app_state): State<Arc<RwLock<AppState>>>
+    State(app_state): State<Arc<RwLock<AppState>>>,
 ) -> impl IntoResponse {
-
     let reader = app_state.read().await;
     let sockets = reader.sockets.clone();
     drop(reader);
@@ -2335,7 +2490,6 @@ async fn get_connected_miners(
                 .status(StatusCode::OK)
                 .body(connection_count.to_string())
                 .unwrap();
-
         } else {
             error!(target: "server_log", "Get connected miners with invalid pubkey");
             return Response::builder()
@@ -2349,7 +2503,6 @@ async fn get_connected_miners(
             .body(sockets.len().to_string())
             .unwrap();
     }
-
 }
 
 async fn get_timestamp() -> impl IntoResponse {
@@ -2414,7 +2567,7 @@ async fn post_claim(
                     .expect("Time went backwards")
                     .as_secs() as i64;
                 let time_difference = now - last_claim_ts;
-                if time_difference  <= 1800 {
+                if time_difference <= 1800 {
                     return Response::builder()
                         .status(StatusCode::TOO_MANY_REQUESTS)
                         .body(time_difference.to_string())
@@ -2478,8 +2631,15 @@ async fn post_stake(
                 .unwrap();
         }
 
-        if let Err(_) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await {
-            let init_ix = ore_miner_delegation::instruction::init_delegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), wallet.fee_wallet.pubkey());
+        if let Err(_) =
+            get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey())
+                .await
+        {
+            let init_ix = ore_miner_delegation::instruction::init_delegate_stake(
+                user_pubkey,
+                wallet.miner_wallet.pubkey(),
+                wallet.fee_wallet.pubkey(),
+            );
 
             let prio_fee: u32 = 20_000;
 
@@ -2496,14 +2656,17 @@ async fn post_stake(
 
                 tx.sign(&[wallet.fee_wallet.as_ref()], hash);
 
-                let rpc_config =  RpcSendTransactionConfig {
+                let rpc_config = RpcSendTransactionConfig {
                     preflight_commitment: Some(rpc_client.commitment().commitment),
                     ..RpcSendTransactionConfig::default()
                 };
 
                 let signature;
                 loop {
-                    if let Ok(sig) = rpc_client.send_transaction_with_config(&tx, rpc_config).await {
+                    if let Ok(sig) = rpc_client
+                        .send_transaction_with_config(&tx, rpc_config)
+                        .await
+                    {
                         signature = sig;
                         break;
                     } else {
@@ -2520,7 +2683,9 @@ async fn post_stake(
                     if let Ok(response) = results {
                         let statuses = response.value;
                         if let Some(status) = &statuses[0] {
-                            if status.confirmation_status() == TransactionConfirmationStatus::Confirmed {
+                            if status.confirmation_status()
+                                == TransactionConfirmationStatus::Confirmed
+                            {
                                 if status.err.is_some() {
                                     let e_str = format!("Transaction Failed: {:?}", status.err);
                                     break Err(e_str);
@@ -2542,17 +2707,18 @@ async fn post_stake(
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .body("Failed to init delegate stake account.".to_string())
                             .unwrap();
-
                     }
                 }
-
             } else {
                 error!(target: "server_log", "Failed to confirm transaction for init delegate stake.");
             }
         }
 
-
-        let base_ix = ore_miner_delegation::instruction::delegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), query_params.amount);
+        let base_ix = ore_miner_delegation::instruction::delegate_stake(
+            user_pubkey,
+            wallet.miner_wallet.pubkey(),
+            query_params.amount,
+        );
         let mut accts = Vec::new();
         for account_index in ixs[0].accounts.clone() {
             accts.push(tx.key(0, account_index.into()));
@@ -2588,13 +2754,14 @@ async fn post_stake(
 
             match result {
                 Ok(sig) => {
-                    let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    let amount_dec =
+                        query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                     info!(target: "server_log", "Miner {} successfully delegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
                     return Response::builder()
                         .status(StatusCode::OK)
                         .body("SUCCESS".to_string())
                         .unwrap();
-                },
+                }
                 Err(e) => {
                     error!(target: "server_log", "{} stake transaction failed...", user_pubkey.to_string());
                     error!(target: "server_log", "Stake Tx Error: {:?}", e);
@@ -2648,7 +2815,10 @@ async fn post_unstake(
                 .unwrap();
         }
 
-        if let Err(_) = get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey()).await {
+        if let Err(_) =
+            get_delegated_stake_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey())
+                .await
+        {
             error!(target: "server_log", "Cannot unstake, no delegate stake account is created for {}", user_pubkey.to_string());
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
@@ -2658,7 +2828,12 @@ async fn post_unstake(
 
         let staker_ata = get_associated_token_address(&user_pubkey, &ore_api::consts::MINT_ADDRESS);
 
-        let base_ix = ore_miner_delegation::instruction::undelegate_stake(user_pubkey, wallet.miner_wallet.pubkey(), staker_ata, query_params.amount);
+        let base_ix = ore_miner_delegation::instruction::undelegate_stake(
+            user_pubkey,
+            wallet.miner_wallet.pubkey(),
+            staker_ata,
+            query_params.amount,
+        );
         let mut accts = Vec::new();
         for account_index in ixs[0].accounts.clone() {
             accts.push(tx.key(0, account_index.into()));
@@ -2694,13 +2869,14 @@ async fn post_unstake(
 
             match result {
                 Ok(sig) => {
-                    let amount_dec = query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    let amount_dec =
+                        query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                     info!(target: "server_log", "Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
                     return Response::builder()
                         .status(StatusCode::OK)
                         .body("SUCCESS".to_string())
                         .unwrap();
-                },
+                }
                 Err(e) => {
                     error!(target: "server_log", "{} unstake transaction failed...", user_pubkey.to_string());
                     error!(target: "server_log", "Unstake Tx Error: {:?}", e);
@@ -3034,7 +3210,7 @@ fn process_message(
         Message::Close(c) => {
             if let Some(cf) = c {
                 info!(
-                    target: "server_log", 
+                    target: "server_log",
                     ">>> {} sent close with code {} and reason `{}`",
                     who, cf.code, cf.reason
                 );
@@ -3072,7 +3248,6 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
         let app_wallet = wallet.clone();
         if let Ok(ps_client) = ps_client {
             let ps_client = Arc::new(ps_client);
-            let app_proof = proof.clone();
             let account_pubkey = get_proof_pda(app_wallet.pubkey());
             let pubsub = ps_client
                 .account_subscribe(
@@ -3103,8 +3278,9 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
                             // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
                             //
                             {
-                                // let mut app_proof = app_proof.lock().await;
-                                // *app_proof = *new_proof;
+                                let mut app_proof = proof.lock().await;
+                                *app_proof = *new_proof;
+                                drop(app_proof);
                             }
                         }
                     }
@@ -3114,10 +3290,7 @@ async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<
     }
 }
 
-async fn pong_tracking_system(
-    app_pongs: Arc<RwLock<LastPong>>,
-    app_state: Arc<RwLock<AppState>>,
-) {
+async fn pong_tracking_system(app_pongs: Arc<RwLock<LastPong>>, app_state: Arc<RwLock<AppState>>) {
     loop {
         let reader = app_pongs.read().await;
         let pongs = reader.pongs.clone();
@@ -3189,7 +3362,12 @@ async fn client_message_handler_system(
                         let reader = app_state.read().await;
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
                             let msg = format!("Late submission. Please make sure your hash time is under 60 seconds.");
-                            let _ = app_client_socket.socket.lock().await.send(Message::Text(msg)).await;
+                            let _ = app_client_socket
+                                .socket
+                                .lock()
+                                .await
+                                .send(Message::Text(msg))
+                                .await;
                         } else {
                             error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                             return;
@@ -3257,14 +3435,14 @@ async fn client_message_handler_system(
                                 if let Some(old_sub) = subs.get(&pubkey) {
                                     if diff > old_sub.supplied_diff {
                                         let mut epoch_hashes = epoch_hashes.write().await;
-                                        epoch_hashes
-                                            .submissions
-                                            .insert(pubkey, InternalMessageSubmission {
+                                        epoch_hashes.submissions.insert(
+                                            pubkey,
+                                            InternalMessageSubmission {
                                                 miner_id,
                                                 supplied_nonce: nonce,
                                                 supplied_diff: diff,
                                                 hashpower,
-                                            }
+                                            },
                                         );
                                         if diff > epoch_hashes.best_hash.difficulty {
                                             info!(target: "server_log", "New best diff: {}", diff);
@@ -3278,14 +3456,14 @@ async fn client_message_handler_system(
                                     }
                                 } else {
                                     let mut epoch_hashes = epoch_hashes.write().await;
-                                    epoch_hashes
-                                        .submissions
-                                        .insert(pubkey, InternalMessageSubmission {
+                                    epoch_hashes.submissions.insert(
+                                        pubkey,
+                                        InternalMessageSubmission {
                                             miner_id,
                                             supplied_nonce: nonce,
                                             supplied_diff: diff,
                                             hashpower,
-                                        }
+                                        },
                                     );
                                     if diff > epoch_hashes.best_hash.difficulty {
                                         info!(target: "server_log", "New best diff: {}", diff);

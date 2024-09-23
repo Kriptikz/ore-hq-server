@@ -5,7 +5,10 @@ use diesel::{
 };
 use tracing::error;
 
-use crate::{app_database::AppDatabaseError, models, ChallengeWithDifficulty, Submission, SubmissionWithPubkey, Txn};
+use crate::{
+    app_database::AppDatabaseError, models, ChallengeWithDifficulty, Submission,
+    SubmissionWithPubkey, Txn,
+};
 
 pub struct AppRRDatabase {
     connection_pool: Pool,
@@ -84,7 +87,9 @@ impl AppRRDatabase {
         };
     }
 
-    pub async fn get_last_challenge_submissions(&self) -> Result<Vec<SubmissionWithPubkey>, AppDatabaseError> {
+    pub async fn get_last_challenge_submissions(
+        &self,
+    ) -> Result<Vec<SubmissionWithPubkey>, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
@@ -114,7 +119,10 @@ impl AppRRDatabase {
         };
     }
 
-    pub async fn get_miner_earnings(&self, pubkey: String) -> Result<Vec<Submission>, AppDatabaseError> {
+    pub async fn get_miner_earnings(
+        &self,
+        pubkey: String,
+    ) -> Result<Vec<Submission>, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
@@ -145,7 +153,10 @@ impl AppRRDatabase {
         };
     }
 
-    pub async fn get_miner_submissions(&self, pubkey: String) -> Result<Vec<Submission>, AppDatabaseError> {
+    pub async fn get_miner_submissions(
+        &self,
+        pubkey: String,
+    ) -> Result<Vec<Submission>, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
@@ -240,10 +251,11 @@ impl AppRRDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-
-                    diesel::sql_query("SELECT * FROM txns WHERE txn_type = ? ORDER BY id DESC LIMIT 1")
-                        .bind::<Text, _>("mine")
-                        .get_result::<Txn>(conn)
+                    diesel::sql_query(
+                        "SELECT * FROM txns WHERE txn_type = ? ORDER BY id DESC LIMIT 1",
+                    )
+                    .bind::<Text, _>("mine")
+                    .get_result::<Txn>(conn)
                 })
                 .await;
 
@@ -267,7 +279,10 @@ impl AppRRDatabase {
         };
     }
 
-    pub async fn get_last_claim_by_pubkey(&self, pubkey: String) -> Result<models::LastClaim, AppDatabaseError> {
+    pub async fn get_last_claim_by_pubkey(
+        &self,
+        pubkey: String,
+    ) -> Result<models::LastClaim, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {

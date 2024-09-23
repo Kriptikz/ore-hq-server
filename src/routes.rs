@@ -1,32 +1,31 @@
 use app_rr_database::AppRRDatabase;
 use axum::{
-    http::{Response, StatusCode}, response::IntoResponse, Extension, Json
+    http::{Response, StatusCode},
+    response::IntoResponse,
+    Extension, Json,
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use spl_associated_token_account::get_associated_token_address;
 use tracing::error;
 
-use crate::{app_rr_database, ore_utils::{get_ore_mint, get_proof}, ChallengeWithDifficulty, Config, Txn};
+use crate::{
+    app_rr_database,
+    ore_utils::{get_ore_mint, get_proof},
+    ChallengeWithDifficulty, Config, Txn,
+};
 use std::{str::FromStr, sync::Arc};
-
 
 pub async fn get_challenges(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
     Extension(app_config): Extension<Arc<Config>>,
 ) -> Result<Json<Vec<ChallengeWithDifficulty>>, String> {
     if app_config.stats_enabled {
-        let res = app_rr_database
-            .get_challenges()
-            .await;
+        let res = app_rr_database.get_challenges().await;
 
         match res {
-            Ok(challenges) => {
-                Ok(Json(challenges))
-            }
-            Err(_) => {
-                Err("Failed to get submissions for miner".to_string())
-            }
+            Ok(challenges) => Ok(Json(challenges)),
+            Err(_) => Err("Failed to get submissions for miner".to_string()),
         }
     } else {
         return Err("Stats not enabled for this server.".to_string());
@@ -38,23 +37,16 @@ pub async fn get_latest_mine_txn(
     Extension(app_config): Extension<Arc<Config>>,
 ) -> Result<Json<Txn>, String> {
     if app_config.stats_enabled {
-        let res = app_rr_database
-            .get_latest_mine_txn()
-            .await;
+        let res = app_rr_database.get_latest_mine_txn().await;
 
         match res {
-            Ok(txn) => {
-                Ok(Json(txn))
-            }
-            Err(_) => {
-                Err("Failed to get latest mine txn".to_string())
-            }
+            Ok(txn) => Ok(Json(txn)),
+            Err(_) => Err("Failed to get latest mine txn".to_string()),
         }
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }
 }
-
 
 pub async fn get_pool(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
@@ -63,18 +55,12 @@ pub async fn get_pool(
     if app_config.stats_enabled {
         let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
         let res = app_rr_database
-            .get_pool_by_authority_pubkey(
-                pubkey.to_string()
-            )
+            .get_pool_by_authority_pubkey(pubkey.to_string())
             .await;
 
         match res {
-            Ok(pool) => {
-                Ok(Json(pool))
-            }
-            Err(_) => {
-                Err("Failed to get pool data".to_string())
-            }
+            Ok(pool) => Ok(Json(pool)),
+            Err(_) => Err("Failed to get pool data".to_string()),
         }
     } else {
         return Err("Stats not enabled for this server.".to_string());
@@ -94,7 +80,7 @@ pub async fn get_pool_staked(
             return Err("Stats not enabled for this server.".to_string());
         };
 
-        return Ok(Json(proof.balance))
+        return Ok(Json(proof.balance));
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }
