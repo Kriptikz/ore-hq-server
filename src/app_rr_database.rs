@@ -1,8 +1,5 @@
 use deadpool_diesel::mysql::{Manager, Pool};
-use diesel::{
-    sql_types::Text,
-    MysqlConnection, RunQueryDsl,
-};
+use diesel::{sql_types::Text, MysqlConnection, RunQueryDsl};
 use tracing::error;
 
 use crate::{

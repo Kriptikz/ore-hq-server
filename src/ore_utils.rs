@@ -2,18 +2,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use drillx::Solution;
 use ore_api::{
-    consts::{
-        BUS_ADDRESSES, CONFIG_ADDRESS, MINT_ADDRESS, PROOF, TOKEN_DECIMALS,
-    },
+    consts::{BUS_ADDRESSES, CONFIG_ADDRESS, MINT_ADDRESS, PROOF, TOKEN_DECIMALS},
     state::{Config, Proof},
     ID as ORE_ID,
 };
 use ore_miner_delegation::{instruction, state::DelegatedStake, utils::AccountDeserialize};
 pub use ore_utils::AccountDeserialize as _;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{
-    account::ReadableAccount, instruction::Instruction, pubkey::Pubkey,
-};
+use solana_sdk::{account::ReadableAccount, instruction::Instruction, pubkey::Pubkey};
 use spl_associated_token_account::get_associated_token_address;
 
 pub const ORE_TOKEN_DECIMALS: u8 = TOKEN_DECIMALS;
