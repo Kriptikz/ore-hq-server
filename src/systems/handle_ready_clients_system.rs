@@ -47,7 +47,10 @@ pub async fn handle_ready_clients_system(
 
                 let cutoff = get_cutoff(latest_proof, 7);
                 let mut should_mine = true;
-                let cutoff = if cutoff <= 0 {
+
+                // only distribute challenge if 10 seconds or more is left
+                // or if there is no best_hash yet
+                let cutoff = if cutoff < 10 {
                     let solution = app_epoch_hashes.read().await.best_hash.solution;
                     if solution.is_some() {
                         should_mine = false;
