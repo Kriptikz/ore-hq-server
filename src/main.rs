@@ -3321,9 +3321,11 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
     loop {
         // send ping to all sockets
         let app_state = shared_state.read().await;
+        let socks = app_state.sockets.clone();
+        drop(app_state);
 
         let mut handles = Vec::new();
-        for (who, socket) in app_state.sockets.iter() {
+        for (who, socket) in socks.iter() {
             let who = who.clone();
             let socket = socket.clone();
             handles.push(tokio::spawn(async move {
@@ -3341,7 +3343,6 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 }
             }));
         }
-        drop(app_state);
 
         // remove any sockets where ping failed
         for handle in handles {
