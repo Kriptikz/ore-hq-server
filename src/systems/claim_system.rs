@@ -21,7 +21,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
         drop(reader);
 
         if let Some((user_pubkey, amount)) = claim {
-            info!("Processing claim");
+            info!(target: "server_log", "Processing claim");
             let ore_mint = get_ore_mint();
             let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
 
@@ -36,9 +36,9 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                 .await
             {
                 if let Some(_amount) = response.ui_amount {
-                    info!("miner has valid token account.");
+                    info!(target: "server_log", "miner has valid token account.");
                 } else {
-                    info!("will create token account for miner");
+                    info!(target: "server_log", "will create token account for miner");
                     ixs.push(
                         spl_associated_token_account::instruction::create_associated_token_account(
                             &wallet.pubkey(),
@@ -49,7 +49,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                     )
                 }
             } else {
-                info!("Adding create ata ix for miner claim");
+                info!(target: "server_log", "Adding create ata ix for miner claim");
                 is_creating_ata = true;
                 ixs.push(
                     spl_associated_token_account::instruction::create_associated_token_account(
@@ -89,7 +89,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                         signature = sig;
                         break;
                     } else {
-                        error!("Failed to send claim transaction. retrying in 2 seconds...");
+                        error!(target: "server_log", "Failed to send claim transaction. retrying in 2 seconds...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
                 }
@@ -117,7 +117,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                 match result {
                     Ok(sig) => {
                         let amount_dec = amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                        info!("Miner {} successfully claimed {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                        info!(target: "server_log", "Miner {} successfully claimed {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
 
                         // TODO: use transacions, or at least put them into one query
                         let miner = app_database
@@ -132,14 +132,14 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                             .decrease_miner_reward(miner.id, amount)
                             .await 
                         {
-                            error!("Failed to decrease miner rewards! Retrying...");
+                            error!(target: "server_log", "Failed to decrease miner rewards! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
                         while let Err(_) = app_database
                             .update_pool_claimed(wallet.pubkey().to_string(), amount)
                             .await
                         {
-                            error!("Failed to increase pool claimed amount! Retrying...");
+                            error!(target: "server_log", "Failed to increase pool claimed amount! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
 
@@ -149,7 +149,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                             priority_fee: prio_fee,
                         };
                         while let Err(_) = app_database.add_new_txn(itxn.clone()).await {
-                            error!("Failed to increase pool claimed amount! Retrying...");
+                            error!(target: "server_log", "Failed to increase pool claimed amount! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
 
@@ -159,7 +159,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                                 txn_id = ntxn.id;
                                 break;
                             } else {
-                                error!("Failed to get tx by sig! Retrying...");
+                                error!(target: "server_log", "Failed to get tx by sig! Retrying...");
                                 tokio::time::sleep(Duration::from_millis(2000)).await;
                             }
                         }
@@ -172,7 +172,7 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                             amount,
                         };
                         while let Err(_) = app_database.add_new_claim(iclaim).await {
-                            error!("Failed add new claim to db! Retrying...");
+                            error!(target: "server_log", "Failed add new claim to db! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
 
@@ -180,15 +180,15 @@ pub async fn claim_system(claims_queue: Arc<ClaimsQueue>, rpc_client: Arc<RpcCli
                         writer.remove(&user_pubkey);
                         drop(writer);
 
-                        info!("Claim successfully processed!");
+                        info!(target: "server_log", "Claim successfully processed!");
 
                     }
                     Err(e) => {
-                        error!("ERROR: {:?}", e);
+                        error!(target: "server_log", "ERROR: {:?}", e);
                     }
                 }
             } else {
-                error!("Failed to confirm transaction, will retry on next iteration.");
+                error!(target: "server_log", "Failed to confirm transaction, will retry on next iteration.");
             }
 
         }
