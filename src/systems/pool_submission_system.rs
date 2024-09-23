@@ -286,7 +286,7 @@ pub async fn pool_submission_system(
                                 let app_epoch_hashes = app_app_epoch_hashes;
                                 let app_submission_window = app_app_submission_window;
                                 let app_client_nonce_ranges = app_app_client_nonce_ranges;
-                                tokio::time::sleep(Duration::from_millis(2000)).await;
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                                 loop {
                                     if let Ok(_) = stop_reciever.try_recv() {
                                         // Transaction has succeeded or expired
