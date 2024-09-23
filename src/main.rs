@@ -3137,7 +3137,7 @@ async fn pong_tracking_system(
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(15)).await;
+        tokio::time::sleep(Duration::from_secs(45)).await;
     }
 }
 
