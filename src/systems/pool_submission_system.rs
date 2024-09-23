@@ -246,7 +246,8 @@ pub async fn pool_submission_system(
                                     Ok(sig) => {
                                         break Ok(sig);
                                     }
-                                    Err(_e) => {
+                                    Err(e) => {
+                                        tracing::error!(target: "server_log", "Failed to send mine tx error: {}", e);
                                         tracing::error!(target: "server_log", "Attempt {} Failed to send mine transaction. retrying in 1 seconds...", rpc_send_attempts);
                                         rpc_send_attempts += 1;
 
