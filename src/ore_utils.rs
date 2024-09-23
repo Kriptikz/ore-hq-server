@@ -3,18 +3,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use drillx::Solution;
 use ore_api::{
     consts::{
-        BUS_ADDRESSES, CONFIG_ADDRESS, EPOCH_DURATION, MINT_ADDRESS, PROOF, TOKEN_DECIMALS,
-        TREASURY_ADDRESS,
+        BUS_ADDRESSES, CONFIG_ADDRESS, MINT_ADDRESS, PROOF, TOKEN_DECIMALS,
     },
-    state::{Config, Proof, Treasury},
+    state::{Config, Proof},
     ID as ORE_ID,
 };
 use ore_miner_delegation::{instruction, state::DelegatedStake, utils::AccountDeserialize};
 pub use ore_utils::AccountDeserialize as _;
-use serde::{ser::SerializeStruct, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
-    account::ReadableAccount, clock::Clock, instruction::Instruction, pubkey::Pubkey, sysvar,
+    account::ReadableAccount, instruction::Instruction, pubkey::Pubkey,
 };
 use spl_associated_token_account::get_associated_token_address;
 
@@ -48,14 +46,6 @@ pub fn get_stake_ix(signer: Pubkey, sender: Pubkey, stake_amount: u64) -> Instru
 
 pub fn get_ore_mint() -> Pubkey {
     MINT_ADDRESS
-}
-
-pub fn get_ore_epoch_duration() -> i64 {
-    EPOCH_DURATION
-}
-
-pub fn get_ore_decimals() -> u8 {
-    TOKEN_DECIMALS
 }
 
 pub fn get_managed_proof_token_ata(miner: Pubkey) -> Pubkey {
@@ -256,22 +246,6 @@ pub async fn get_proof(client: &RpcClient, authority: Pubkey) -> Result<Proof, S
 
 pub fn proof_pubkey(authority: Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[PROOF, authority.as_ref()], &ORE_ID).0
-}
-
-pub fn treasury_tokens_pubkey() -> Pubkey {
-    get_associated_token_address(&TREASURY_ADDRESS, &MINT_ADDRESS)
-}
-
-pub async fn get_clock_account(client: &RpcClient) -> Result<Clock, ()> {
-    if let Ok(data) = client.get_account_data(&sysvar::clock::ID).await {
-        if let Ok(data) = bincode::deserialize::<Clock>(&data) {
-            Ok(data)
-        } else {
-            Err(())
-        }
-    } else {
-        Err(())
-    }
 }
 
 pub fn get_cutoff(proof: Proof, buffer_time: u64) -> i64 {

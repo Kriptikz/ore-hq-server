@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
-    native_token::lamports_to_sol,
     signature::{Keypair, Signature},
     signer::Signer,
     transaction::Transaction,

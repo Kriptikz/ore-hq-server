@@ -1301,16 +1301,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             Arc::new(mine_success_sender.clone());
                                         let app_app_proof = app_proof.clone();
                                         let app_app_config = app_config.clone();
-                                        let app_app_client_nonce_ranges =
-                                            app_client_nonce_ranges.clone();
                                         tokio::spawn(async move {
                                             let rpc_client = app_rpc_client;
                                             let app_database = app_app_database;
                                             let mine_success_sender = app_mine_success_sender;
                                             let app_proof = app_app_proof;
                                             let app_config = app_app_config;
-                                            let app_client_nonce_ranges =
-                                                app_app_client_nonce_ranges.clone();
                                             loop {
                                                 if let Ok(txn_result) = rpc_client
                                                     .get_transaction_with_config(

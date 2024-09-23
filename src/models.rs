@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
-use diesel::sql_types::{BigInt, Binary, Integer, Nullable, Text, Timestamp, TinyInt, Unsigned};
-use diesel::{mysql::MysqlType, prelude::*};
+use diesel::sql_types::{BigInt, Integer, Nullable, Text, Timestamp, TinyInt, Unsigned};
+use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
