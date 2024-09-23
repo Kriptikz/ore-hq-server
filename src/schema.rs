@@ -34,6 +34,7 @@ diesel::table! {
         amount -> Unsigned<Bigint>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        created_at_day -> Nullable<Date>,
     }
 }
 

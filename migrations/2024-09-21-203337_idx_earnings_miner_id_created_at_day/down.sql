@@ -1,0 +1,1 @@
+ALTER TABLE earnings DROP INDEX idx_earnings_miner_id_created_at_day
