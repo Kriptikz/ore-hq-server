@@ -665,6 +665,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_nonce = nonce_ext.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     let app_ready_clients = ready_clients.clone();
+    let app_submission_window = submission_window.clone();
     tokio::spawn(async move {
         handle_ready_clients_system(
             app_shared_state,
@@ -673,6 +674,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_ready_clients,
             app_nonce,
             app_client_nonce_ranges,
+            app_submission_window,
         )
         .await;
     });

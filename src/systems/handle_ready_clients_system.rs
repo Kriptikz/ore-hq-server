@@ -13,7 +13,7 @@ use ore_api::state::Proof;
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{message::ServerMessageStartMining, ore_utils::get_cutoff, AppState, EpochHashes};
+use crate::{message::ServerMessageStartMining, ore_utils::get_cutoff, AppState, EpochHashes, SubmissionWindow};
 
 pub async fn handle_ready_clients_system(
     app_state: Arc<RwLock<AppState>>,
@@ -22,6 +22,7 @@ pub async fn handle_ready_clients_system(
     ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
     app_nonce: Arc<Mutex<u64>>,
     app_client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Vec<Range<u64>>>>>,
+    app_submission_window: Arc<RwLock<SubmissionWindow>>,
 ) {
     tracing::info!(target: "server_log", "handle ready clients system started!");
     loop {
@@ -40,7 +41,6 @@ pub async fn handle_ready_clients_system(
             };
 
             if clients.len() > 0 {
-                tracing::info!(target: "server_log", "Handling {} ready clients.", clients.len());
                 let lock = app_proof.lock().await;
                 let latest_proof = lock.clone();
                 drop(lock);
@@ -57,7 +57,12 @@ pub async fn handle_ready_clients_system(
                     cutoff
                 };
 
-                if should_mine {
+                let reader = app_submission_window.read().await;
+                let is_window_closed = reader.closed;
+                drop(reader);
+
+                if should_mine && !is_window_closed {
+                    tracing::info!(target: "server_log", "Handling {} ready clients.", clients.len());
                     let lock = app_proof.lock().await;
                     let latest_proof = lock.clone();
                     drop(lock);
