@@ -1,0 +1,139 @@
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    ops::Range,
+    sync::Arc,
+    time::Duration,
+};
+
+use axum::extract::ws::Message;
+use base64::{prelude::BASE64_STANDARD, Engine};
+use futures::SinkExt;
+use ore_api::state::Proof;
+use solana_sdk::pubkey::Pubkey;
+use tokio::sync::{Mutex, RwLock};
+
+use crate::{message::ServerMessageStartMining, ore_utils::get_cutoff, AppState, EpochHashes};
+
+pub async fn handle_ready_clients_system(
+    app_state: Arc<RwLock<AppState>>,
+    app_proof: Arc<Mutex<Proof>>,
+    app_epoch_hashes: Arc<RwLock<EpochHashes>>,
+    ready_clients: Arc<Mutex<HashSet<SocketAddr>>>,
+    app_nonce: Arc<Mutex<u64>>,
+    app_client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Vec<Range<u64>>>>>,
+) {
+    tracing::info!(target: "server_log", "handle ready clients system started!");
+    loop {
+        let reader = app_state.read().await;
+        let paused = reader.paused.clone();
+        drop(reader);
+
+        if !paused {
+            let mut clients = Vec::new();
+            {
+                let ready_clients_lock = ready_clients.lock().await;
+                for ready_client in ready_clients_lock.iter() {
+                    clients.push(ready_client.clone());
+                }
+                drop(ready_clients_lock);
+            };
+
+            if clients.len() > 0 {
+                tracing::info!(target: "server_log", "Handling {} ready clients.", clients.len());
+                let lock = app_proof.lock().await;
+                let latest_proof = lock.clone();
+                drop(lock);
+
+                let cutoff = get_cutoff(latest_proof, 7);
+                let mut should_mine = true;
+                let cutoff = if cutoff <= 0 {
+                    let solution = app_epoch_hashes.read().await.best_hash.solution;
+                    if solution.is_some() {
+                        should_mine = false;
+                    }
+                    0
+                } else {
+                    cutoff
+                };
+
+                if should_mine {
+                    let lock = app_proof.lock().await;
+                    let latest_proof = lock.clone();
+                    drop(lock);
+                    let challenge = latest_proof.challenge;
+
+                    tracing::info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
+                    tracing::info!(target: "submission_log", "With cutoff: {}", cutoff);
+                    for client in clients {
+                        let nonce_range = {
+                            let mut nonce = app_nonce.lock().await;
+                            let start = *nonce;
+                            *nonce += 4_000_000;
+                            drop(nonce);
+                            // max hashes possible in 60s for a single client
+                            //
+                            let nonce_end = start + 3_999_999;
+                            let end = nonce_end;
+                            start..end
+                        };
+
+                        let start_mining_message = ServerMessageStartMining::new(
+                            challenge,
+                            cutoff,
+                            nonce_range.start,
+                            nonce_range.end,
+                        );
+
+                        let app_client_nonce_ranges = app_client_nonce_ranges.clone();
+                        let shared_state = app_state.read().await;
+                        let sockets = shared_state.sockets.clone();
+                        drop(shared_state);
+                        if let Some(sender) = sockets.get(&client) {
+                            let sender = sender.clone();
+                            let ready_clients = ready_clients.clone();
+                            tokio::spawn(async move {
+                                let _ = sender
+                                    .socket
+                                    .lock()
+                                    .await
+                                    .send(Message::Binary(start_mining_message.to_message_binary()))
+                                    .await;
+                                let _ = ready_clients.lock().await.remove(&client);
+                                let reader = app_client_nonce_ranges.read().await;
+                                let current_nonce_ranges =
+                                    if let Some(val) = reader.get(&sender.pubkey) {
+                                        Some(val.clone())
+                                    } else {
+                                        None
+                                    };
+                                drop(reader);
+
+                                if let Some(nonce_ranges) = current_nonce_ranges {
+                                    let mut new_nonce_ranges = nonce_ranges.to_vec();
+                                    new_nonce_ranges.push(nonce_range);
+
+                                    app_client_nonce_ranges
+                                        .write()
+                                        .await
+                                        .insert(sender.pubkey, new_nonce_ranges);
+                                } else {
+                                    let new_nonce_ranges = vec![nonce_range];
+                                    app_client_nonce_ranges
+                                        .write()
+                                        .await
+                                        .insert(sender.pubkey, new_nonce_ranges);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        } else {
+            tracing::info!(target: "server_log", "Mining is paused");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+}
