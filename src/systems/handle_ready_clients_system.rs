@@ -74,32 +74,30 @@ pub async fn handle_ready_clients_system(
                     tracing::info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
                     tracing::info!(target: "submission_log", "With cutoff: {}", cutoff);
                     for client in clients {
-                        let nonce_range = {
-                            let mut nonce = app_nonce.lock().await;
-                            let start = *nonce;
-                            *nonce += 4_000_000;
-                            drop(nonce);
-                            // max hashes possible in 60s for a single client
-                            //
-                            let nonce_end = start + 3_999_999;
-                            let end = nonce_end;
-                            start..end
-                        };
-
-                        let start_mining_message = ServerMessageStartMining::new(
-                            challenge,
-                            cutoff,
-                            nonce_range.start,
-                            nonce_range.end,
-                        );
-
                         let app_client_nonce_ranges = app_client_nonce_ranges.clone();
                         let shared_state = app_state.read().await;
                         let sockets = shared_state.sockets.clone();
                         drop(shared_state);
                         if let Some(sender) = sockets.get(&client) {
+                            let nonce_range = {
+                                let mut nonce = app_nonce.lock().await;
+                                let start = *nonce;
+                                *nonce += 4_000_000;
+                                drop(nonce);
+                                // max hashes possible in 60s for a single client
+                                //
+                                let nonce_end = start + 3_999_999;
+                                let end = nonce_end;
+                                start..end
+                            };
+
+                            let start_mining_message = ServerMessageStartMining::new(
+                                challenge,
+                                cutoff,
+                                nonce_range.start,
+                                nonce_range.end,
+                            );
                             let sender = sender.clone();
-                            let ready_clients = ready_clients.clone();
                             tokio::spawn(async move {
                                 let _ = sender
                                     .socket
@@ -107,7 +105,6 @@ pub async fn handle_ready_clients_system(
                                     .await
                                     .send(Message::Binary(start_mining_message.to_message_binary()))
                                     .await;
-                                let _ = ready_clients.lock().await.remove(&client);
                                 let reader = app_client_nonce_ranges.read().await;
                                 let current_nonce_ranges =
                                     if let Some(val) = reader.get(&sender.pubkey) {
@@ -134,6 +131,8 @@ pub async fn handle_ready_clients_system(
                                 }
                             });
                         }
+                        // remove ready client from list
+                        let _ = ready_clients.lock().await.remove(&client);
                     }
                 }
             }
