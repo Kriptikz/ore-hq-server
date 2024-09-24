@@ -39,7 +39,6 @@ pub async fn client_message_handler_system(
             ClientMessage::Ready(addr) => {
                 let ready_clients = ready_clients.clone();
                 tokio::spawn(async move {
-                    tracing::info!(target: "server_log", "Client readied up");
                     let mut ready_clients = ready_clients.lock().await;
                     ready_clients.insert(addr);
                 });
