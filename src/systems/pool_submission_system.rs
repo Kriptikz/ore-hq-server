@@ -358,7 +358,7 @@ pub async fn pool_submission_system(
                                                     info!(target: "server_log", "Adding new challenge to db");
                                                     let new_challenge = InsertChallenge {
                                                         pool_id: app_config.pool_id,
-                                                        challenge: latest_proof.challenge.to_vec(),
+                                                        challenge: p.challenge.to_vec(),
                                                         rewards_earned: None,
                                                     };
 
