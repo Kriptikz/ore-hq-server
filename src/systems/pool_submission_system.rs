@@ -277,6 +277,7 @@ pub async fn pool_submission_system(
                             let app_app_epoch_hashes = app_epoch_hashes.clone();
                             let app_app_submission_window = app_submission_window.clone();
                             let app_app_client_nonce_ranges = app_client_nonce_ranges.clone();
+                            let app_app_last_challenge = app_last_challenge.clone();
                             tokio::spawn(async move {
                                 let mut stop_reciever = tx_message_receiver;
                                 let app_nonce = app_app_nonce;
@@ -288,6 +289,7 @@ pub async fn pool_submission_system(
                                 let app_epoch_hashes = app_app_epoch_hashes;
                                 let app_submission_window = app_app_submission_window;
                                 let app_client_nonce_ranges = app_app_client_nonce_ranges;
+                                let app_last_challenge = app_app_last_challenge;
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                                 loop {
                                     if let Ok(_) = stop_reciever.try_recv() {
