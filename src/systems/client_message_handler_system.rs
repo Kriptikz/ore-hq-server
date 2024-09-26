@@ -156,8 +156,6 @@ pub async fn client_message_handler_system(
                                             epoch_hashes.best_hash.solution = Some(solution);
                                         }
                                         drop(epoch_hashes);
-                                    } else {
-                                        tracing::info!(target: "server_log", "Miner submitted lower diff than a previous submission, discarding lower diff");
                                     }
                                 } else {
                                     let mut epoch_hashes = epoch_hashes.write().await;
