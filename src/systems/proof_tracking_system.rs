@@ -11,7 +11,12 @@ use tokio::sync::Mutex;
 
 use crate::ore_utils::get_proof_pda;
 
-pub async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: Arc<Mutex<Proof>>) {
+pub async fn proof_tracking_system(
+    ws_url: String,
+    wallet: Arc<Keypair>,
+    proof: Arc<Mutex<Proof>>,
+    app_last_challenge: Arc<Mutex<[u8; 32]>>,
+) {
     loop {
         tracing::info!(target: "server_log", "Establishing rpc websocket connection...");
         let mut ps_client = PubsubClient::new(&ws_url).await;
@@ -55,9 +60,15 @@ pub async fn proof_tracking_system(ws_url: String, wallet: Arc<Keypair>, proof: 
                         if let Ok(new_proof) = Proof::try_from_bytes(&data_bytes) {
                             tracing::info!(target: "server_log", "Got new proof data");
                             tracing::info!(target: "server_log", "Challenge: {}", BASE64_STANDARD.encode(new_proof.challenge));
-                            // let _ = sender.send(AccountUpdatesData::ProofData(*proof));
-                            //
-                            {
+
+                            let lock = app_last_challenge.lock().await;
+                            let last_challenge = lock.clone();
+                            drop(lock);
+
+
+                            if last_challenge.eq(&new_proof.challenge) {
+                                tracing::error!(target: "server_log", "Websocket tried to update proof with old challenge!");
+                            } else {
                                 let mut app_proof = proof.lock().await;
                                 *app_proof = *new_proof;
                                 drop(app_proof);

@@ -56,6 +56,7 @@ pub async fn pool_submission_system(
     mine_success_sender: UnboundedSender<MessageInternalMineSuccess>,
     app_submission_window: Arc<RwLock<SubmissionWindow>>,
     app_client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Vec<Range<u64>>>>>,
+    app_last_challenge: Arc<Mutex<[u8; 32]>>,
 ) {
     loop {
         let lock = app_proof.lock().await;
@@ -322,6 +323,10 @@ pub async fn pool_submission_system(
                                                     *lock = p;
                                                     drop(lock);
 
+                                                    let mut lock = app_last_challenge.lock().await;
+                                                    *lock = old_proof.challenge;
+                                                    drop(lock);
+
                                                     // Add new db challenge, reset epoch_hashes,
                                                     // and open the submission window
 
@@ -389,6 +394,9 @@ pub async fn pool_submission_system(
                                                 }
                                             }
                                         } else {
+                                            let mut lock = app_last_challenge.lock().await;
+                                            *lock = old_proof.challenge;
+                                            drop(lock);
                                             info!(target: "server_log", "Adding new challenge to db");
                                             let new_challenge = InsertChallenge {
                                                 pool_id: app_config.pool_id,

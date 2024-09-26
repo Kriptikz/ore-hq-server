@@ -605,6 +605,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rpc_client = Arc::new(rpc_client);
     let jito_client = Arc::new(jito_client);
 
+    let last_challenge = Arc::new(Mutex::new([0u8; 32]));
+
     let app_rpc_client = rpc_client.clone();
     let app_wallet = wallet_extension.clone();
     let app_claims_queue = claims_queue.clone();
@@ -628,9 +630,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_wallet = wallet_extension.clone();
     let app_proof = proof_ext.clone();
+    let app_last_challenge = last_challenge.clone();
     // Establish webocket connection for tracking pool proof changes.
     tokio::spawn(async move {
-        proof_tracking_system(rpc_ws_url, app_wallet.miner_wallet.clone(), app_proof).await;
+        proof_tracking_system(
+            rpc_ws_url,
+            app_wallet.miner_wallet.clone(),
+            app_proof,
+            app_last_challenge
+        ).await;
     });
 
     let (client_message_sender, client_message_receiver) =
@@ -698,6 +706,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_all_clients_sender = all_clients_sender.clone();
     let app_submission_window = submission_window.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
+    let app_last_challenge = last_challenge.clone();
     tokio::spawn(async move {
         pool_submission_system(
             app_proof,
@@ -714,6 +723,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mine_success_sender,
             app_submission_window,
             app_client_nonce_ranges,
+            app_last_challenge,
         )
         .await;
     });
