@@ -216,7 +216,7 @@ struct Args {
     migrate: bool,
 }
 
-#[tokio::main(worker_threads = 8)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     let args = Args::parse();
