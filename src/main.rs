@@ -1105,6 +1105,37 @@ async fn get_signup_fee(
         .unwrap();
 }
 
+async fn get_sol_balance(
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    query_params: Query<PubkeyParam>,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let res = rpc_client.get_balance(&user_pubkey).await;
+
+        match res {
+            Ok(balance) => {
+                let response = format!("{}", lamports_to_sol(balance));
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .body(response)
+                    .unwrap();
+            }
+            Err(_) => {
+                error!(target: "server_log", "get_sol_balance: failed to get sol balance for {}", user_pubkey.to_string());
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to get sol balance".to_string())
+                    .unwrap();
+            }
+        }
+    } else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid public key".to_string())
+            .unwrap();
+    }
+}
+
 #[derive(Deserialize)]
 struct PubkeyParam {
     pubkey: String,
