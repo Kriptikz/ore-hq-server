@@ -767,7 +767,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/pool/fee_payer/pubkey", get(get_pool_fee_payer_pubkey))
         .route("/signup", post(post_signup))
-        .route("/signup/fee", get(get_signup_fee))
+        .route("/signup-fee", get(get_signup_fee))
         .route("/sol-balance", get(get_sol_balance))
         .route("/claim", post(post_claim))
         .route("/stake", post(post_stake))
