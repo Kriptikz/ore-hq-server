@@ -51,7 +51,7 @@ use solana_client::{
     rpc_config::RpcSendTransactionConfig,
 };
 use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction
+    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, native_token::{lamports_to_sol, sol_to_lamports, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction
 };
 use solana_transaction_status::TransactionConfirmationStatus;
 use spl_associated_token_account::{
@@ -166,6 +166,7 @@ pub struct Config {
     whitelist: Option<HashSet<Pubkey>>,
     pool_id: i32,
     stats_enabled: bool,
+    signup_fee: f64,
 }
 
 mod ore_utils;
@@ -199,12 +200,12 @@ struct Args {
     whitelist: Option<String>,
     #[arg(
         long,
-        value_name = "signup cost",
+        value_name = "signup fee",
         help = "Amount of sol users must send to sign up for the pool",
-        default_value = "0",
+        default_value = "0.001",
         global = true
     )]
-    signup_cost: u64,
+    signup_fee: f64,
     #[arg(long, short, action, help = "Enable stats endpoints")]
     stats: bool,
     #[arg(
@@ -566,6 +567,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         whitelist,
         pool_id: db_pool.id,
         stats_enabled: args.stats,
+        signup_fee: args.signup_fee,
     });
 
     let epoch_hashes = Arc::new(RwLock::new(EpochHashes {
@@ -765,6 +767,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pool/authority/pubkey", get(get_pool_authority_pubkey))
         .route("/pool/fee_payer/pubkey", get(get_pool_fee_payer_pubkey))
         .route("/signup", post(post_signup))
+        .route("/signup/fee", get(get_signup_fee))
+        .route("/sol-balance", get(get_sol_balance))
         .route("/claim", post(post_claim))
         .route("/stake", post(post_stake))
         .route("/unstake", post(post_unstake))
@@ -1001,8 +1005,10 @@ async fn post_signup(
                 .unwrap();
         }
 
+
+        let signup_fee = sol_to_lamports(app_config.signup_fee);
         let base_ix =
-            system_instruction::transfer(&user_pubkey, &wallet.miner_wallet.pubkey(), 1_000_000);
+            system_instruction::transfer(&user_pubkey, &wallet.miner_wallet.pubkey(), signup_fee);
         let mut accts = Vec::new();
         for account_index in ixs[0].accounts.clone() {
             accts.push(tx.key(0, account_index.into()));
@@ -1088,6 +1094,15 @@ async fn post_signup(
             .body("Invalid Pubkey".to_string())
             .unwrap();
     }
+}
+
+async fn get_signup_fee(
+    Extension(app_config): Extension<Arc<Config>>,
+) -> impl IntoResponse {
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(app_config.signup_fee.to_string())
+        .unwrap();
 }
 
 #[derive(Deserialize)]
