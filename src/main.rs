@@ -105,8 +105,14 @@ struct AppState {
     paused: bool,
 }
 
+#[derive(Clone, Copy)]
+struct ClaimsQueueItem {
+    receiver_pubkey: Pubkey,
+    amount: u64
+}
+
 struct ClaimsQueue {
-    queue: RwLock<HashMap<Pubkey, u64>>,
+    queue: RwLock<HashMap<Pubkey, ClaimsQueueItem>>,
 }
 
 struct SubmissionWindow {
@@ -1385,12 +1391,12 @@ async fn post_claim(
     Extension(app_database): Extension<Arc<AppDatabase>>,
     Extension(claims_queue): Extension<Arc<ClaimsQueue>>,
 ) -> impl IntoResponse {
-    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+    if let Ok(miner_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let reader = claims_queue.queue.read().await;
         let queue = reader.clone();
         drop(reader);
 
-        if queue.contains_key(&user_pubkey) {
+        if queue.contains_key(&miner_pubkey) {
             return Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .body("QUEUED".to_string())
@@ -1408,7 +1414,7 @@ async fn post_claim(
         }
 
         if let Ok(miner_rewards) = app_database
-            .get_miner_rewards(user_pubkey.to_string())
+            .get_miner_rewards(miner_pubkey.to_string())
             .await
         {
             if amount > miner_rewards.balance {
@@ -1434,7 +1440,10 @@ async fn post_claim(
             }
 
             let mut writer = claims_queue.queue.write().await;
-            writer.insert(user_pubkey, amount);
+            writer.insert(miner_pubkey, ClaimsQueueItem{
+                receiver_pubkey: miner_pubkey,
+                amount,
+            });
             drop(writer);
             return Response::builder()
                 .status(StatusCode::OK)

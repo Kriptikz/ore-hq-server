@@ -33,10 +33,11 @@ pub async fn claim_system(
         }
         drop(reader);
 
-        if let Some((user_pubkey, amount)) = claim {
+        if let Some((miner_pubkey, claim_queue_item)) = claim {
             info!(target: "server_log", "Processing claim");
             let ore_mint = get_ore_mint();
-            let miner_token_account = get_associated_token_address(&user_pubkey, &ore_mint);
+            let receiver_pubkey = claim_queue_item.receiver_pubkey;
+            let receiver_token_account = get_associated_token_address(&receiver_pubkey, &ore_mint);
 
             let prio_fee: u32 = 20_000;
 
@@ -45,7 +46,7 @@ pub async fn claim_system(
             let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
             ixs.push(prio_fee_ix);
             if let Ok(response) = rpc_client
-                .get_token_account_balance(&miner_token_account)
+                .get_token_account_balance(&receiver_token_account)
                 .await
             {
                 if let Some(_amount) = response.ui_amount {
@@ -55,7 +56,7 @@ pub async fn claim_system(
                     ixs.push(
                         spl_associated_token_account::instruction::create_associated_token_account(
                             &wallet.pubkey(),
-                            &user_pubkey,
+                            &receiver_pubkey,
                             &ore_api::consts::MINT_ADDRESS,
                             &spl_token::id(),
                         ),
@@ -67,12 +68,14 @@ pub async fn claim_system(
                 ixs.push(
                     spl_associated_token_account::instruction::create_associated_token_account(
                         &wallet.pubkey(),
-                        &user_pubkey,
+                        &receiver_pubkey,
                         &ore_api::consts::MINT_ADDRESS,
                         &spl_token::id(),
                     ),
                 )
             }
+
+            let amount = claim_queue_item.amount;
 
             let mut claim_amount = amount;
             // 0.00400000000
@@ -80,7 +83,7 @@ pub async fn claim_system(
                 claim_amount = amount - 400_000_000
             }
             let ix =
-                crate::ore_utils::get_claim_ix(wallet.pubkey(), miner_token_account, claim_amount);
+                crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
             ixs.push(ix);
 
             if let Ok((hash, _slot)) = rpc_client
@@ -136,11 +139,11 @@ pub async fn claim_system(
                 match result {
                     Ok(sig) => {
                         let amount_dec = amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                        info!(target: "server_log", "Miner {} successfully claimed {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                        info!(target: "server_log", "Miner {} successfully claimed {}.\nSig: {}", miner_pubkey.to_string(), amount_dec, sig.to_string());
 
                         // TODO: use transacions, or at least put them into one query
                         let miner = app_database
-                            .get_miner_by_pubkey_str(user_pubkey.to_string())
+                            .get_miner_by_pubkey_str(miner_pubkey.to_string())
                             .await
                             .unwrap();
                         let db_pool = app_database
@@ -194,7 +197,7 @@ pub async fn claim_system(
                         }
 
                         let mut writer = claims_queue.queue.write().await;
-                        writer.remove(&user_pubkey);
+                        writer.remove(&miner_pubkey);
                         drop(writer);
 
                         info!(target: "server_log", "Claim successfully processed!");
