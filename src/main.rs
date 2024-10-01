@@ -1489,7 +1489,7 @@ async fn post_claim_v2(
         .as_secs();
 
     // Signed authentication message is only valid for 30 seconds
-    if (now - query_params.timestamp) >= 30 {
+    if (now - msg_timestamp) >= 30 {
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old.".to_string()));
     }
     let receiver_pubkey = match Pubkey::from_str(&query_params.receiver_pubkey) {
