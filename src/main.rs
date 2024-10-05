@@ -2445,7 +2445,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 {
                     return None;
                 } else {
-                    return Some(who.clone());
+                    return Some((who.clone(), socket.pubkey.clone()));
                 }
             }));
         }
@@ -2453,7 +2453,8 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
         // remove any sockets where ping failed
         for handle in handles {
             match handle.await {
-                Ok(Some(who)) => {
+                Ok(Some((who, pubkey))) => {
+                    error!(target: "server_log", "Got error sending ping to client: {} on pk: {}.", who, pubkey);
                     let mut app_state = shared_state.write().await;
                     app_state.sockets.remove(&who);
                 }
