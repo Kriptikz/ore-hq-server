@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bytemuck::{Pod, Zeroable};
 use drillx::Solution;
 use ore_api::{
     consts::{BUS_ADDRESSES, CONFIG_ADDRESS, MINT_ADDRESS, PROOF, TOKEN_DECIMALS},
@@ -7,12 +8,26 @@ use ore_api::{
     ID as ORE_ID,
 };
 use ore_miner_delegation::{instruction, state::DelegatedStake, utils::AccountDeserialize};
+use ore_utils::event;
 pub use ore_utils::AccountDeserialize as _;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, instruction::Instruction, pubkey::Pubkey};
 use spl_associated_token_account::get_associated_token_address;
 
 pub const ORE_TOKEN_DECIMALS: u8 = TOKEN_DECIMALS;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub struct MineEventWithBoosts {
+    pub difficulty: u64,
+    pub reward: u64,
+    pub timing: i64,
+    pub boost_1: u64,
+    pub boost_2: u64,
+    pub boost_3: u64,
+}
+
+event!(MineEventWithBoosts);
 
 pub fn get_auth_ix(signer: Pubkey) -> Instruction {
     let proof = get_proof_pda(signer);

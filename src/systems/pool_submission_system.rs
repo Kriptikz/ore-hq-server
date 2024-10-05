@@ -34,12 +34,13 @@ use tracing::info;
 use crate::{
     app_database::AppDatabase,
     ore_utils::{
-        get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses,
-        get_reset_ix, ORE_TOKEN_DECIMALS,
+        get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, ORE_TOKEN_DECIMALS
     },
     Config, EpochHashes, InsertChallenge, InsertTxn, MessageInternalAllClients,
     MessageInternalMineSuccess, SubmissionWindow, WalletExtension,
 };
+
+
 
 pub async fn pool_submission_system(
     app_proof: Arc<Mutex<Proof>>,
@@ -645,8 +646,90 @@ pub async fn pool_submission_system(
                                                             );
                                                             tokio::time::sleep(Duration::from_millis(200)).await;
                                                         } else {
-                                                            tracing::error!(target: "server_log", "Failed get MineEvent data from transaction... wtf...");
-                                                            break;
+                                                            if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEventWithBoosts>(&bytes) {
+                                                                info!(target: "server_log", "MineEvent: {:?}", mine_event);
+                                                                info!(target: "submission_log", "MineEvent: {:?}", mine_event);
+                                                                info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                                info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                                let rewards = mine_event.reward;
+                                                                // handle sending mine success message
+                                                                let mut total_hashpower: u64 = 0;
+                                                                for submission in submissions.iter() {
+                                                                    total_hashpower += submission.1.hashpower
+                                                                }
+                                                                let challenge;
+                                                                loop {
+                                                                    if let Ok(c) = app_database
+                                                                        .get_challenge_by_challenge(
+                                                                            old_proof.challenge.to_vec(),
+                                                                        )
+                                                                        .await
+                                                                    {
+                                                                        challenge = c;
+                                                                        break;
+                                                                    } else {
+                                                                        tracing::error!(target: "server_log", 
+                                                                            "Failed to get challenge by challenge! Inserting if necessary..."
+                                                                        );
+                                                                        let new_challenge = InsertChallenge {
+                                                                            pool_id: app_config.pool_id,
+                                                                            challenge: old_proof.challenge.to_vec(),
+                                                                            rewards_earned: None,
+                                                                        };
+                                                                        while let Err(_) = app_database
+                                                                            .add_new_challenge(new_challenge.clone())
+                                                                            .await
+                                                                        {
+                                                                            tracing::error!(target: "server_log", "Failed to add new challenge to db.");
+                                                                            info!(target: "server_log", "Verifying challenge does not already exist.");
+                                                                            if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
+                                                                                info!(target: "server_log", "Challenge already exists, continuing");
+                                                                                break;
+                                                                            }
+
+                                                                            tokio::time::sleep(Duration::from_millis(1000))
+                                                                                .await;
+                                                                        }
+                                                                        info!(target: "server_log", "New challenge successfully added to db");
+                                                                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                                    }
+                                                                }
+
+                                                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                                let latest_proof = { app_proof.lock().await.clone() };
+                                                                let balance = (latest_proof.balance as f64)
+                                                                    / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+
+
+                                                                let multiplier = if let Some(config) = loaded_config {
+                                                                    if config.top_balance > 0 {
+                                                                        1.0 + (latest_proof.balance as f64 / config.top_balance as f64).min(1.0f64)
+                                                                    } else {
+                                                                        1.0f64
+                                                                    }
+                                                                } else {
+                                                                    1.0f64
+                                                                };
+
+                                                                let _ = mine_success_sender.send(
+                                                                    MessageInternalMineSuccess {
+                                                                        difficulty,
+                                                                        total_balance: balance,
+                                                                        rewards,
+                                                                        challenge_id: challenge.id,
+                                                                        challenge: old_proof.challenge,
+                                                                        best_nonce: u64::from_le_bytes(best_solution.n),
+                                                                        total_hashpower,
+                                                                        ore_config: loaded_config,
+                                                                        multiplier,
+                                                                        submissions,
+                                                                    },
+                                                                );
+                                                                tokio::time::sleep(Duration::from_millis(200)).await;
+                                                            } else {
+                                                                tracing::error!(target: "server_log", "Failed get MineEvent data from transaction... wtf...");
+                                                                break;
+                                                            }
                                                         }
 
                                                     },
