@@ -36,4 +36,5 @@ spl-token = { version = "^4", features = ["no-entrypoint"] }
 solana-account-decoder = "1.18.13"
 tracing-appender = "0.2.3"
 solana-transaction-status = "1.18.22"
+uuid = { version = "1.10.0", features = ["v4"] }
 
