@@ -185,11 +185,15 @@ pub async fn pool_mine_success_system(
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Updating rewards", id);
                 if i_rewards.len() > 0 {
+                    let batch_num = 1;
                     for batch in i_rewards.chunks(batch_size) {
+                        let instant = Instant::now();
+                        info!(target: "server_log", "{} - Updating reward batch {}", id, batch_num);
                         while let Err(_) = app_database.update_rewards(batch.to_vec()).await {
                             tracing::error!(target: "server_log", "{} - Failed to update rewards in db. Retrying...", id);
                             tokio::time::sleep(Duration::from_millis(500)).await;
                         }
+                        info!(target: "server_log", "{} - Updated reward batch {} in {}ms", id, batch_num, instant.elapsed().as_millis());
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
                     info!(target: "server_log", "{} - Successfully updated rewards", id);
