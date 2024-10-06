@@ -1,9 +1,6 @@
 use deadpool_diesel::mysql::{Manager, Pool};
 use diesel::{
-    connection::SimpleConnection,
-    insert_into,
-    sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, Unsigned},
-    MysqlConnection, RunQueryDsl,
+    connection::SimpleConnection, insert_into, result::Error, sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, Unsigned}, Connection, MysqlConnection, RunQueryDsl
 };
 use tokio::time::Instant;
 use tracing::{error, info};
@@ -131,22 +128,25 @@ impl AppDatabase {
         &self,
         rewards: Vec<models::UpdateReward>,
     ) -> Result<(), AppDatabaseError> {
-        let mut query = String::new();
-        for reward in rewards {
-            query.push_str(&format!(
-                "UPDATE rewards SET balance = balance + {} WHERE miner_id = {};",
-                reward.balance, reward.miner_id
-            ));
-        }
+        let query = "UPDATE rewards SET balance = balance + ? WHERE miner_id = ?";
 
         let id = uuid::Uuid::new_v4();
         let instant = Instant::now();
         tracing::info!(target: "server_log", "{} - Getting db pool connection.", id);
         if let Ok(db_conn) = self.connection_pool.get().await {
             tracing::info!(target: "server_log", "{} - Got db pool connection in {}ms.", id, instant.elapsed().as_millis());
-            let conn_query = query.clone();
             let res = db_conn
-                .interact(move |conn: &mut MysqlConnection| conn.batch_execute(&conn_query))
+                .interact(move |conn: &mut MysqlConnection| {
+                    conn.transaction(|tx| {
+                        for reward in rewards {
+                            diesel::sql_query(query)
+                                .bind::<Unsigned<BigInt>, _>(reward.balance)
+                                .bind::<Integer, _>(reward.miner_id)
+                                .execute(tx)?;
+                        }
+                        Ok::<(), Error>(())
+                    })
+                })
                 .await;
 
             match res {
