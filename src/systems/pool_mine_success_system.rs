@@ -185,8 +185,9 @@ pub async fn pool_mine_success_system(
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Updating rewards", id);
                 if i_rewards.len() > 0 {
+                    let update_rewards_batch_size = 50;
                     let mut batch_num = 1;
-                    for batch in i_rewards.chunks(batch_size) {
+                    for batch in i_rewards.chunks(update_rewards_batch_size) {
                         let instant = Instant::now();
                         info!(target: "server_log", "{} - Updating reward batch {}", id, batch_num);
                         while let Err(_) = app_database.update_rewards(batch.to_vec()).await {
