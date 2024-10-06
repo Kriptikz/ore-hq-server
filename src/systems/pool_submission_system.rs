@@ -630,6 +630,8 @@ pub async fn pool_submission_system(
                                                                 1.0f64
                                                             };
 
+
+                                                            info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                             let _ = mine_success_sender.send(
                                                                 MessageInternalMineSuccess {
                                                                     difficulty,
@@ -711,6 +713,7 @@ pub async fn pool_submission_system(
                                                                     1.0f64
                                                                 };
 
+                                                                info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                                 let _ = mine_success_sender.send(
                                                                     MessageInternalMineSuccess {
                                                                         difficulty,

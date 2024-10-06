@@ -1,4 +1,5 @@
 use axum::extract::ws::Message;
+use base64::{prelude::BASE64_STANDARD, Engine};
 use futures::SinkExt;
 use std::{
     ops::Div,
@@ -28,7 +29,14 @@ pub async fn pool_mine_success_system(
 ) {
     loop {
         while let Some(msg) = mine_success_receiver.recv().await {
+            let c = BASE64_STANDARD.encode(msg.challenge);
+            info!(target: "server_log", "Processing internal mine success for challenge: {}", c);
             {
+                let shared_state = app_shared_state.read().await;
+                let len = shared_state.sockets.len();
+                let socks = shared_state.sockets.clone();
+                drop(shared_state);
+
                 let mut i_earnings = Vec::new();
                 let mut i_rewards = Vec::new();
                 let mut i_submissions = Vec::new();
@@ -83,11 +91,6 @@ pub async fn pool_mine_success_system(
                     } else {
                         1.0f64
                     };
-
-                    let shared_state = app_shared_state.read().await;
-                    let len = shared_state.sockets.len();
-                    let socks = shared_state.sockets.clone();
-                    drop(shared_state);
 
                     for (_addr, client_connection) in socks.iter() {
                         if client_connection.pubkey.eq(&miner_pubkey) {
@@ -236,6 +239,7 @@ pub async fn pool_mine_success_system(
                         info!(target: "server_log", "Failed to find best nonce in i_submissions");
                     }
                 }
+                info!(target: "server_log", "Finished processing internal mine success for challenge: {}", c);
             }
         }
     }
