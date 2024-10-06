@@ -987,7 +987,7 @@ pub async fn pool_submission_system(
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         } else {
-            tokio::time::sleep(Duration::from_secs(cutoff as u64)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
         };
     }
 }
