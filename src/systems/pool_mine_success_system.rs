@@ -10,8 +10,8 @@ use std::{
 use solana_sdk::
     signer::Signer
 ;
-use tokio::
-    sync::{mpsc::UnboundedReceiver, RwLock}
+use tokio::{
+    sync::{mpsc::UnboundedReceiver, RwLock}, time::Instant}
 ;
 use tracing::info;
 
@@ -29,18 +29,24 @@ pub async fn pool_mine_success_system(
 ) {
     loop {
         while let Some(msg) = mine_success_receiver.recv().await {
+            let id = uuid::Uuid::new_v4();
             let c = BASE64_STANDARD.encode(msg.challenge);
-            info!(target: "server_log", "Processing internal mine success for challenge: {}", c);
+            info!(target: "server_log", "{} - Processing internal mine success for challenge: {}", id, c);
             {
+                let instant = Instant::now();
+                info!(target: "server_log", "{} - Getting sockets.", id);
                 let shared_state = app_shared_state.read().await;
                 let len = shared_state.sockets.len();
                 let socks = shared_state.sockets.clone();
                 drop(shared_state);
+                info!(target: "server_log", "{} - Got sockets in {}.", id, instant.elapsed().as_millis());
 
                 let mut i_earnings = Vec::new();
                 let mut i_rewards = Vec::new();
                 let mut i_submissions = Vec::new();
 
+                let instant = Instant::now();
+                info!(target: "server_log", "{} - Processing submission results for challenge: {}.", id, c);
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
                     let hashpower_percent = (msg_submission.hashpower as u128)
                         .saturating_mul(1_000_000)
@@ -154,6 +160,8 @@ pub async fn pool_mine_success_system(
                         }
                     }
                 }
+
+                info!(target: "server_log", "{} - Finished processing submission results in {}ms for challenge: {}.", id, instant.elapsed().as_millis(), c);
 
                 let batch_size = 200;
                 if i_earnings.len() > 0 {
