@@ -1230,7 +1230,7 @@ async fn post_signup_v2(
                 0
             },
             3 => {
-                match tx.key(ixs[0].program_id_index.into(), 0) {
+                match tx.message.account_keys.get(ixs[0].program_id_index as usize) {
                     Some(program) => {
                         if program.ne(&solana_sdk::compute_budget::id()) {
                             error!(target: "server_log", "Failed to get ixs 0 program key");
@@ -1249,7 +1249,7 @@ async fn post_signup_v2(
                     }
                 }
 
-                match tx.key(ixs[1].program_id_index.into(), 0) {
+                match tx.message.account_keys.get(ixs[1].program_id_index as usize) {
                     Some(program) => {
                         if program.ne(&solana_sdk::compute_budget::id()) {
                             error!(target: "server_log", "Failed to get ixs 1 program key");
