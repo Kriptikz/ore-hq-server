@@ -5,6 +5,7 @@ use diesel::{
     sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, Unsigned},
     MysqlConnection, RunQueryDsl,
 };
+use tokio::time::Instant;
 use tracing::{error, info};
 
 use crate::{models, InsertReward, Miner, SubmissionWithId};
@@ -138,7 +139,11 @@ impl AppDatabase {
             ));
         }
 
+        let id = uuid::Uuid::new_v4();
+        let instant = Instant::now();
+        tracing::info!(target: "server_log", "{} - Getting db pool connection.", id);
         if let Ok(db_conn) = self.connection_pool.get().await {
+            tracing::info!(target: "server_log", "{} - Got db pool connection in {}ms.", id, instant.elapsed().as_millis());
             let conn_query = query.clone();
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| conn.batch_execute(&conn_query))
