@@ -158,6 +158,7 @@ impl AppDatabase {
                 .await;
 
             match res {
+
                 Ok(interaction) => match interaction {
                     Ok(_query) => {
                         return Ok(());

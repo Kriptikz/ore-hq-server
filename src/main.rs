@@ -1225,20 +1225,65 @@ async fn post_signup_v2(
 
         let ixs = tx.message.instructions.clone();
 
-        if ixs.len() > 1 {
-            error!(target: "server_log", "Too many instructions");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        }
+        let transfer_ix_index = match ixs.len() {
+            1 => {
+                0
+            },
+            3 => {
+                match tx.key(ixs[0].program_id_index.into(), 0) {
+                    Some(program) => {
+                        if program.ne(&solana_sdk::compute_budget::id()) {
+                            error!(target: "server_log", "Failed to get ixs 0 program key");
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body("Invalid Tx".to_string())
+                                .unwrap();
+                        }
+                    },
+                    None => {
+                        error!(target: "server_log", "Failed to get ixs 0 program key");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+                }
 
+                match tx.key(ixs[1].program_id_index.into(), 0) {
+                    Some(program) => {
+                        if program.ne(&solana_sdk::compute_budget::id()) {
+                            error!(target: "server_log", "Failed to get ixs 1 program key");
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body("Invalid Tx".to_string())
+                                .unwrap();
+                        }
+                    },
+                    None => {
+                        error!(target: "server_log", "Failed to get ixs 1 program key");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+                }
+
+                2
+            },
+            _ => {
+                error!(target: "server_log", "Too many instructions");
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Tx".to_string())
+                    .unwrap();
+            },
+        };
 
         let signup_fee = sol_to_lamports(app_config.signup_fee);
         let base_ix =
             system_instruction::transfer(&fee_payer_pubkey, &wallet.miner_wallet.pubkey(), signup_fee);
         let mut accts = Vec::new();
-        for account_index in ixs[0].accounts.clone() {
+        for account_index in ixs[transfer_ix_index].accounts.clone() {
             accts.push(tx.key(0, account_index.into()));
         }
 
@@ -1250,7 +1295,7 @@ async fn post_signup_v2(
                 .unwrap();
         }
 
-        if ixs[0].data.ne(&base_ix.data) {
+        if ixs[transfer_ix_index].data.ne(&base_ix.data) {
             error!(target: "server_log", "data missmatch");
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
