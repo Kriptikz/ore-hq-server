@@ -51,7 +51,7 @@ use solana_client::{
     rpc_config::RpcSendTransactionConfig,
 };
 use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, native_token::{lamports_to_sol, sol_to_lamports, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, system_instruction, transaction::Transaction
+    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, transaction::Transaction
 };
 use solana_transaction_status::TransactionConfirmationStatus;
 use spl_associated_token_account::{
@@ -169,7 +169,6 @@ pub struct BestHash {
 
 pub struct Config {
     password: String,
-    whitelist: Option<HashSet<Pubkey>>,
     pool_id: i32,
     stats_enabled: bool,
     signup_fee: f64,
@@ -196,14 +195,6 @@ struct Args {
         global = true
     )]
     jito_tip: u64,
-    #[arg(
-        long,
-        value_name = "whitelist",
-        help = "Path to whitelist of allowed miners",
-        default_value = None,
-        global = true
-    )]
-    whitelist: Option<String>,
     #[arg(
         long,
         value_name = "signup fee",
@@ -261,41 +252,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_database = Arc::new(AppDatabase::new(database_url));
     let app_rr_database = Arc::new(AppRRDatabase::new(database_rr_url));
-
-    let whitelist = if let Some(whitelist) = args.whitelist {
-        let file = Path::new(&whitelist);
-        if file.exists() {
-            // load file
-            let mut pubkeys = HashSet::new();
-            if let Ok(mut file) = tokio::fs::File::open(file).await {
-                let mut file_contents = String::new();
-                file.read_to_string(&mut file_contents)
-                    .await
-                    .ok()
-                    .expect("Failed to read whitelist file");
-                drop(file);
-
-                for (i, line) in file_contents.lines().enumerate() {
-                    if let Ok(pubkey) = Pubkey::from_str(line) {
-                        pubkeys.insert(pubkey);
-                    } else {
-                        let err = format!(
-                            "Failed to create pubkey from line {} with value: {}",
-                            i, line
-                        );
-                        error!(target: "server_log", err);
-                    }
-                }
-            } else {
-                return Err("Failed to open whitelist file".into());
-            }
-            Some(pubkeys)
-        } else {
-            return Err("Whitelist at specified file path doesn't exist".into());
-        }
-    } else {
-        None
-    };
 
     let priority_fee = Arc::new(args.priority_fee);
     let jito_tip = Arc::new(args.jito_tip);
@@ -570,7 +526,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Arc::new(Config {
         password,
-        whitelist,
         pool_id: db_pool.id,
         stats_enabled: args.stats,
         signup_fee: args.signup_fee,
@@ -905,10 +860,8 @@ struct SignupParams {
 async fn post_signup(
     query_params: Query<SignupParams>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
-    Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<WalletExtension>>,
-    Extension(app_config): Extension<Arc<Config>>,
-    body: String,
+    _body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let db_miner = app_database
@@ -938,161 +891,22 @@ async fn post_signup(
             }
         }
 
-        if let Some(whitelist) = &app_config.whitelist {
-            if whitelist.contains(&user_pubkey) {
-                let result = app_database
-                    .add_new_miner(user_pubkey.to_string(), true)
-                    .await;
-                let miner = app_database
-                    .get_miner_by_pubkey_str(user_pubkey.to_string())
-                    .await
+        let res = app_database.signup_user_transaction(user_pubkey.to_string(), wallet.miner_wallet.pubkey().to_string()).await;
+
+        match res {
+            Ok(_) => {
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "text/text")
+                    .body("SUCCESS".to_string())
                     .unwrap();
-
-                let wallet_pubkey = wallet.miner_wallet.pubkey();
-                let pool = app_database
-                    .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
-                    .await
+            },
+            Err(_) => {
+                error!(target: "server_log", "Failed to add miner to database");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to add user to database".to_string())
                     .unwrap();
-
-                if result.is_ok() {
-                    let new_reward = InsertReward {
-                        miner_id: miner.id,
-                        pool_id: pool.id,
-                    };
-                    let result = app_database.add_new_reward(new_reward).await;
-
-                    if result.is_ok() {
-                        return Response::builder()
-                            .status(StatusCode::OK)
-                            .header("Content-Type", "text/text")
-                            .body("SUCCESS".to_string())
-                            .unwrap();
-                    } else {
-                        error!(target: "server_log", "Failed to add miner rewards tracker to database");
-                        return Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Failed to add miner rewards tracker to database".to_string())
-                            .unwrap();
-                    }
-                } else {
-                    error!(target: "server_log", "Failed to add miner to database");
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to add miner to database".to_string())
-                        .unwrap();
-                }
-            }
-        }
-
-        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
-        let tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
-            tx
-        } else {
-            error!(target: "server_log", "Failed to deserialize tx");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        };
-
-        if !tx.is_signed() {
-            error!(target: "server_log", "Tx missing signer");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        }
-
-        let ixs = tx.message.instructions.clone();
-
-        if ixs.len() > 1 {
-            error!(target: "server_log", "Too many instructions");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        }
-
-
-        let signup_fee = sol_to_lamports(app_config.signup_fee);
-        let base_ix =
-            system_instruction::transfer(&user_pubkey, &wallet.miner_wallet.pubkey(), signup_fee);
-        let mut accts = Vec::new();
-        for account_index in ixs[0].accounts.clone() {
-            accts.push(tx.key(0, account_index.into()));
-        }
-
-        if accts.len() != 2 {
-            error!(target: "server_log", "too many accts");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        }
-
-        if ixs[0].data.ne(&base_ix.data) {
-            error!(target: "server_log", "data missmatch");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        } else {
-            info!(target: "server_log", "Valid signup tx, submitting.");
-
-            let result = rpc_client.send_and_confirm_transaction(&tx).await;
-
-            match result {
-                Ok(_sig) => {
-                    let res = app_database
-                        .add_new_miner(user_pubkey.to_string(), true)
-                        .await;
-                    let miner = app_database
-                        .get_miner_by_pubkey_str(user_pubkey.to_string())
-                        .await
-                        .unwrap();
-
-                    let wallet_pubkey = wallet.miner_wallet.pubkey();
-                    let pool = app_database
-                        .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
-                        .await
-                        .unwrap();
-
-                    if res.is_ok() {
-                        let new_reward = InsertReward {
-                            miner_id: miner.id,
-                            pool_id: pool.id,
-                        };
-                        let result = app_database.add_new_reward(new_reward).await;
-
-                        if result.is_ok() {
-                            return Response::builder()
-                                .status(StatusCode::OK)
-                                .header("Content-Type", "text/text")
-                                .body("SUCCESS".to_string())
-                                .unwrap();
-                        } else {
-                            error!(target: "server_log", "Failed to add miner rewards tracker to database");
-                            return Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body("Failed to add miner rewards tracker to database".to_string())
-                                .unwrap();
-                        }
-                    } else {
-                        error!(target: "server_log", "Failed to add miner to database");
-                        return Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Failed to add user to database".to_string())
-                            .unwrap();
-                    }
-                }
-                Err(e) => {
-                    error!(target: "server_log", "{} signup transaction failed...", user_pubkey.to_string());
-                    error!(target: "server_log", "Signup Tx Error: {:?}", e);
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to send tx".to_string())
-                        .unwrap();
-                }
             }
         }
     } else {
@@ -1107,29 +921,14 @@ async fn post_signup(
 #[derive(Deserialize)]
 struct SignupParamsV2 {
     miner: String,
-    fee_payer: String
 }
 
 async fn post_signup_v2(
     query_params: Query<SignupParamsV2>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
-    Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<WalletExtension>>,
-    Extension(app_config): Extension<Arc<Config>>,
-    body: String,
+    _body: String,
 ) -> impl IntoResponse {
-    let fee_payer_pubkey = match Pubkey::from_str(&query_params.fee_payer) {
-        Ok(pk) => {
-            pk
-        },
-        Err(_) => {
-            error!(target: "server_log", "SignupV2 with invalid fee_payer pubkey");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid fee_payer pubkey".to_string())
-                .unwrap();
-        }
-    };
     if let Ok(miner_pubkey) = Pubkey::from_str(&query_params.miner) {
         let db_miner = app_database
             .get_miner_by_pubkey_str(miner_pubkey.to_string())
@@ -1158,206 +957,22 @@ async fn post_signup_v2(
             }
         }
 
-        if let Some(whitelist) = &app_config.whitelist {
-            if whitelist.contains(&miner_pubkey) {
-                let result = app_database
-                    .add_new_miner(miner_pubkey.to_string(), true)
-                    .await;
-                let miner = app_database
-                    .get_miner_by_pubkey_str(miner_pubkey.to_string())
-                    .await
-                    .unwrap();
+        let res = app_database.signup_user_transaction(miner_pubkey.to_string(), wallet.miner_wallet.pubkey().to_string()).await;
 
-                let wallet_pubkey = wallet.miner_wallet.pubkey();
-                let pool = app_database
-                    .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
-                    .await
-                    .unwrap();
-
-                if result.is_ok() {
-                    let new_reward = InsertReward {
-                        miner_id: miner.id,
-                        pool_id: pool.id,
-                    };
-                    let result = app_database.add_new_reward(new_reward).await;
-
-                    if result.is_ok() {
-                        return Response::builder()
-                            .status(StatusCode::OK)
-                            .header("Content-Type", "text/text")
-                            .body("SUCCESS".to_string())
-                            .unwrap();
-                    } else {
-                        error!(target: "server_log", "Failed to add miner rewards tracker to database");
-                        return Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Failed to add miner rewards tracker to database".to_string())
-                            .unwrap();
-                    }
-                } else {
-                    error!(target: "server_log", "Failed to add miner to database");
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to add miner to database".to_string())
-                        .unwrap();
-                }
-            }
-        }
-
-        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
-        let tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
-            tx
-        } else {
-            error!(target: "server_log", "Failed to deserialize tx");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        };
-
-        if !tx.is_signed() {
-            error!(target: "server_log", "Tx missing signer");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        }
-
-        let ixs = tx.message.instructions.clone();
-
-        let transfer_ix_index = match ixs.len() {
-            1 => {
-                0
-            },
-            3 => {
-                match tx.message.account_keys.get(ixs[0].program_id_index as usize) {
-                    Some(program) => {
-                        if program.ne(&solana_sdk::compute_budget::id()) {
-                            error!(target: "server_log", "Failed to get ixs 0 program key");
-                            return Response::builder()
-                                .status(StatusCode::BAD_REQUEST)
-                                .body("Invalid Tx".to_string())
-                                .unwrap();
-                        }
-                    },
-                    None => {
-                        error!(target: "server_log", "Failed to get ixs 0 program key");
-                        return Response::builder()
-                            .status(StatusCode::BAD_REQUEST)
-                            .body("Invalid Tx".to_string())
-                            .unwrap();
-                    }
-                }
-
-                match tx.message.account_keys.get(ixs[1].program_id_index as usize) {
-                    Some(program) => {
-                        if program.ne(&solana_sdk::compute_budget::id()) {
-                            error!(target: "server_log", "Failed to get ixs 1 program key");
-                            return Response::builder()
-                                .status(StatusCode::BAD_REQUEST)
-                                .body("Invalid Tx".to_string())
-                                .unwrap();
-                        }
-                    },
-                    None => {
-                        error!(target: "server_log", "Failed to get ixs 1 program key");
-                        return Response::builder()
-                            .status(StatusCode::BAD_REQUEST)
-                            .body("Invalid Tx".to_string())
-                            .unwrap();
-                    }
-                }
-
-                2
-            },
-            _ => {
-                error!(target: "server_log", "Too many instructions");
+        match res {
+            Ok(_) => {
                 return Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body("Invalid Tx".to_string())
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "text/text")
+                    .body("SUCCESS".to_string())
                     .unwrap();
             },
-        };
-
-        let signup_fee = sol_to_lamports(app_config.signup_fee);
-        let base_ix =
-            system_instruction::transfer(&fee_payer_pubkey, &wallet.miner_wallet.pubkey(), signup_fee);
-        let mut accts = Vec::new();
-        for account_index in ixs[transfer_ix_index].accounts.clone() {
-            accts.push(tx.key(0, account_index.into()));
-        }
-
-        if accts.len() != 2 {
-            error!(target: "server_log", "too many accts");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        }
-
-        if ixs[transfer_ix_index].data.ne(&base_ix.data) {
-            error!(target: "server_log", "data missmatch");
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Invalid Tx".to_string())
-                .unwrap();
-        } else {
-            info!(target: "server_log", "Valid signup tx, submitting.");
-
-            let result = rpc_client.send_and_confirm_transaction(&tx).await;
-
-            match result {
-                Ok(_sig) => {
-                    let res = app_database
-                        .add_new_miner(miner_pubkey.to_string(), true)
-                        .await;
-                    let miner = app_database
-                        .get_miner_by_pubkey_str(miner_pubkey.to_string())
-                        .await
-                        .unwrap();
-
-                    let wallet_pubkey = wallet.miner_wallet.pubkey();
-                    let pool = app_database
-                        .get_pool_by_authority_pubkey(wallet_pubkey.to_string())
-                        .await
-                        .unwrap();
-
-                    if res.is_ok() {
-                        let new_reward = InsertReward {
-                            miner_id: miner.id,
-                            pool_id: pool.id,
-                        };
-                        let result = app_database.add_new_reward(new_reward).await;
-
-                        if result.is_ok() {
-                            return Response::builder()
-                                .status(StatusCode::OK)
-                                .header("Content-Type", "text/text")
-                                .body("SUCCESS".to_string())
-                                .unwrap();
-                        } else {
-                            error!(target: "server_log", "Failed to add miner rewards tracker to database");
-                            return Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body("Failed to add miner rewards tracker to database".to_string())
-                                .unwrap();
-                        }
-                    } else {
-                        error!(target: "server_log", "Failed to add miner to database");
-                        return Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Failed to add user to database".to_string())
-                            .unwrap();
-                    }
-                }
-                Err(e) => {
-                    error!(target: "server_log", "{} signup transaction failed...", miner_pubkey.to_string());
-                    error!(target: "server_log", "Signup Tx Error: {:?}", e);
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body("Failed to send tx".to_string())
-                        .unwrap();
-                }
+            Err(_) => {
+                error!(target: "server_log", "Failed to add miner to database");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to add user to database".to_string())
+                    .unwrap();
             }
         }
     } else {

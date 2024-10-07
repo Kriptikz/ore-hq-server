@@ -1,14 +1,11 @@
 use deadpool_diesel::mysql::{Manager, Pool};
 use diesel::{
-    connection::SimpleConnection,
-    insert_into,
-    sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, Unsigned},
-    MysqlConnection, RunQueryDsl,
+    insert_into, sql_types::{BigInt, Binary, Bool, Integer, Nullable, Text, Unsigned}, Connection, MysqlConnection, RunQueryDsl
 };
 use tokio::time::Instant;
 use tracing::{error, info};
 
-use crate::{models, InsertReward, Miner, SubmissionWithId};
+use crate::{models, Miner, SubmissionWithId};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
@@ -80,37 +77,6 @@ impl AppDatabase {
                 Ok(interaction) => match interaction {
                     Ok(query) => {
                         return Ok(query);
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "{:?}", e);
-                        return Err(AppDatabaseError::QueryFailed);
-                    }
-                },
-                Err(e) => {
-                    error!(target: "server_log", "{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-    }
-
-    pub async fn add_new_reward(&self, reward: InsertReward) -> Result<(), AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn
-                .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("INSERT INTO rewards (miner_id, pool_id) VALUES (?, ?)")
-                        .bind::<Integer, _>(reward.miner_id)
-                        .bind::<Integer, _>(reward.pool_id)
-                        .execute(conn)
-                })
-                .await;
-
-            match res {
-                Ok(interaction) => match interaction {
-                    Ok(_query) => {
-                        return Ok(());
                     }
                     Err(e) => {
                         error!(target: "server_log", "{:?}", e);
@@ -464,41 +430,6 @@ impl AppDatabase {
         };
     }
 
-    pub async fn add_new_miner(
-        &self,
-        miner_pubkey: String,
-        is_enabled: bool,
-    ) -> Result<(), AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn
-                .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("INSERT INTO miners (pubkey, enabled) VALUES (?, ?)")
-                        .bind::<Text, _>(miner_pubkey)
-                        .bind::<Bool, _>(is_enabled)
-                        .execute(conn)
-                })
-                .await;
-
-            match res {
-                Ok(interaction) => match interaction {
-                    Ok(_query) => {
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "{:?}", e);
-                        return Err(AppDatabaseError::QueryFailed);
-                    }
-                },
-                Err(e) => {
-                    error!(target: "server_log", "{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-    }
-
     pub async fn get_miner_by_pubkey_str(
         &self,
         miner_pubkey: String,
@@ -769,5 +700,65 @@ impl AppDatabase {
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
+    }
+
+    pub async fn signup_user_transaction(
+        &self,
+        user_pubkey: String,
+        pool_authority_pubkey: String,
+    ) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let user_pk = user_pubkey.clone();
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    let user_pubkey = user_pk;
+                    conn.transaction(|conn| {
+                        diesel::sql_query("INSERT INTO miners (pubkey, enabled) VALUES (?, ?)")
+                            .bind::<Text, _>(&user_pubkey)
+                            .bind::<Bool, _>(true)
+                            .execute(conn)?;
+
+                        let miner: Miner = diesel::sql_query("SELECT id, pubkey, enabled FROM miners WHERE miners.pubkey = ?")
+                            .bind::<Text, _>(&user_pubkey)
+                            .get_result(conn)?;
+
+                        let pool: models::Pool = diesel::sql_query("SELECT id, proof_pubkey, authority_pubkey, total_rewards, claimed_rewards FROM pools WHERE pools.authority_pubkey = ?")
+                            .bind::<Text, _>(&pool_authority_pubkey)
+                            .get_result(conn)?;
+
+                        diesel::sql_query("INSERT INTO rewards (miner_id, pool_id) VALUES (?, ?)")
+                            .bind::<Integer, _>(miner.id)
+                            .bind::<Integer, _>(pool.id)
+                            .execute(conn)
+                    })
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        if query == 0 {
+                            info!(target: "server_log", "Failed to insert signup for pubkey: {}", user_pubkey);
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
+                        info!(target: "server_log", "Successfully inserted signup for pubkey: {}", user_pubkey);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+
+
+
     }
 }
