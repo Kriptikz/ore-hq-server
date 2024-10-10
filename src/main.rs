@@ -58,7 +58,6 @@ use spl_associated_token_account::{
     get_associated_token_address, instruction::create_associated_token_account,
 };
 use tokio::{
-    io::AsyncReadExt,
     sync::{mpsc::UnboundedSender, Mutex, RwLock},
     time::Instant,
 };
@@ -135,6 +134,7 @@ pub struct MessageInternalMineSuccess {
     difficulty: u32,
     total_balance: f64,
     rewards: u64,
+    commissions: u64,
     challenge_id: i32,
     challenge: [u8; 32],
     best_nonce: u64,
@@ -172,6 +172,8 @@ pub struct Config {
     pool_id: i32,
     stats_enabled: bool,
     signup_fee: f64,
+    commissions_pubkey: String,
+    commissions_miner_id: i32,
 }
 
 mod ore_utils;
@@ -249,6 +251,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
     let database_rr_url = std::env::var("DATABASE_RR_URL").expect("DATABASE_RR_URL must be set.");
+    let commission_env = std::env::var("COMMISSION_PUBKEY").expect("COMMISSION_PUBKEY must be set.");
+    let commission_pubkey = match Pubkey::from_str(&commission_env) {
+        Ok(pk) => {
+            pk
+        },
+        Err(_) => {
+            println!("Invalid COMMISSION_PUBKEY");
+            return Ok(())
+        }
+    };
 
     let app_database = Arc::new(AppDatabase::new(database_url));
     let app_rr_database = Arc::new(AppRRDatabase::new(database_rr_url));
@@ -494,6 +506,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+
+    info!(target: "server_log", "Validating commissions receiver is in db");
+    let commission_miner_id;
+    match app_database.get_miner_by_pubkey_str(commission_pubkey.to_string()).await {
+        Ok(miner) => {
+            info!(target: "server_log", "Found commissions receiver in db.");
+            commission_miner_id = miner.id;
+        }
+        Err(_) => {
+            info!(target: "server_log", "Failed to get commissions receiver account from database.");
+            info!(target: "server_log", "Inserting Commissions receiver account...");
+
+            match app_database.signup_user_transaction(commission_pubkey.to_string(), wallet.pubkey().to_string()).await {
+                Ok(_) => {
+                    info!(target: "server_log", "Successfully inserted Commissions receiver account...");
+                    if let Ok(m) = app_database.get_miner_by_pubkey_str(commission_pubkey.to_string()).await {
+                        commission_miner_id = m.id;
+                    } else {
+                        panic!("Failed to get commission miner id")
+                    }
+                },
+                Err(_) => {
+                    panic!("Failed to insert comissions receiver account")
+                }
+            }
+        }
+    }
+
     let db_pool = app_database
         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
         .await
@@ -529,6 +569,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool_id: db_pool.id,
         stats_enabled: args.stats,
         signup_fee: args.signup_fee,
+        commissions_pubkey: commission_pubkey.to_string(),
+        commissions_miner_id: commission_miner_id,
     });
 
     let epoch_hashes = Arc::new(RwLock::new(EpochHashes {

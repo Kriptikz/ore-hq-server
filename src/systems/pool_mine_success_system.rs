@@ -47,15 +47,15 @@ pub async fn pool_mine_success_system(
 
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Processing submission results for challenge: {}.", id, c);
+                let total_rewards = msg.rewards - msg.commissions;
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
                     let hashpower_percent = (msg_submission.hashpower as u128)
                         .saturating_mul(1_000_000)
                         .saturating_div(msg.total_hashpower as u128);
 
-                    // TODO: handle overflow/underflow and float imprecision issues
                     let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                     let earned_rewards = hashpower_percent
-                        .saturating_mul(msg.rewards as u128)
+                        .saturating_mul(total_rewards as u128)
                         .saturating_div(1_000_000)
                         as u64;
 

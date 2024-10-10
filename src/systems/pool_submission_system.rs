@@ -1,7 +1,7 @@
 use rand::seq::SliceRandom;
 use std::{
     collections::HashMap,
-    ops::Range,
+    ops::{Mul, Range},
     str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -32,12 +32,9 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    app_database::AppDatabase,
-    ore_utils::{
+    app_database::AppDatabase, ore_utils::{
         get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, ORE_TOKEN_DECIMALS
-    },
-    Config, EpochHashes, InsertChallenge, InsertTxn, MessageInternalAllClients,
-    MessageInternalMineSuccess, SubmissionWindow, WalletExtension,
+    }, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
 };
 
 
@@ -570,7 +567,12 @@ pub async fn pool_submission_system(
                                                             info!(target: "submission_log", "MineEvent: {:?}", mine_event);
                                                             info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                             info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                            let rewards = mine_event.reward;
+                                                            let full_rewards = mine_event.reward;
+                                                            let commissions = full_rewards.mul(5).saturating_div(100);
+                                                            let rewards = full_rewards - commissions;
+                                                            info!(target: "server_log", "Miners Rewards: {}", rewards);
+                                                            info!(target: "server_log", "Commission: {}", commissions);
+
                                                             // handle sending mine success message
                                                             let mut total_hashpower: u64 = 0;
                                                             for submission in submissions.iter() {
@@ -614,7 +616,37 @@ pub async fn pool_submission_system(
                                                                 }
                                                             }
 
-                                                            tokio::time::sleep(Duration::from_millis(1000)).await;
+                                                            // Insert commissions earning
+                                                            let commissions_earning = vec![
+                                                                InsertEarning {
+                                                                    miner_id: app_config.commissions_miner_id,
+                                                                    pool_id: app_config.pool_id,
+                                                                    challenge_id: challenge.id,
+                                                                    amount: commissions,
+                                                                }
+                                                            ];
+                                                            tracing::info!(target: "server_log", "Inserting commissions earning");
+                                                            while let Err(_) =
+                                                                app_database.add_new_earnings_batch(commissions_earning.clone()).await
+                                                            {
+                                                                tracing::error!(target: "server_log", "Failed to add commmissions earning... retrying...");
+                                                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                                            }
+                                                            tracing::info!(target: "server_log", "Inserted commissions earning");
+
+                                                            let new_commission_rewards = vec![UpdateReward {
+                                                                miner_id: app_config.commissions_miner_id,
+                                                                balance: commissions,
+                                                            }];
+
+                                                            tracing::info!(target: "server_log", "Updating commissions rewards...");
+                                                            while let Err(_) = app_database.update_rewards(new_commission_rewards.clone()).await {
+                                                                tracing::error!(target: "server_log", "Failed to update commission rewards in db. Retrying...");
+                                                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                                            }
+                                                            tracing::info!(target: "server_log", "Updated commissions rewards");
+                                                            tokio::time::sleep(Duration::from_millis(200)).await;
+
                                                             let latest_proof = { app_proof.lock().await.clone() };
                                                             let balance = (latest_proof.balance as f64)
                                                                 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
@@ -636,7 +668,8 @@ pub async fn pool_submission_system(
                                                                 MessageInternalMineSuccess {
                                                                     difficulty,
                                                                     total_balance: balance,
-                                                                    rewards,
+                                                                    rewards: full_rewards,
+                                                                    commissions,
                                                                     challenge_id: challenge.id,
                                                                     challenge: old_proof.challenge,
                                                                     best_nonce: u64::from_le_bytes(best_solution.n),
@@ -653,7 +686,12 @@ pub async fn pool_submission_system(
                                                                 info!(target: "submission_log", "MineEvent: {:?}", mine_event);
                                                                 info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                                 info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                                let rewards = mine_event.reward;
+                                                                let full_rewards = mine_event.reward;
+                                                                let commissions = full_rewards.mul(5).saturating_div(100);
+                                                                let rewards = full_rewards - commissions;
+                                                                info!(target: "server_log", "Miners Rewards: {}", rewards);
+                                                                info!(target: "server_log", "Commission: {}", commissions);
+
                                                                 // handle sending mine success message
                                                                 let mut total_hashpower: u64 = 0;
                                                                 for submission in submissions.iter() {
@@ -696,6 +734,36 @@ pub async fn pool_submission_system(
                                                                         tokio::time::sleep(Duration::from_millis(1000)).await;
                                                                     }
                                                                 }
+                                                                // Insert commissions earning
+                                                                let commissions_earning = vec![
+                                                                    InsertEarning {
+                                                                        miner_id: app_config.commissions_miner_id,
+                                                                        pool_id: app_config.pool_id,
+                                                                        challenge_id: challenge.id,
+                                                                        amount: commissions,
+                                                                    }
+                                                                ];
+                                                                tracing::info!(target: "server_log", "Inserting commissions earning");
+                                                                while let Err(_) =
+                                                                    app_database.add_new_earnings_batch(commissions_earning.clone()).await
+                                                                {
+                                                                    tracing::error!(target: "server_log", "Failed to add commmissions earning... retrying...");
+                                                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                                                }
+                                                                tracing::info!(target: "server_log", "Inserted commissions earning");
+
+                                                                let new_commission_rewards = vec![UpdateReward {
+                                                                    miner_id: app_config.commissions_miner_id,
+                                                                    balance: commissions,
+                                                                }];
+
+                                                                tracing::info!(target: "server_log", "Updating commissions rewards...");
+                                                                while let Err(_) = app_database.update_rewards(new_commission_rewards.clone()).await {
+                                                                    tracing::error!(target: "server_log", "Failed to update commission rewards in db. Retrying...");
+                                                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                                                }
+                                                                tracing::info!(target: "server_log", "Updated commissions rewards");
+                                                                tokio::time::sleep(Duration::from_millis(200)).await;
 
                                                                 tokio::time::sleep(Duration::from_millis(1000)).await;
                                                                 let latest_proof = { app_proof.lock().await.clone() };
@@ -718,7 +786,8 @@ pub async fn pool_submission_system(
                                                                     MessageInternalMineSuccess {
                                                                         difficulty,
                                                                         total_balance: balance,
-                                                                        rewards,
+                                                                        rewards: full_rewards,
+                                                                        commissions,
                                                                         challenge_id: challenge.id,
                                                                         challenge: old_proof.challenge,
                                                                         best_nonce: u64::from_le_bytes(best_solution.n),
