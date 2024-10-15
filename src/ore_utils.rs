@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{str::FromStr, time::{SystemTime, UNIX_EPOCH}};
 
 use bytemuck::{Pod, Zeroable};
 use drillx::Solution;
@@ -7,7 +7,8 @@ use ore_api::{
     state::{Config, Proof},
     ID as ORE_ID,
 };
-use ore_miner_delegation::{instruction, state::{DelegatedBoost, DelegatedStake}, utils::AccountDeserialize};
+use ore_boost_api::state::{boost_pda, stake_pda};
+use ore_miner_delegation::{instruction, pda::managed_proof_pda, state::{DelegatedBoost, DelegatedStake}, utils::AccountDeserialize};
 use ore_utils::event;
 pub use steel::AccountDeserialize as _;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -37,6 +38,32 @@ pub fn get_auth_ix(signer: Pubkey) -> Instruction {
 
 pub fn get_mine_ix(signer: Pubkey, solution: Solution, bus: usize) -> Instruction {
     instruction::mine(signer, BUS_ADDRESSES[bus], solution)
+}
+
+pub fn get_mine_ix_with_boosts(signer: Pubkey, solution: Solution, bus: usize, boosts: Vec<Pubkey>) -> Instruction {
+    let managed_proof_account = managed_proof_pda(signer);
+    // oreoU2 staked Ore boost
+    let oreo_boost_account = boost_pda(Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap());
+    let oreo_boost_stake = stake_pda(managed_proof_account.0, oreo_boost_account.0);
+
+    let drss5_boost_account = boost_pda(Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap());
+    let drss5_boost_stake = stake_pda(managed_proof_account.0, oreo_boost_account.0);
+
+    let meU_boost_account = boost_pda(Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap());
+    let meU_boost_stake = stake_pda(managed_proof_account.0, oreo_boost_account.0);
+
+    let boost_mints = vec![
+        oreo_boost_account.0,
+        oreo_boost_stake.0,
+        drss5_boost_account.0,
+        drss5_boost_stake.0,
+        meU_boost_account.0,
+        meU_boost_stake.0,
+    ];
+
+
+
+    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boost_mints)
 }
 
 pub fn get_register_ix(signer: Pubkey) -> Instruction {

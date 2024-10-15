@@ -33,7 +33,7 @@ use tracing::info;
 
 use crate::{
     app_database::AppDatabase, ore_utils::{
-        get_auth_ix, get_cutoff, get_mine_ix, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, ORE_TOKEN_DECIMALS
+        get_auth_ix, get_cutoff, get_mine_ix, get_mine_ix_with_boosts, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, ORE_TOKEN_DECIMALS
     }, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
 };
 
@@ -182,7 +182,7 @@ pub async fn pool_submission_system(
                             ixs.push(reset_ix);
                         }
 
-                        let ix_mine = get_mine_ix(signer.pubkey(), best_solution, bus);
+                        let ix_mine = get_mine_ix_with_boosts(signer.pubkey(), best_solution, bus);
                         ixs.push(ix_mine);
 
                         if let Ok((hash, _slot)) = rpc_client
@@ -246,7 +246,7 @@ pub async fn pool_submission_system(
                                         break Ok(sig);
                                     }
                                     Err(e) => {
-                                        tracing::error!(target: "server_log", "Failed to send mine tx error: {}", e);
+                                        tracing::error!(target: "server_log", "Failed to send mine tx error: {:?}", e);
                                         tracing::error!(target: "server_log", "Attempt {} Failed to send mine transaction. retrying in 1 seconds...", rpc_send_attempts);
                                         rpc_send_attempts += 1;
 
@@ -1007,6 +1007,7 @@ pub async fn pool_submission_system(
                                 Err(e) => {
                                     tracing::error!(target: "server_log", "Failed to send and confirm txn");
                                     tracing::error!(target: "server_log", "Error: {:?}", e);
+                                    println!("Error: {:?}", e);
                                     // info!(target: "server_log", "increasing prio fees");
                                     // {
                                     //     let mut prio_fee = app_prio_fee.lock().await;
