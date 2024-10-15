@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use futures::StreamExt;
 use ore_api::state::Proof;
-use ore_utils::AccountDeserialize;
+use steel::AccountDeserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{nonblocking::pubsub_client::PubsubClient, rpc_config::RpcAccountInfoConfig};
 use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, signer::Signer};

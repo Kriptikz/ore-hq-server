@@ -22,7 +22,7 @@ pub async fn migrate(
     let mut ixs = Vec::new();
     let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(20_000);
     ixs.push(prio_fee_ix);
-    let claim_ix = ore_api::instruction::claim(
+    let claim_ix = ore_api::prelude::claim(
         wallet.pubkey(),
         miner_ore_token_account_addr,
         original_proof_balance,

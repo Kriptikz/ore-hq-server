@@ -8,6 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ore_boost_api::state::{boost_pda, stake_pda};
 use systems::{
     claim_system::claim_system, client_message_handler_system::client_message_handler_system,
     handle_ready_clients_system::handle_ready_clients_system,
@@ -39,9 +40,7 @@ use clap::Parser;
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_utils::{
-    get_config, get_delegated_stake_account, get_ore_mint,
-    get_original_proof, get_proof, get_register_ix,
-    ORE_TOKEN_DECIMALS,
+    get_config, get_delegated_boost_account, get_delegated_stake_account, get_ore_mint, get_original_proof, get_proof, get_register_ix, ORE_TOKEN_DECIMALS
 };
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::Deserialize;
@@ -483,6 +482,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    info!(target: "server_log", "creating managed proof boost token accounts");
+    let boost_mints = vec![
+        Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
+        Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
+        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
+    ];
+
+    for boost_mint in boost_mints {
+        // create the managed proof token account
+        let managed_proof_boost_token_addr = get_associated_token_address(&managed_proof.0, &boost_mint);
+        match rpc_client
+            .get_token_account_balance(&managed_proof_boost_token_addr)
+            .await
+        {
+            Ok(_) => {
+                info!(target: "server_log", "Managed proof boost token account {} already created.", boost_mint.to_string());
+            }
+            Err(_) => {
+                info!(target: "server_log", "Creating managed proof boost token account {}", boost_mint.to_string());
+                let ix = create_associated_token_account(
+                    &wallet.pubkey(),
+                    &managed_proof.0,
+                    &boost_mint,
+                    &spl_token::id(),
+                );
+
+                let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+                let blockhash = rpc_client
+                    .get_latest_blockhash()
+                    .await
+                    .expect("should get latest blockhash");
+
+                tx.sign(&[&wallet], blockhash);
+
+                match rpc_client
+                    .send_and_confirm_transaction_with_spinner_and_commitment(
+                        &tx,
+                        CommitmentConfig {
+        commitment: CommitmentLevel::Confirmed,
+                        },
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(target: "server_log", "Successfully created managed proof boost token account {}", boost_mint.to_string());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+                        panic!("Failed to create managed proof boost token account {}", boost_mint.to_string());
+                    }
+                }
+            }
+        }
+
+        let boost_acc = boost_pda(boost_mint);
+        let pool_boost_stake_acc = stake_pda(managed_proof.0, boost_acc.0);
+        match rpc_client.get_account(&pool_boost_stake_acc.0).await {
+            Ok(_) => {
+                info!(target: "server_log", "Managed proof boost stake account for {} already exists", boost_mint.to_string());
+            }
+            Err(_e) => {
+                error!(target: "server_log", "Failed to get managed proof boost stake account for {}", boost_mint.to_string());
+                info!(target: "server_log", "Creating managed proof boost stake account for {}", boost_mint.to_string());
+                let ix = ore_miner_delegation::instruction::open_managed_proof_boost(wallet.pubkey(), boost_mint);
+
+                let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+                let blockhash = rpc_client
+                    .get_latest_blockhash()
+                    .await
+                    .expect("should get latest blockhash");
+
+                tx.sign(&[&wallet], blockhash);
+
+                match rpc_client
+                    .send_and_confirm_transaction_with_spinner_and_commitment(
+                        &tx,
+                        CommitmentConfig {
+        commitment: CommitmentLevel::Confirmed,
+                        },
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(target: "server_log", "Successfully created managed proof boost stake account for {}", boost_mint.to_string());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+                        panic!("Failed to create managed proof boost stake account for {}", boost_mint.to_string());
+                    }
+                }
+            }
+        }
+
+    }
+
     info!(target: "server_log", "Validating pool exists in db");
     let db_pool = app_database
         .get_pool_by_authority_pubkey(wallet.pubkey().to_string())
@@ -776,10 +872,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/claim", post(post_claim))
         .route("/v2/claim", post(post_claim_v2))
         .route("/stake", post(post_stake))
+        .route("/stake-boost", post(post_stake_boost))
         .route("/unstake", post(post_unstake))
         .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
+        .route("/v2/miner/balance", get(get_miner_balance_v2))
         .route("/miner/stake", get(get_miner_stake))
         .route("/stake-multiplier", get(get_stake_multiplier))
         // App RR Database routes
@@ -1184,6 +1282,52 @@ async fn get_miner_balance(
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let miner_token_account = get_associated_token_address(&user_pubkey, &get_ore_mint());
+        if let Ok(response) = rpc_client
+            .get_token_account_balance(&miner_token_account)
+            .await
+        {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .body(response.ui_amount_string)
+                .unwrap();
+        } else {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Failed to get token account balance".to_string())
+                .unwrap();
+        }
+    } else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid public key".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct PubkeyMintParam {
+    pubkey: String,
+    mint: String,
+}
+
+async fn get_miner_balance_v2(
+    query_params: Query<PubkeyMintParam>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+) -> impl IntoResponse {
+    let mint = match Pubkey::from_str(&query_params.mint) {
+        Ok(pk) => {
+            pk
+        },
+        Err(_) => {
+            error!(target: "server_log", "get_miner_balance_v2 - Failed to parse mint");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Mint".to_string())
+                .unwrap();
+        }
+    };
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let miner_token_account = get_associated_token_address(&user_pubkey, &mint);
         if let Ok(response) = rpc_client
             .get_token_account_balance(&miner_token_account)
             .await
@@ -1783,6 +1927,207 @@ async fn post_unstake(
         }
     } else {
         error!(target: "server_log", "unstake with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct StakeBoostParams {
+    pubkey: String,
+    mint: String,
+    amount: u64,
+}
+
+async fn post_stake_boost(
+    query_params: Query<StakeBoostParams>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+
+        let mint = match Pubkey::from_str(&query_params.mint) {
+            Ok(pk) => {
+                pk
+            },
+            Err(_) => {
+                error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Mint".to_string())
+                    .unwrap();
+            }
+        };
+
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!(target: "server_log", "Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!(target: "server_log", "Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        if let Err(_) =
+            get_delegated_boost_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
+        {
+            let init_ix = ore_miner_delegation::instruction::init_delegate_boost(
+                user_pubkey,
+                wallet.miner_wallet.pubkey(),
+                wallet.fee_wallet.pubkey(),
+                mint,
+            );
+
+            let prio_fee: u32 = 20_000;
+
+            let mut ixs = Vec::new();
+            let prio_fee_ix = ComputeBudgetInstruction::set_compute_unit_price(prio_fee as u64);
+            ixs.push(prio_fee_ix);
+            ixs.push(init_ix);
+            if let Ok((hash, _slot)) = rpc_client
+                .get_latest_blockhash_with_commitment(rpc_client.commitment())
+                .await
+            {
+                let expired_timer = Instant::now();
+                let mut tx = Transaction::new_with_payer(&ixs, Some(&wallet.fee_wallet.pubkey()));
+
+                tx.sign(&[wallet.fee_wallet.as_ref()], hash);
+
+                let rpc_config = RpcSendTransactionConfig {
+                    preflight_commitment: Some(rpc_client.commitment().commitment),
+                    ..RpcSendTransactionConfig::default()
+                };
+
+                let signature;
+                loop {
+                    if let Ok(sig) = rpc_client
+                        .send_transaction_with_config(&tx, rpc_config)
+                        .await
+                    {
+                        signature = sig;
+                        break;
+                    } else {
+                        error!(target: "server_log", "Failed to send init delegate boost account. retrying in 2 seconds...");
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                    }
+                }
+
+                let result: Result<Signature, String> = loop {
+                    if expired_timer.elapsed().as_secs() >= 200 {
+                        break Err("Transaction Expired".to_string());
+                    }
+                    let results = rpc_client.get_signature_statuses(&[signature]).await;
+                    if let Ok(response) = results {
+                        let statuses = response.value;
+                        if let Some(status) = &statuses[0] {
+                            if status.confirmation_status()
+                                == TransactionConfirmationStatus::Confirmed
+                            {
+                                if status.err.is_some() {
+                                    let e_str = format!("Transaction Failed: {:?}", status.err);
+                                    break Err(e_str);
+                                }
+                                break Ok(signature);
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                };
+
+                match result {
+                    Ok(_sig) => {
+                        info!(target: "server_log", "Successfully created delegate boost account for: {} of mint: {}", user_pubkey.to_string(), mint.to_string());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "ERROR: {:?}", e);
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("Failed to init delegate boost account.".to_string())
+                            .unwrap();
+                    }
+                }
+            } else {
+                error!(target: "server_log", "Failed to confirm transaction for init delegate boost.");
+            }
+        }
+
+        let base_ix = ore_miner_delegation::instruction::delegate_boost(
+            user_pubkey,
+            wallet.miner_wallet.pubkey(),
+            mint,
+            query_params.amount,
+        );
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!(target: "server_log", "data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            info!(target: "server_log", "Valid boost tx, submitting.");
+
+            let hash = tx.get_recent_blockhash();
+            if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                error!(target: "server_log", "Failed to partially sign tx");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Server Failed to sign tx.".to_string())
+                    .unwrap();
+            }
+
+            if !tx.is_signed() {
+                error!(target: "server_log", "Tx missing signer");
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Tx".to_string())
+                    .unwrap();
+            }
+
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+            match result {
+                Ok(sig) => {
+                    let amount_dec =
+                        query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    info!(target: "server_log", "Miner {} successfully delegated boost of {} for {}.\nSig: {}", user_pubkey.to_string(), mint.to_string(), amount_dec, sig.to_string());
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                }
+                Err(e) => {
+                    error!(target: "server_log", "{} stake transaction failed...", user_pubkey.to_string());
+                    error!(target: "server_log", "Stake Tx Error: {:?}", e);
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!(target: "server_log", "stake boost with invalid pubkey");
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid Pubkey".to_string())
