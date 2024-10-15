@@ -182,7 +182,13 @@ pub async fn pool_submission_system(
                             ixs.push(reset_ix);
                         }
 
-                        let ix_mine = get_mine_ix_with_boosts(signer.pubkey(), best_solution, bus);
+                        let boost_mints = vec![
+                            Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
+                            Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
+                            Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
+                        ];
+
+                        let ix_mine = get_mine_ix_with_boosts(signer.pubkey(), best_solution, bus, boost_mints);
                         ixs.push(ix_mine);
 
                         if let Ok((hash, _slot)) = rpc_client

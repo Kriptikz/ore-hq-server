@@ -40,30 +40,18 @@ pub fn get_mine_ix(signer: Pubkey, solution: Solution, bus: usize) -> Instructio
     instruction::mine(signer, BUS_ADDRESSES[bus], solution)
 }
 
-pub fn get_mine_ix_with_boosts(signer: Pubkey, solution: Solution, bus: usize, boosts: Vec<Pubkey>) -> Instruction {
+pub fn get_mine_ix_with_boosts(signer: Pubkey, solution: Solution, bus: usize, boost_mints: Vec<Pubkey>) -> Instruction {
     let managed_proof_account = managed_proof_pda(signer);
-    // oreoU2 staked Ore boost
-    let oreo_boost_account = boost_pda(Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap());
-    let oreo_boost_stake = stake_pda(managed_proof_account.0, oreo_boost_account.0);
+    let mut boosts = Vec::new();
 
-    let drss5_boost_account = boost_pda(Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap());
-    let drss5_boost_stake = stake_pda(managed_proof_account.0, oreo_boost_account.0);
+    for boost_mint in boost_mints {
+        let boost_account = boost_pda(boost_mint);
+        let boost_stake = stake_pda(managed_proof_account.0, boost_account.0);
+        boosts.push(boost_account.0);
+        boosts.push(boost_stake.0);
+    }
 
-    let meU_boost_account = boost_pda(Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap());
-    let meU_boost_stake = stake_pda(managed_proof_account.0, oreo_boost_account.0);
-
-    let boost_mints = vec![
-        oreo_boost_account.0,
-        oreo_boost_stake.0,
-        drss5_boost_account.0,
-        drss5_boost_stake.0,
-        meU_boost_account.0,
-        meU_boost_stake.0,
-    ];
-
-
-
-    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boost_mints)
+    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boosts)
 }
 
 pub fn get_register_ix(signer: Pubkey) -> Instruction {
