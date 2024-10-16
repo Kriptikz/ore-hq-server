@@ -954,7 +954,7 @@ async fn get_pool_fee_payer_pubkey(
 async fn get_latest_blockhash(
     Extension(rpc_client): Extension<Arc<RpcClient>>,
 ) -> impl IntoResponse {
-    let latest_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let latest_blockhash = rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await.unwrap();
 
     let serialized_blockhash = bincode::serialize(&latest_blockhash).unwrap();
 
