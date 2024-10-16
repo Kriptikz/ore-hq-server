@@ -874,6 +874,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/stake", post(post_stake))
         .route("/stake-boost", post(post_stake_boost))
         .route("/unstake", post(post_unstake))
+        .route("/unstake-boost", post(post_unstake_boost))
         .route("/active-miners", get(get_connected_miners))
         .route("/timestamp", get(get_timestamp))
         .route("/miner/balance", get(get_miner_balance))
@@ -2119,6 +2120,134 @@ async fn post_stake_boost(
                 Err(e) => {
                     error!(target: "server_log", "{} stake transaction failed...", user_pubkey.to_string());
                     error!(target: "server_log", "Stake Tx Error: {:?}", e);
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!(target: "server_log", "stake boost with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct UnstakeBoostParams {
+    pubkey: String,
+    mint: String,
+    amount: u64,
+}
+
+async fn post_unstake_boost(
+    query_params: Query<UnstakeBoostParams>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+
+        let mint = match Pubkey::from_str(&query_params.mint) {
+            Ok(pk) => {
+                pk
+            },
+            Err(_) => {
+                error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Mint".to_string())
+                    .unwrap();
+            }
+        };
+
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!(target: "server_log", "Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        let ixs = tx.message.instructions.clone();
+
+        if ixs.len() > 1 {
+            error!(target: "server_log", "Too many instructions");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        }
+
+        if let Err(_) =
+            get_delegated_boost_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
+        {
+                error!(target: "server_log", "unstake-boost error: invalid delegate boost account for user: {}", user_pubkey.to_string());
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to unstake boost".to_string())
+                    .unwrap();
+        }
+
+        let base_ix = ore_miner_delegation::instruction::undelegate_boost(
+            user_pubkey,
+            wallet.miner_wallet.pubkey(),
+            mint,
+            query_params.amount,
+        );
+        let mut accts = Vec::new();
+        for account_index in ixs[0].accounts.clone() {
+            accts.push(tx.key(0, account_index.into()));
+        }
+
+        if ixs[0].data.ne(&base_ix.data) {
+            error!(target: "server_log", "data missmatch");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        } else {
+            info!(target: "server_log", "Valid undelegate boost tx, submitting.");
+
+            let hash = tx.get_recent_blockhash();
+            if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                error!(target: "server_log", "Failed to partially sign tx");
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Server Failed to sign tx.".to_string())
+                    .unwrap();
+            }
+
+            if !tx.is_signed() {
+                error!(target: "server_log", "Tx missing signer");
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Tx".to_string())
+                    .unwrap();
+            }
+
+            let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+            match result {
+                Ok(sig) => {
+                    let amount_dec =
+                        query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                    info!(target: "server_log", "Miner {} successfully undelegated boost of {} for {}.\nSig: {}", user_pubkey.to_string(), mint.to_string(), amount_dec, sig.to_string());
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .body("SUCCESS".to_string())
+                        .unwrap();
+                }
+                Err(e) => {
+                    error!(target: "server_log", "{} undelegate boost transaction failed...", user_pubkey.to_string());
+                    error!(target: "server_log", "Undelegate boost Tx Error: {:?}", e);
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to send tx".to_string())
