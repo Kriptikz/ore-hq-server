@@ -880,6 +880,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/balance", get(get_miner_balance))
         .route("/v2/miner/balance", get(get_miner_balance_v2))
         .route("/miner/stake", get(get_miner_stake))
+        .route("/miner/boost/stake", get(get_miner_boost_stake))
         .route("/stake-multiplier", get(get_stake_multiplier))
         // App RR Database routes
         .route(
@@ -1366,6 +1367,37 @@ async fn get_miner_stake(
             return Ok(dec_amount.to_string());
         } else {
             return Err("Failed to get token account balance".to_string());
+        }
+    } else {
+        return Err("Invalid pubkey".to_string());
+    }
+}
+
+
+
+async fn get_miner_boost_stake(
+    query_params: Query<PubkeyMintParam>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+) -> impl IntoResponse {
+    let mint = match Pubkey::from_str(&query_params.mint) {
+        Ok(pk) => {
+            pk
+        }
+        Err(_) => {
+            return Err("Invalid mint".to_string());
+        }
+    };
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        if let Ok(account) =
+            get_delegated_boost_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
+        {
+            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+            let dec_amount = (account.amount as f64).div(decimals);
+            return Ok(dec_amount.to_string());
+        } else {
+            return Err("Failed to get delgated boost account balance".to_string());
         }
     } else {
         return Err("Invalid pubkey".to_string());
