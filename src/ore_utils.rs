@@ -20,9 +20,11 @@ pub const ORE_TOKEN_DECIMALS: u8 = TOKEN_DECIMALS;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct MineEventWithBoosts {
+    pub balance: u64,
     pub difficulty: u64,
-    pub reward: u64,
+    pub last_hash_at: i64,
     pub timing: i64,
+    pub reward: u64,
     pub boost_1: u64,
     pub boost_2: u64,
     pub boost_3: u64,
