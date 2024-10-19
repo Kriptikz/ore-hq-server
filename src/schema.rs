@@ -75,6 +75,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    stake_accounts (id) {
+        id -> Integer,
+        pool_id -> Integer,
+        #[max_length = 44]
+        mint_pubkey -> Varchar,
+        #[max_length = 44]
+        staker_pubkey -> Varchar,
+        #[max_length = 44]
+        stake_pda -> Varchar,
+        rewards_balance -> Unsigned<Bigint>,
+        staked_balance -> Unsigned<Bigint>,
+        total_rewards_earned -> Unsigned<Bigint>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     submissions (id) {
         id -> Bigint,
         miner_id -> Integer,
@@ -108,6 +126,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     miners,
     pools,
     rewards,
+    stake_accounts,
     submissions,
     txns,
 );

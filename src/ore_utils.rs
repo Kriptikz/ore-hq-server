@@ -296,6 +296,44 @@ pub async fn get_original_proof(client: &RpcClient, authority: Pubkey) -> Result
     }
 }
 
+pub async fn get_pool_boost_stake(rpc_client: &RpcClient, authority: Pubkey) -> Vec<ore_boost_api::state::Stake> {
+    let managed_proof = Pubkey::find_program_address(
+        &[b"managed-proof-account", authority.as_ref()],
+        &ore_miner_delegation::id(),
+    );
+
+    let boost_mints = vec![
+        Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
+        Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
+        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
+    ];
+
+    // Get pools boost stake accounts
+    let mut boost_stake_acct_pdas = vec![];
+
+    for boost_mint in boost_mints {
+        let boost_account_pda = boost_pda(boost_mint);
+        let boost_stake_pda = stake_pda(managed_proof.0, boost_account_pda.0);
+        boost_stake_acct_pdas.push(boost_stake_pda.0);
+    }
+
+    let mut stake_acct = vec![];
+    if let Ok(accounts) = rpc_client.get_multiple_accounts(&boost_stake_acct_pdas).await {
+        for account in accounts {
+            if let Some(acc) = account {
+                if let Ok(a) = ore_boost_api::state::Stake::try_from_bytes(&acc.data) {
+                    stake_acct.push(a.clone());
+                    continue;
+                }
+            }
+        }
+    } else {
+        tracing::error!(target: "server_log", "Failed to get pool boost accounts.")
+    }
+
+    return stake_acct;
+}
+
 pub async fn get_proof(client: &RpcClient, authority: Pubkey) -> Result<Proof, String> {
     let proof_address = get_proof_pda(authority);
     let data = client.get_account_data(&proof_address).await;

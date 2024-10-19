@@ -9,6 +9,7 @@ use std::{
 };
 
 use ore_boost_api::state::{boost_pda, stake_pda};
+use ore_miner_delegation::pda::delegated_boost_pda;
 use steel::AccountDeserialize;
 use systems::{
     claim_system::claim_system, client_message_handler_system::client_message_handler_system,
@@ -79,6 +80,10 @@ mod systems;
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
 
+const ORE_BOOST_MINT: &str = "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp";
+const ORE_SOL_BOOST_MINT: &str = "DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN";
+const ORE_ISC_BOOST_MINT: &str = "meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb";
+
 #[derive(Clone)]
 enum ClientVersion {
     V1,
@@ -135,6 +140,10 @@ pub struct MessageInternalMineSuccess {
     total_balance: f64,
     rewards: u64,
     commissions: u64,
+    staker_rewards: u64,
+    ore_total_stake: u64,
+    ore_sol_total_stake: u64,
+    ore_isc_total_stake: u64,
     challenge_id: i32,
     challenge: [u8; 32],
     best_nonce: u64,
@@ -615,7 +624,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!(target: "server_log", "Failed to get commissions receiver account from database.");
             info!(target: "server_log", "Inserting Commissions receiver account...");
 
-            match app_database.signup_user_transaction(commission_pubkey.to_string(), wallet.pubkey().to_string()).await {
+            let ore_delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), commission_pubkey, Pubkey::from_str(ORE_BOOST_MINT).unwrap());
+            let ore_sol_delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), commission_pubkey, Pubkey::from_str(ORE_SOL_BOOST_MINT).unwrap());
+            let ore_isc_delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), commission_pubkey, Pubkey::from_str(ORE_ISC_BOOST_MINT).unwrap());
+
+            let res = app_database.signup_user_transaction(
+                commission_pubkey.to_string(),
+                wallet.pubkey().to_string(),
+                ore_delegated_boost_pda.0.to_string(),
+                ore_sol_delegated_boost_pda.0.to_string(),
+                ore_isc_delegated_boost_pda.0.to_string(),
+            ).await;
+
+            match res {
                 Ok(_) => {
                     info!(target: "server_log", "Successfully inserted Commissions receiver account...");
                     if let Ok(m) = app_database.get_miner_by_pubkey_str(commission_pubkey.to_string()).await {
@@ -1034,8 +1055,17 @@ async fn post_signup(
                 info!(target: "server_log", "No miner account exists. Signing up new user.");
             }
         }
+        let ore_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), user_pubkey, Pubkey::from_str(ORE_BOOST_MINT).unwrap());
+        let ore_sol_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), user_pubkey, Pubkey::from_str(ORE_SOL_BOOST_MINT).unwrap());
+        let ore_isc_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), user_pubkey, Pubkey::from_str(ORE_ISC_BOOST_MINT).unwrap());
 
-        let res = app_database.signup_user_transaction(user_pubkey.to_string(), wallet.miner_wallet.pubkey().to_string()).await;
+        let res = app_database.signup_user_transaction(
+            user_pubkey.to_string(),
+            wallet.miner_wallet.pubkey().to_string(),
+            ore_delegated_boost_pda.0.to_string(),
+            ore_sol_delegated_boost_pda.0.to_string(),
+            ore_isc_delegated_boost_pda.0.to_string(),
+        ).await;
 
         match res {
             Ok(_) => {
@@ -1101,7 +1131,17 @@ async fn post_signup_v2(
             }
         }
 
-        let res = app_database.signup_user_transaction(miner_pubkey.to_string(), wallet.miner_wallet.pubkey().to_string()).await;
+        let ore_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), miner_pubkey, Pubkey::from_str(ORE_BOOST_MINT).unwrap());
+        let ore_sol_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), miner_pubkey, Pubkey::from_str(ORE_SOL_BOOST_MINT).unwrap());
+        let ore_isc_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), miner_pubkey, Pubkey::from_str(ORE_ISC_BOOST_MINT).unwrap());
+
+        let res = app_database.signup_user_transaction(
+            miner_pubkey.to_string(),
+            wallet.miner_wallet.pubkey().to_string(),
+            ore_delegated_boost_pda.0.to_string(),
+            ore_sol_delegated_boost_pda.0.to_string(),
+            ore_isc_delegated_boost_pda.0.to_string(),
+        ).await;
 
         match res {
             Ok(_) => {

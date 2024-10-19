@@ -5,7 +5,7 @@ use diesel::{
 use tokio::time::Instant;
 use tracing::{error, info};
 
-use crate::{models, Miner, SubmissionWithId};
+use crate::{models, Miner, StakeAccount, SubmissionWithId, ORE_BOOST_MINT, ORE_ISC_BOOST_MINT, ORE_SOL_BOOST_MINT};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
@@ -706,6 +706,9 @@ impl AppDatabase {
         &self,
         user_pubkey: String,
         pool_authority_pubkey: String,
+        ore_boost_stake_pda: String,
+        ore_sol_boost_stake_pda: String,
+        ore_isc_boost_stake_pda: String,
     ) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let user_pk = user_pubkey.clone();
@@ -729,6 +732,27 @@ impl AppDatabase {
                         diesel::sql_query("INSERT INTO rewards (miner_id, pool_id) VALUES (?, ?)")
                             .bind::<Integer, _>(miner.id)
                             .bind::<Integer, _>(pool.id)
+                            .execute(conn)?;
+
+                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                            .bind::<Integer, _>(pool.id)
+                            .bind::<Text, _>(ORE_BOOST_MINT)
+                            .bind::<Text, _>(user_pubkey.clone())
+                            .bind::<Text, _>(ore_boost_stake_pda)
+                            .execute(conn)?;
+
+                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                            .bind::<Integer, _>(pool.id)
+                            .bind::<Text, _>(ORE_SOL_BOOST_MINT)
+                            .bind::<Text, _>(user_pubkey.clone())
+                            .bind::<Text, _>(ore_sol_boost_stake_pda)
+                            .execute(conn)?;
+
+                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                            .bind::<Integer, _>(pool.id)
+                            .bind::<Text, _>(ORE_ISC_BOOST_MINT)
+                            .bind::<Text, _>(user_pubkey)
+                            .bind::<Text, _>(ore_isc_boost_stake_pda)
                             .execute(conn)
                     })
                 })
@@ -757,8 +781,77 @@ impl AppDatabase {
         } else {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
+    }
 
+    pub async fn get_staker_accounts_for_mint(
+        &self,
+        m_pubkey: String,
+        last_id: i32,
+    ) -> Result<Vec<StakeAccount>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM staker_accounts s WHERE s.mint = ? AND s.id > ? ORDER BY s.id DESC LIMIT 500")
+                        .bind::<Text, _>(m_pubkey)
+                        .bind::<Integer, _>(last_id)
+                        .load::<StakeAccount>(conn)
+                })
+                .await;
 
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
 
+    pub async fn add_new_staker_account(
+        &self,
+        stake_account: models::InsertStakeAccount
+    ) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                .bind::<Integer, _>(stake_account.pool_id)
+                .bind::<Text, _>(stake_account.mint_pubkey)
+                .bind::<Text, _>(stake_account.staker_pubkey)
+                .bind::<Text, _>(stake_account.stake_pda)
+                .execute(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        if query != 1 {
+                            return Err(AppDatabaseError::FailedToInsertRow);
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
     }
 }
