@@ -9,8 +9,9 @@ use std::{
 };
 
 use ore_boost_api::state::{boost_pda, stake_pda};
-use ore_miner_delegation::pda::delegated_boost_pda;
-use steel::AccountDeserialize;
+use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
+use solana_account_decoder::UiAccountEncoding;
+use steel::AccountDeserialize as _;
 use systems::{
     claim_system::claim_system, client_message_handler_system::client_message_handler_system,
     handle_ready_clients_system::handle_ready_clients_system,
@@ -49,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
     rpc_client::SerializableTransaction,
-    rpc_config::RpcSendTransactionConfig,
+    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig}, rpc_filter::{Memcmp, RpcFilterType},
 };
 use solana_sdk::{
     commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, transaction::Transaction
@@ -142,9 +143,6 @@ pub struct MessageInternalMineSuccess {
     rewards: u64,
     commissions: u64,
     staker_rewards: u64,
-    ore_total_stake: u64,
-    ore_sol_total_stake: u64,
-    ore_isc_total_stake: u64,
     challenge_id: i32,
     challenge: [u8; 32],
     best_nonce: u64,
@@ -2830,3 +2828,68 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
+
+async fn update_delegate_boost_stake_accounts(
+    mining_pubkey: Pubkey,
+    app_database: &Arc<AppDatabase>,
+    rpc_client: &Arc<RpcClient>
+) {
+    let managed_proof_authority_pda = managed_proof_pda(mining_pubkey);
+    let program_accounts = match rpc_client.get_program_accounts_with_config(
+        &ore_miner_delegation::id(),
+        RpcProgramAccountsConfig {
+            filters: Some(vec![RpcFilterType::DataSize(56), RpcFilterType::Memcmp(Memcmp::new_raw_bytes(16, managed_proof_authority_pda.0.to_bytes().into()))]),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Finalized}),
+                min_context_slot: None,
+            },
+            with_context: None,
+        }
+    ).await {
+            Ok(pa) => {
+                pa
+            },
+            Err(e) => {
+                tracing::error!(target: "server_logs", "Failed to get program_accounts. Error: {:?}", e);
+                return;
+            }
+
+    };
+
+    tracing::info!(target: "server_log", "Found {} program accounts", program_accounts.len());
+
+    let mut delegated_boosts_to_update = vec![];
+    for program_account in program_accounts.iter() {
+        if let Ok(delegate_boost_acct) = DelegatedBoost::try_from_bytes(&program_account.1.data) {
+            let updated_stake_account = UpdateStakeAccount {
+                stake_pda: program_account.0.to_string(),
+                staked_balance: delegate_boost_acct.amount,
+            };
+            delegated_boosts_to_update.push(updated_stake_account);
+        }
+    }
+
+    tracing::info!(target: "server_log", "Found {} delegated_boosts.", delegated_boosts_to_update.len());
+    let instant = Instant::now();
+    let batch_size = 200;
+    tracing::info!(target: "server_log", "Updating stake accounts.");
+    if delegated_boosts_to_update.len() > 0 {
+        for (i, batch) in delegated_boosts_to_update.chunks(batch_size).enumerate() {
+            let instant = Instant::now();
+            tracing::info!(target: "server_log", "Updating batch {}", i);
+            while let Err(_) = app_database.update_stake_accounts_staked_balance(batch.to_vec()).await {
+                tracing::info!(target: "server_log", "Failed to update stake_account staked_balance in db. Retrying...");
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            tracing::info!(target: "server_log", "Updated staked_account batch {} in {}ms", i, instant.elapsed().as_millis());
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        tracing::info!(target: "server_log", "Successfully updated stake_accounts");
+    }
+    tracing::info!(target: "server_log", "Updated stake_accounts in {}ms", instant.elapsed().as_millis());
+}
+
+
+
