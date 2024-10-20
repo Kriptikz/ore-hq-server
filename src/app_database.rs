@@ -783,6 +783,41 @@ impl AppDatabase {
         };
     }
 
+    pub async fn get_stake_accounts(
+        &self,
+        pool_id: i32,
+        last_id: i32,
+    ) -> Result<Vec<StakeAccount>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM stake_accounts s WHERE s.pool_id = ? AND s.id > ? ORDER BY s.id DESC LIMIT 500")
+                        .bind::<Integer, _>(pool_id)
+                        .bind::<Integer, _>(last_id)
+                        .load::<StakeAccount>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
     pub async fn get_staker_accounts_for_mint(
         &self,
         pool_id: i32,
@@ -909,6 +944,57 @@ impl AppDatabase {
                         &stake_accts
                             .iter()
                             .map(|sa| format!("WHEN stake_pda = '{}' THEN {}", sa.stake_pda, sa.staked_balance))
+                            .collect::<Vec<_>>()
+                            .join(" ") +
+                        " END WHERE stake_pda IN (" +
+                        &stake_accts
+                            .iter()
+                            .map(|sa| format!("'{}'", sa.stake_pda.clone()))
+                            .collect::<Vec<_>>()
+                            .join(",") +
+                        ")"
+                    );
+                    query.execute(conn)
+                })
+                .await;
+
+            match res {
+
+                Ok(interaction) => match interaction {
+                    Ok(_query) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "update stake_account query error: {:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "update stake_account interaction error: {:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn update_stake_accounts_rewards(
+        &self,
+        stake_accts: Vec<models::UpdateStakeAccountRewards>,
+    ) -> Result<(), AppDatabaseError> {
+        let id = uuid::Uuid::new_v4();
+        let instant = Instant::now();
+        tracing::info!(target: "server_log", "{} - Getting db pool connection.", id);
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            tracing::info!(target: "server_log", "{} - Got db pool connection in {}ms.", id, instant.elapsed().as_millis());
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    let query = diesel::sql_query(
+                        "UPDATE stake_accounts SET rewards_balance = CASE ".to_string() +
+                        &stake_accts
+                            .iter()
+                            .map(|sa| format!("WHEN stake_pda = '{}' THEN rewards_balance + {}", sa.stake_pda, sa.rewards_balance))
                             .collect::<Vec<_>>()
                             .join(" ") +
                         " END WHERE stake_pda IN (" +
