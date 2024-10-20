@@ -229,3 +229,11 @@ pub struct UpdateStakeAccount {
     pub stake_pda: String,
     pub staked_balance: u64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::stake_accounts)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct UpdateStakeAccountRewards {
+    pub stake_pda: String,
+    pub rewards_balance: u64,
+}
