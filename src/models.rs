@@ -69,7 +69,7 @@ pub struct InsertClaim {
     pub amount: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::schema::miners)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Miner {
@@ -207,8 +207,6 @@ pub struct InsertStakeAccount {
     pub mint_pubkey: String,
     pub staker_pubkey: String,
     pub stake_pda: String,
-    pub rewards_balance: u64,
-    pub staked_balance: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
@@ -221,5 +219,13 @@ pub struct StakeAccount {
     pub staker_pubkey: String,
     pub stake_pda: String,
     pub rewards_balance: u64,
+    pub staked_balance: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::schema::stake_accounts)]
+#[diesel(check_for_backend(diesel::mysql::Mysql))]
+pub struct UpdateStakeAccount {
+    pub stake_pda: String,
     pub staked_balance: u64,
 }

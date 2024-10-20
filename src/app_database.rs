@@ -734,21 +734,21 @@ impl AppDatabase {
                             .bind::<Integer, _>(pool.id)
                             .execute(conn)?;
 
-                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, stake_pda) VALUES (?, ?, ?, ?)")
                             .bind::<Integer, _>(pool.id)
                             .bind::<Text, _>(ORE_BOOST_MINT)
                             .bind::<Text, _>(user_pubkey.clone())
                             .bind::<Text, _>(ore_boost_stake_pda)
                             .execute(conn)?;
 
-                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, stake_pda) VALUES (?, ?, ?, ?)")
                             .bind::<Integer, _>(pool.id)
                             .bind::<Text, _>(ORE_SOL_BOOST_MINT)
                             .bind::<Text, _>(user_pubkey.clone())
                             .bind::<Text, _>(ore_sol_boost_stake_pda)
                             .execute(conn)?;
 
-                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
+                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, stake_pda) VALUES (?, ?, ?, ?)")
                             .bind::<Integer, _>(pool.id)
                             .bind::<Text, _>(ORE_ISC_BOOST_MINT)
                             .bind::<Text, _>(user_pubkey)
@@ -785,15 +785,19 @@ impl AppDatabase {
 
     pub async fn get_staker_accounts_for_mint(
         &self,
-        m_pubkey: String,
+        pool_id: i32,
+        mint_pubkey: String,
         last_id: i32,
+        minimum_balance: u64,
     ) -> Result<Vec<StakeAccount>, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT * FROM staker_accounts s WHERE s.mint = ? AND s.id > ? ORDER BY s.id DESC LIMIT 500")
-                        .bind::<Text, _>(m_pubkey)
+                    diesel::sql_query("SELECT * FROM stake_accounts s WHERE s.pool_id = ? AND s.mint_pubkey = ? AND s.id > ? AND s.staked_balance >= ? ORDER BY s.id DESC LIMIT 500")
+                        .bind::<Integer, _>(pool_id)
+                        .bind::<Text, _>(mint_pubkey)
                         .bind::<Integer, _>(last_id)
+                        .bind::<Unsigned<BigInt>, _>(minimum_balance)
                         .load::<StakeAccount>(conn)
                 })
                 .await;
@@ -818,24 +822,58 @@ impl AppDatabase {
         };
     }
 
-    pub async fn add_new_staker_account(
+    pub async fn get_miner_accounts(
         &self,
-        stake_account: models::InsertStakeAccount
-    ) -> Result<(), AppDatabaseError> {
+        last_id: i32,
+    ) -> Result<Vec<Miner>, AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
-                diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, staker_pda) VALUES (?, ?, ?, ?)")
-                .bind::<Integer, _>(stake_account.pool_id)
-                .bind::<Text, _>(stake_account.mint_pubkey)
-                .bind::<Text, _>(stake_account.staker_pubkey)
-                .bind::<Text, _>(stake_account.stake_pda)
-                .execute(conn)
-            }).await;
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM miners m WHERE m.id > ? ORDER BY m.id DESC LIMIT 500")
+                        .bind::<Integer, _>(last_id)
+                        .load::<Miner>(conn)
+                })
+                .await;
 
             match res {
                 Ok(interaction) => match interaction {
                     Ok(query) => {
-                        if query != 1 {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn add_new_stake_accounts_batch(
+        &self,
+        new_stake_accounts: Vec<models::InsertStakeAccount>,
+    ) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    insert_into(crate::schema::stake_accounts::dsl::stake_accounts)
+                        .values(&new_stake_accounts)
+                        .on_conflict_do_nothing()
+                        .execute(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        info!(target: "server_log", "New Stake Accounts inserted: {}", query);
+                        if query == 0 {
                             return Err(AppDatabaseError::FailedToInsertRow);
                         }
                         return Ok(());
@@ -847,6 +885,57 @@ impl AppDatabase {
                 },
                 Err(e) => {
                     error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn update_stake_accounts_staked_balance(
+        &self,
+        stake_accts: Vec<models::UpdateStakeAccount>,
+    ) -> Result<(), AppDatabaseError> {
+        let id = uuid::Uuid::new_v4();
+        let instant = Instant::now();
+        tracing::info!(target: "server_log", "{} - Getting db pool connection.", id);
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            tracing::info!(target: "server_log", "{} - Got db pool connection in {}ms.", id, instant.elapsed().as_millis());
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    let query = diesel::sql_query(
+                        "UPDATE stake_accounts SET staked_balance = CASE ".to_string() +
+                        &stake_accts
+                            .iter()
+                            .map(|sa| format!("WHEN stake_pda = '{}' THEN {}", sa.stake_pda, sa.staked_balance))
+                            .collect::<Vec<_>>()
+                            .join(" ") +
+                        " END WHERE stake_pda IN (" +
+                        &stake_accts
+                            .iter()
+                            .map(|sa| format!("'{}'", sa.stake_pda.clone()))
+                            .collect::<Vec<_>>()
+                            .join(",") +
+                        ")"
+                    );
+                    query.execute(conn)
+                })
+                .await;
+
+            match res {
+
+                Ok(interaction) => match interaction {
+                    Ok(_query) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "update stake_account query error: {:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "update stake_account interaction error: {:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }
