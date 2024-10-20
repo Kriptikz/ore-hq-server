@@ -38,7 +38,7 @@ use axum::{
 };
 use axum_extra::{headers::authorization::Basic, TypedHeader};
 use base64::{prelude::BASE64_STANDARD, Engine};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_utils::{
@@ -76,6 +76,7 @@ mod proof_migration;
 mod routes;
 mod schema;
 mod systems;
+mod scripts;
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
@@ -190,6 +191,13 @@ mod ore_utils;
 #[derive(Parser, Debug)]
 #[command(version, author, about, long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Commands,
+
+}
+
+#[derive(Parser, Debug)]
+struct ServeArgs {
     #[arg(
         long,
         value_name = "priority fee",
@@ -225,11 +233,22 @@ struct Args {
     migrate: bool,
 }
 
+
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    #[command(about = "Serve the pool webserver for mining.")]
+    Serve(ServeArgs),
+    #[command(about = "Generate the stake accounts for miners. (Only needs to be ran if old miners need stake accounts generated)")]
+    GenStakeAccounts,
+    #[command(about = "Manually run the update for stake accounts balances from on-chain")]
+    UpdateStakeAccounts,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
-    let args = Args::parse();
-
+    let cmd_args = Args::parse();
     let server_logs = tracing_appender::rolling::daily("./logs", "ore-hq-server.log");
     let (server_logs, _guard) = tracing_appender::non_blocking(server_logs);
     let server_log_layer = tracing_subscriber::fmt::layer()
@@ -251,6 +270,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(submission_log_layer)
         .init();
 
+    match cmd_args.command {
+        Commands::Serve(args) => {
+            serve(args).await
+        }
+        Commands::GenStakeAccounts => {
+            scripts::gen_stake_accounts().await
+        }
+        Commands::UpdateStakeAccounts => {
+            scripts::update_stake_accounts().await
+        }
+    }
+}
+
+async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     // load envs
     let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
     let fee_wallet_path_str =
@@ -953,6 +986,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
 
 async fn get_pool_authority_pubkey(
     Extension(wallet): Extension<Arc<WalletExtension>>,
