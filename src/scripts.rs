@@ -1,6 +1,5 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
-use ore_api::state::proof_pda;
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}, rpc_filter::{Memcmp, RpcFilterType}};
@@ -95,7 +94,7 @@ pub async fn gen_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
     if new_stake_accounts.len() > 0 {
         println!("Inserting {} newly generated stake accounts into db.", new_stake_accounts.len());
         for (i, batch) in new_stake_accounts.chunks(batch_size).enumerate() {
-            println!("Batch {}, Size: {}", i, new_stake_accounts.len());
+            println!("Batch {}, Size: {}", i, batch_size);
             while let Err(_) =
                 app_database.add_new_stake_accounts_batch(batch.to_vec()).await
             {

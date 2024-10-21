@@ -864,7 +864,7 @@ impl AppDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT * FROM miners m WHERE m.id > ? ORDER BY m.id DESC LIMIT 500")
+                    diesel::sql_query("SELECT * FROM miners m WHERE m.id > ? ORDER BY m.id ASC LIMIT 500")
                         .bind::<Integer, _>(last_id)
                         .load::<Miner>(conn)
                 })
