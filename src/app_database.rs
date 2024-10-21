@@ -828,7 +828,7 @@ impl AppDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT * FROM stake_accounts s WHERE s.pool_id = ? AND s.mint_pubkey = ? AND s.id > ? AND s.staked_balance >= ? ORDER BY s.id DESC LIMIT 500")
+                    diesel::sql_query("SELECT * FROM stake_accounts s WHERE s.pool_id = ? AND s.mint_pubkey = ? AND s.id > ? AND s.staked_balance >= ? ORDER BY s.id ASC LIMIT 500")
                         .bind::<Integer, _>(pool_id)
                         .bind::<Text, _>(mint_pubkey)
                         .bind::<Integer, _>(last_id)
