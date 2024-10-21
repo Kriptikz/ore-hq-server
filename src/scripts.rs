@@ -264,14 +264,18 @@ pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
     let mut updated_stake_accounts = vec![];
 
 
+    let mut total_token_balances = 0;
     for delegate_boost in delegated_boosts.iter() {
         let updated_stake_account = UpdateStakeAccount {
             stake_pda: delegate_boost.0.to_string(),
             staked_balance: delegate_boost.1.amount,
         };
+        total_token_balances += delegate_boost.1.amount;
 
         updated_stake_accounts.push(updated_stake_account);
     }
+
+    println!("Total tokens delegated: {}", total_token_balances);
 
     let instant = Instant::now();
     let batch_size = 200;
