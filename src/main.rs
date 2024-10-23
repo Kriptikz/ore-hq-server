@@ -43,7 +43,7 @@ use clap::{Parser, Subcommand};
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_utils::{
-    get_config, get_delegated_boost_account, get_delegated_stake_account, get_ore_mint, get_original_proof, get_proof, get_register_ix, ORE_TOKEN_DECIMALS
+    get_config, get_delegated_boost_account, get_delegated_boost_account_v2, get_delegated_stake_account, get_ore_mint, get_original_proof, get_proof, get_register_ix, ORE_TOKEN_DECIMALS
 };
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::{Deserialize, Serialize};
@@ -933,6 +933,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/v2/miner/balance", get(get_miner_balance_v2))
         .route("/miner/stake", get(get_miner_stake))
         .route("/miner/boost/stake", get(get_miner_boost_stake))
+        .route("/v2/miner/boost/stake", get(get_miner_boost_stake_v2))
         .route("/stake-multiplier", get(get_stake_multiplier))
         .route("/boost-multiplier", get(get_boost_multiplier))
         // App RR Database routes
@@ -1471,6 +1472,35 @@ async fn get_miner_boost_stake(
             return Ok(dec_amount.to_string());
         } else {
             return Err("Failed to get delgated boost account balance".to_string());
+        }
+    } else {
+        return Err("Invalid pubkey".to_string());
+    }
+}
+
+async fn get_miner_boost_stake_v2(
+    query_params: Query<PubkeyMintParam>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+) -> impl IntoResponse {
+    let mint = match Pubkey::from_str(&query_params.mint) {
+        Ok(pk) => {
+            pk
+        }
+        Err(_) => {
+            return Err("Invalid mint".to_string());
+        }
+    };
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        if let Ok(account) =
+            get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
+        {
+            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+            let dec_amount = (account.amount as f64).div(decimals);
+            return Ok(dec_amount.to_string());
+        } else {
+            return Err("Failed to get delgated boost account v2 balance".to_string());
         }
     } else {
         return Err("Invalid pubkey".to_string());

@@ -8,7 +8,7 @@ use ore_api::{
     ID as ORE_ID,
 };
 use ore_boost_api::state::{boost_pda, stake_pda};
-use ore_miner_delegation::{instruction, pda::managed_proof_pda, state::{DelegatedBoost, DelegatedStake}, utils::AccountDeserialize};
+use ore_miner_delegation::{instruction, pda::managed_proof_pda, state::{DelegatedBoost, DelegatedBoostV2, DelegatedStake}, utils::AccountDeserialize};
 use ore_utils::event;
 pub use steel::AccountDeserialize as _;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -137,6 +137,28 @@ pub async fn get_delegated_boost_account(
     }
 }
 
+pub async fn get_delegated_boost_account_v2(
+    client: &RpcClient,
+    staker: Pubkey,
+    miner: Pubkey,
+    mint: Pubkey,
+) -> Result<ore_miner_delegation::state::DelegatedBoost, String> {
+    let data = client
+        .get_account_data(&get_delegated_boost_v2_pda(staker, miner, mint))
+        .await;
+    match data {
+        Ok(data) => {
+            let delegated_boost = DelegatedBoostV2::try_from_bytes(&data);
+            if let Ok(delegated_boost) = delegated_boost {
+                return Ok(*delegated_boost);
+            } else {
+                return Err("Failed to parse delegated boost v2 account".to_string());
+            }
+        }
+        Err(_) => return Err("Failed to get delegated boost v2 account".to_string()),
+    }
+}
+
 pub fn get_delegated_stake_pda(staker: Pubkey, miner: Pubkey) -> Pubkey {
     let managed_proof = Pubkey::find_program_address(
         &[b"managed-proof-account", miner.as_ref()],
@@ -171,6 +193,25 @@ pub fn get_delegated_boost_pda(staker: Pubkey, miner: Pubkey, mint: Pubkey) -> P
     )
     .0
 }
+
+pub fn get_delegated_boost_v2_pda(staker: Pubkey, miner: Pubkey, mint: Pubkey) -> Pubkey {
+    let managed_proof = Pubkey::find_program_address(
+        &[b"managed-proof-account", miner.as_ref()],
+        &ore_miner_delegation::id(),
+    );
+
+    Pubkey::find_program_address(
+        &[
+            ore_miner_delegation::consts::DELEGATED_BOOST_V2,
+            staker.as_ref(),
+            mint.as_ref(),
+            managed_proof.0.as_ref(),
+        ],
+        &ore_miner_delegation::id(),
+    )
+    .0
+}
+
 
 pub async fn get_config(client: &RpcClient) -> Result<ore_api::state::Config, String> {
     let data = client.get_account_data(&CONFIG_ADDRESS).await;
