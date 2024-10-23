@@ -231,7 +231,7 @@ pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
     let program_accounts = match rpc_client.get_program_accounts_with_config(
         &ore_miner_delegation::id(),
         RpcProgramAccountsConfig {
-            filters: Some(vec![RpcFilterType::DataSize(56), RpcFilterType::Memcmp(Memcmp::new_raw_bytes(16, managed_proof_authority_pda.0.to_bytes().into()))]),
+            filters: Some(vec![RpcFilterType::DataSize(152), RpcFilterType::Memcmp(Memcmp::new_raw_bytes(16, managed_proof_authority_pda.0.to_bytes().into()))]),
             account_config: RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
                 data_slice: None,
@@ -255,7 +255,7 @@ pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut delegated_boosts = HashMap::new();
     for program_account in program_accounts.iter() {
-        if let Ok(delegate_boost_acct) = DelegatedBoost::try_from_bytes(&program_account.1.data) {
+        if let Ok(delegate_boost_acct) = DelegatedBoostV2::try_from_bytes(&program_account.1.data) {
             delegated_boosts.insert(program_account.0, delegate_boost_acct);
         }
     }

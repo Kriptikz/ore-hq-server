@@ -6,3 +6,4 @@ pub mod pool_submission_system;
 pub mod proof_tracking_system;
 pub mod pool_mine_success_system;
 pub mod message_text_all_clients_system;
+pub mod delegate_boost_tracking_system;
