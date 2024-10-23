@@ -142,7 +142,7 @@ pub async fn get_delegated_boost_account_v2(
     staker: Pubkey,
     miner: Pubkey,
     mint: Pubkey,
-) -> Result<ore_miner_delegation::state::DelegatedBoost, String> {
+) -> Result<ore_miner_delegation::state::DelegatedBoostV2, String> {
     let data = client
         .get_account_data(&get_delegated_boost_v2_pda(staker, miner, mint))
         .await;

@@ -21,7 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
     ore_utils::{get_managed_proof_token_ata, get_proof_pda},
-    systems::{message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system},
+    systems::{delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system},
 };
 
 use self::models::*;
@@ -236,8 +236,6 @@ struct ServeArgs {
 enum Commands {
     #[command(about = "Serve the pool webserver for mining.")]
     Serve(ServeArgs),
-    #[command(about = "Generate the stake accounts for miners. (Only needs to be ran if old miners need stake accounts generated)")]
-    GenStakeAccounts,
     #[command(about = "Manually run the update for stake accounts balances from on-chain")]
     UpdateStakeAccounts,
 }
@@ -270,9 +268,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cmd_args.command {
         Commands::Serve(args) => {
             serve(args).await
-        }
-        Commands::GenStakeAccounts => {
-            scripts::gen_stake_accounts().await
         }
         Commands::UpdateStakeAccounts => {
             scripts::update_stake_accounts().await
@@ -784,14 +779,26 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let app_wallet = wallet_extension.clone();
     let app_proof = proof_ext.clone();
     let app_last_challenge = last_challenge.clone();
+    let ws_url = rpc_ws_url.clone();
     // Establish webocket connection for tracking pool proof changes.
     tokio::spawn(async move {
         proof_tracking_system(
-            rpc_ws_url,
+            ws_url,
             app_wallet.miner_wallet.clone(),
             app_proof,
             app_last_challenge
         ).await;
+    });
+
+    let app_wallet = wallet_extension.clone();
+    let app_app_database = app_database.clone();
+    tokio::spawn(async move {
+        delegate_boost_tracking_system(
+            rpc_ws_url,
+            app_wallet.miner_wallet.pubkey().clone(),
+            app_app_database,
+        )
+        .await;
     });
 
     let (client_message_sender, client_message_receiver) =

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
-use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
+use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoostV2, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}, rpc_filter::{Memcmp, RpcFilterType}};
 use solana_sdk::{
@@ -9,105 +9,6 @@ use solana_sdk::{
 use tokio::time::Instant;
 
 use crate::{app_database::AppDatabase, InsertStakeAccount, UpdateStakeAccount};
-
-pub async fn gen_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Generating stake accounts for miners");
-
-    // load envs
-    let wallet_path_str = std::env::var("WALLET_PATH").expect("WALLET_PATH must be set.");
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
-
-    let wallet_path = std::path::Path::new(&wallet_path_str);
-
-    if !wallet_path.exists() {
-        println!("Failed to load wallet at: {}", wallet_path_str);
-        return Err("Failed to find wallet path.".into());
-    }
-
-    let wallet = read_keypair_file(wallet_path)
-        .expect("Failed to load keypair from file: {wallet_path_str}");
-    println!("loaded wallet {}", wallet.pubkey().to_string());
-
-    let app_database = Arc::new(AppDatabase::new(database_url));
-
-    let pool = match app_database.get_pool_by_authority_pubkey(wallet.pubkey().to_string()).await {
-        Ok(p) => {
-            p
-        },
-        Err(_) => {
-            println!("Failed to get pool data from database");
-            return Ok(());
-        }
-    };
-
-    println!("Fetching all miner accounts");
-    let mut miners = vec![]; 
-    let mut last_id: i32 = 0;
-    loop {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        match app_database.get_miner_accounts(last_id).await {
-            Ok(d) => {
-                if d.len() > 0 {
-                    for ac in d.iter() {
-                        last_id = ac.id;
-                        miners.push(ac.clone());
-                    }
-                }
-                
-                if d.len() < 500 {
-                    break;
-                }
-            },
-            Err(e) => {
-                println!("Failed to get miner accounts for stake account generation.");
-                println!("Error: {:?}", e);
-            }
-        };
-    }
-
-    println!("Found {} miners", miners.len());
-
-    let boost_mints = vec![
-        Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-        Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-    ];
-
-    let mut new_stake_accounts = vec![];
-
-    println!("Generating miners new stake account insertion datas");
-    for miner in miners {
-        for boost_mint in &boost_mints {
-            let delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), Pubkey::from_str(&miner.pubkey).unwrap(), *boost_mint);
-            let new_stake_account = InsertStakeAccount {
-                pool_id: pool.id,
-                mint_pubkey: boost_mint.to_string(),
-                staker_pubkey: miner.pubkey.clone(),
-                stake_pda: delegated_boost_pda.0.to_string(),
-            };
-
-            new_stake_accounts.push(new_stake_account);
-        }
-    }
-
-    let batch_size = 500;
-    if new_stake_accounts.len() > 0 {
-        println!("Inserting {} newly generated stake accounts into db.", new_stake_accounts.len());
-        for (i, batch) in new_stake_accounts.chunks(batch_size).enumerate() {
-            println!("Batch {}, Size: {}", i, batch_size);
-            while let Err(_) =
-                app_database.add_new_stake_accounts_batch(batch.to_vec()).await
-            {
-                println!("Failed to add new stake accounts batch to db. Retrying...");
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        println!("Successfully added new stake accounts batch");
-    }
-
-    Ok(())
-}
 
 pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
     println!("Updating stake accounts from on-chain data");
