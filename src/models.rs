@@ -207,6 +207,7 @@ pub struct InsertStakeAccount {
     pub mint_pubkey: String,
     pub staker_pubkey: String,
     pub stake_pda: String,
+    pub staked_balance: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]

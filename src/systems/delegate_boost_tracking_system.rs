@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, str::FromStr, sync::Arc, time::Duration};
 
 use futures::StreamExt;
 use ore_miner_delegation::{pda::managed_proof_pda, state::DelegatedBoostV2, utils::AccountDeserialize};
@@ -7,7 +7,7 @@ use solana_client::{nonblocking::pubsub_client::PubsubClient, rpc_config::{RpcAc
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use tokio::{sync::mpsc::{self, UnboundedReceiver}, time::Instant};
 
-use crate::{app_database::AppDatabase, UpdateStakeAccount};
+use crate::{app_database::AppDatabase, InsertStakeAccount, UpdateStakeAccount};
 
 const STAKE_ACCOUNT_DB_UPDATE_INTERVAL_SECS: u64 = 2;
 
@@ -18,8 +18,16 @@ pub async fn delegate_boost_tracking_system(
 ) {
     let (updates_sender, update_receiver) = mpsc::unbounded_channel::<(Pubkey, DelegatedBoostV2)>();
 
+    let pool = match app_database.get_pool_by_authority_pubkey(mining_pubkey.to_string()).await {
+        Ok(p) => {
+            p
+        },
+        Err(_) => {
+            panic!("Failed to get pool data from database");
+        }
+    };
     tokio::spawn(async move {
-        update_database_staked_balances(update_receiver, app_database).await;
+        update_database_staked_balances(update_receiver, app_database, pool.id).await;
     });
 
     loop {
@@ -71,7 +79,31 @@ pub async fn delegate_boost_tracking_system(
     }
 }
 
-async fn update_database_staked_balances(mut receiver: UnboundedReceiver<(Pubkey, DelegatedBoostV2)>, app_database: Arc<AppDatabase>) {
+async fn update_database_staked_balances(mut receiver: UnboundedReceiver<(Pubkey, DelegatedBoostV2)>, app_database: Arc<AppDatabase>, pool_id: i32) {
+    tracing::info!(target: "server_log", "Fetching boost stake accounts from db...");
+    let mut db_boost_stake_accounts = HashSet::new(); 
+    let mut last_id: i32 = 0;
+    loop {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        match app_database.get_stake_accounts(pool_id, last_id).await {
+            Ok(d) => {
+                if d.len() > 0 {
+                    for ac in d.iter() {
+                        last_id = ac.id;
+                        db_boost_stake_accounts.insert(Pubkey::from_str(&ac.stake_pda).expect("Db should only store a pubkey string here!"));
+                    }
+                }
+                
+                if d.len() < 500 {
+                    break;
+                }
+            },
+            Err(e) => {
+                tracing::error!(target: "server_log", "Failed to get staker accounts for stake account updates.");
+                tracing::error!(target: "server_log", "Error: {:?}", e);
+            }
+        };
+    }
     let mut delegate_boost_accounts = HashMap::new();
     let mut update_stake_accounts_timer = Instant::now();
     loop {
@@ -87,31 +119,62 @@ async fn update_database_staked_balances(mut receiver: UnboundedReceiver<(Pubkey
         if delegate_boost_accounts.len() > 0 {
             if update_stake_accounts_timer.elapsed().as_secs() >= STAKE_ACCOUNT_DB_UPDATE_INTERVAL_SECS {
                 // Update database staked balances
+                let mut ba_inserts = Vec::new();
                 let mut ba_updates = Vec::new();
                 for ba in delegate_boost_accounts {
-                    ba_updates.push(UpdateStakeAccount {
-                        stake_pda: ba.0.to_string(),
-                        staked_balance: ba.1.amount,
-                    });
+                    if let Some(_) = db_boost_stake_accounts.get(&ba.0) {
+                        ba_updates.push(UpdateStakeAccount {
+                            stake_pda: ba.0.to_string(),
+                            staked_balance: ba.1.amount,
+                        });
+                    } else {
+                        ba_inserts.push(InsertStakeAccount {
+                            pool_id,
+                            mint_pubkey: ba.1.mint.to_string(),
+                            staker_pubkey: ba.1.authority.to_string(),
+                            stake_pda: ba.0.to_string(),
+                            staked_balance: ba.1.amount,
+                        })
+                    }
                 }
 
                 let instant = Instant::now();
                 let batch_size = 200;
-                println!("Updating stake accounts.");
+                tracing::info!(target: "server_log", "Updating stake accounts.");
                 if ba_updates.len() > 0 {
                     for (i, batch) in ba_updates.chunks(batch_size).enumerate() {
                         let instant = Instant::now();
-                        println!("Updating batch {}", i);
+                        tracing::info!(target: "server_log", "Updating batch {}", i);
                         while let Err(_) = app_database.update_stake_accounts_staked_balance(batch.to_vec()).await {
-                            println!("Failed to update stake_account staked_balance in db. Retrying...");
+                            tracing::info!(target: "server_log", "Failed to update stake_account staked_balance in db. Retrying...");
                             tokio::time::sleep(Duration::from_millis(500)).await;
                         }
-                        println!("Updated staked_account batch {} in {}ms", i, instant.elapsed().as_millis());
+                        tracing::info!(target: "server_log", "Updated staked_account batch {} in {}ms", i, instant.elapsed().as_millis());
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
-                    println!("Successfully updated stake_accounts");
+                    tracing::info!(target: "server_log", "Successfully updated stake_accounts");
                 }
-                println!("Updated stake_accounts in {}ms", instant.elapsed().as_millis());
+                tracing::info!(target: "server_log", "Updated stake_accounts in {}ms", instant.elapsed().as_millis());
+
+                let batch_size = 500;
+                if ba_inserts.len() > 0 {
+                    tracing::info!(target: "server_log", "Inserting {} new generated stake accounts into db.", ba_inserts.len());
+                    for (i, batch) in ba_inserts.chunks(batch_size).enumerate() {
+                        tracing::info!(target: "server_log", "Batch {}, Size: {}", i, batch_size);
+                        while let Err(_) =
+                            app_database.add_new_stake_accounts_batch(batch.to_vec()).await
+                        {
+                            tracing::info!(target: "server_log", "Failed to add new stake accounts batch to db. Retrying...");
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        }
+
+                        for item in batch {
+                            db_boost_stake_accounts.insert(Pubkey::from_str(&item.stake_pda).expect("Db value should always be valid pubkey"));
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                    tracing::info!(target: "server_log", "Successfully added new stake accounts batch");
+                }
 
 
                 // reset timer
