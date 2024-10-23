@@ -13,7 +13,7 @@ futures-util = { version = "0.3.30", default-features = false, features = ["sink
 ore-api = "2.1.0"
 ore-boost-api = "0.2.0"
 ore-utils = "2.1.0"
-ore-miner-delegation = { version = "0.5.0", features = ["no-entrypoint"]}
+ore-miner-delegation = { version = "0.6.0", features = ["no-entrypoint"]}
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.122"
 solana-sdk = "1.18.12"
