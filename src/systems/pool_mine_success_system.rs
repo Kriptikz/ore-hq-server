@@ -20,6 +20,11 @@ use crate::{
         ORE_TOKEN_DECIMALS, AppState, ClientVersion, Config, InsertEarning, InsertSubmission, MessageInternalMineSuccess, UpdateReward, UpdateStakeAccountRewards, WalletExtension
 };
 
+pub const ORE_STAKE_PERCENTAGE: u64 = 4;
+pub const ORE_SOL_STAKE_PERCENTAGE: u64 = 8;
+pub const ORE_ISC_STAKE_PERCENTAGE: u64 = 8;
+pub const TOTAL_STAKER_PERCENTAGE: u64 = ORE_STAKE_PERCENTAGE + ORE_SOL_STAKE_PERCENTAGE + ORE_ISC_STAKE_PERCENTAGE;
+
 pub async fn pool_mine_success_system(
     app_shared_state: Arc<RwLock<AppState>>,
     app_database: Arc<AppDatabase>,
@@ -47,12 +52,13 @@ pub async fn pool_mine_success_system(
 
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Processing submission results for challenge: {}.", id, c);
+                let staker_rewards = (msg.rewards as u128).saturating_mul(TOTAL_STAKER_PERCENTAGE as u128).saturating_div(100) as u64;
                 // TODO: subtract staker rewards
                 //let total_rewards = msg.rewards - msg.commissions - msg.staker_rewards;
                 let total_rewards = msg.rewards - msg.commissions;
                 info!(target: "server_log", "{} - Miners Rewards: {}", id, total_rewards);
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
-                info!(target: "server_log", "{} - Staker Rewards: {}", id, msg.staker_rewards);
+                info!(target: "server_log", "{} - Staker Rewards: {}", id, staker_rewards);
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
                     let hashpower_percent = (msg_submission.hashpower as u128)
                         .saturating_mul(1_000_000)
@@ -280,7 +286,7 @@ pub async fn pool_mine_success_system(
                 }
 
                 info!(target: "server_log", "{} - Processing stakers rewards", id);
-                process_stakers_rewards(msg.rewards, msg.staker_rewards, &app_database, &app_config).await;
+                process_stakers_rewards(msg.rewards, staker_rewards, &app_database, &app_config).await;
 
 
                 info!(target: "server_log", "{} - Finished processing internal mine success for challenge: {}", id, c);
@@ -290,9 +296,9 @@ pub async fn pool_mine_success_system(
 }
 
 pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, app_database: &Arc<AppDatabase>, app_config: &Arc<Config>) {
-    let ore_rewards = (total_rewards as u128).saturating_mul(10).saturating_div(100) as u64;
-    let ore_sol_rewards = (total_rewards as u128).saturating_mul(15).saturating_div(100) as u64;
-    let ore_isc_rewards = (total_rewards as u128).saturating_mul(15).saturating_div(100) as u64;
+    let ore_rewards = (total_rewards as u128).saturating_mul(ORE_STAKE_PERCENTAGE as u128).saturating_div(100) as u64;
+    let ore_sol_rewards = (total_rewards as u128).saturating_mul(ORE_SOL_STAKE_PERCENTAGE as u128).saturating_div(100) as u64;
+    let ore_isc_rewards = (total_rewards as u128).saturating_mul(ORE_ISC_STAKE_PERCENTAGE as u128).saturating_div(100) as u64;
 
     info!(target: "server_log", "Total Rewards: {}", total_rewards);
     info!(target: "server_log", "ore Rewards (10%): {}", ore_rewards);

@@ -34,7 +34,7 @@ use tracing::info;
 use crate::{
     app_database::AppDatabase, ore_utils::{
         get_auth_ix, get_cutoff, get_mine_ix_with_boosts, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, ORE_TOKEN_DECIMALS
-    }, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
+    }, systems::pool_mine_success_system::TOTAL_STAKER_PERCENTAGE, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
 };
 
 
@@ -576,7 +576,6 @@ pub async fn pool_submission_system(
                                                             info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                             let full_rewards = mine_event.reward;
                                                             let commissions = (full_rewards as u128).saturating_mul(5).saturating_div(100) as u64;
-                                                            let staker_rewards = (full_rewards as u128).saturating_mul(40).saturating_div(100) as u64;
 
                                                             // handle sending mine success message
                                                             let mut total_hashpower: u64 = 0;
@@ -674,7 +673,6 @@ pub async fn pool_submission_system(
                                                                     total_balance: balance,
                                                                     rewards: full_rewards,
                                                                     commissions,
-                                                                    staker_rewards,
                                                                     challenge_id: challenge.id,
                                                                     challenge: old_proof.challenge,
                                                                     best_nonce: u64::from_le_bytes(best_solution.n),
@@ -693,7 +691,6 @@ pub async fn pool_submission_system(
                                                                 info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                                 let full_rewards = mine_event.reward;
                                                                 let commissions = full_rewards.mul(5).saturating_div(100);
-                                                                let staker_rewards = full_rewards.mul(40).saturating_div(100);
 
                                                                 // handle sending mine success message
                                                                 let mut total_hashpower: u64 = 0;
@@ -791,7 +788,6 @@ pub async fn pool_submission_system(
                                                                         total_balance: balance,
                                                                         rewards: full_rewards,
                                                                         commissions,
-                                                                        staker_rewards,
                                                                         challenge_id: challenge.id,
                                                                         challenge: old_proof.challenge,
                                                                         best_nonce: u64::from_le_bytes(best_solution.n),

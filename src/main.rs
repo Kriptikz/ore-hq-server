@@ -142,7 +142,6 @@ pub struct MessageInternalMineSuccess {
     total_balance: f64,
     rewards: u64,
     commissions: u64,
-    staker_rewards: u64,
     challenge_id: i32,
     challenge: [u8; 32],
     best_nonce: u64,
