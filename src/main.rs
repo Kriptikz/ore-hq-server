@@ -2066,16 +2066,24 @@ async fn post_stake_boost_v2(
                 };
 
                 let signature;
+                let mut attempts = 0;
                 loop {
-                    if let Ok(sig) = rpc_client
-                        .send_transaction_with_config(&tx, rpc_config)
-                        .await
-                    {
-                        signature = sig;
-                        break;
-                    } else {
-                        error!(target: "server_log", "Failed to send init delegate boost account. retrying in 2 seconds...");
-                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                    match rpc_client.send_transaction_with_config(&tx, rpc_config).await {
+                        Ok(sig) => {
+                            signature = sig;
+                            break;
+                        },
+                        Err(e) => {
+                            if attempts > 10 {
+                                return Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(format!("Failed to send transaction: {:?}", e))
+                                    .unwrap();
+                            }
+                            attempts += 1;
+                            error!(target: "server_log", "Failed to send init delegate boost account. Error: {:?}.\nretrying in 2 seconds...", e);
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                        }
                     }
                 }
 
