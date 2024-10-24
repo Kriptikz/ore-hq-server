@@ -649,16 +649,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             info!(target: "server_log", "Failed to get commissions receiver account from database.");
             info!(target: "server_log", "Inserting Commissions receiver account...");
 
-            let ore_delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), commission_pubkey, Pubkey::from_str(ORE_BOOST_MINT).unwrap());
-            let ore_sol_delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), commission_pubkey, Pubkey::from_str(ORE_SOL_BOOST_MINT).unwrap());
-            let ore_isc_delegated_boost_pda = delegated_boost_pda(wallet.pubkey(), commission_pubkey, Pubkey::from_str(ORE_ISC_BOOST_MINT).unwrap());
-
             let res = app_database.signup_user_transaction(
                 commission_pubkey.to_string(),
                 wallet.pubkey().to_string(),
-                ore_delegated_boost_pda.0.to_string(),
-                ore_sol_delegated_boost_pda.0.to_string(),
-                ore_isc_delegated_boost_pda.0.to_string(),
             ).await;
 
             match res {
