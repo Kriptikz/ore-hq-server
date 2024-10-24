@@ -926,6 +926,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/stake", post(post_stake))
         .route("/stake-boost", post(post_stake_boost))
         .route("/v2/stake-boost", post(post_stake_boost_v2))
+        .route("/v2/migrate-boost", post(post_migrate_boost_v2))
         .route("/unstake", post(post_unstake))
         .route("/unstake-boost", post(post_unstake_boost))
         .route("/v2/unstake-boost", post(post_unstake_boost_v2))
@@ -2181,6 +2182,233 @@ async fn post_stake_boost_v2(
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to send tx".to_string())
+                        .unwrap();
+                }
+            }
+        }
+    } else {
+        error!(target: "server_log", "stake boost v2 with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+struct MigrateBoostParams {
+    pubkey: String,
+    mint: String,
+    init: bool,
+}
+
+
+async fn post_migrate_boost_v2(
+    query_params: Query<MigrateBoostParams>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(wallet): Extension<Arc<WalletExtension>>,
+    body: String,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let mint = match Pubkey::from_str(&query_params.mint) {
+            Ok(pk) => {
+                pk
+            },
+            Err(_) => {
+                error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid Mint".to_string())
+                    .unwrap();
+            }
+        };
+
+        let serialized_tx = BASE64_STANDARD.decode(body.clone()).unwrap();
+        let mut tx: Transaction = if let Ok(tx) = bincode::deserialize(&serialized_tx) {
+            tx
+        } else {
+            error!(target: "server_log", "Failed to deserialize tx");
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid Tx".to_string())
+                .unwrap();
+        };
+
+        if query_params.init {
+            match get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint).await {
+                Ok(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Account already initialized.".to_string())
+                        .unwrap();
+                },
+                Err(_) => {
+                    // Account does not already exist
+                    let ixs = tx.message.instructions.clone();
+
+                    // There should be two instructions
+                    if ixs.len() > 2 {
+                        error!(target: "server_log", "Too many instructions");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+
+                    // First instruction is to init
+                    let server_ix = ore_miner_delegation::instruction::init_delegate_boost_v2(
+                        user_pubkey,
+                        wallet.miner_wallet.pubkey(),
+                        wallet.fee_wallet.pubkey(),
+                        mint,
+                    );
+                    let mut accts = Vec::new();
+                    for account_index in ixs[0].accounts.clone() {
+                        accts.push(tx.key(0, account_index.into()));
+                    }
+
+                    if ixs[0].data.ne(&server_ix.data) {
+                        error!(target: "server_log", "data missmatch");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+
+                    // Second instruction is to migrate to v2
+                    let server_ix = ore_miner_delegation::instruction::migrate_boost_to_v2(
+                        user_pubkey,
+                        wallet.miner_wallet.pubkey(),
+                        mint,
+                    );
+                    let mut accts = Vec::new();
+                    for account_index in ixs[1].accounts.clone() {
+                        accts.push(tx.key(0, account_index.into()));
+                    }
+
+                    if ixs[1].data.ne(&server_ix.data) {
+                        error!(target: "server_log", "data missmatch");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+                    info!(target: "server_log", "Valid boost migration tx, submitting.");
+
+                    let hash = tx.get_recent_blockhash();
+                    if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                        error!(target: "server_log", "Failed to partially sign tx");
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("Server Failed to sign tx.".to_string())
+                            .unwrap();
+                    }
+
+                    if !tx.is_signed() {
+                        error!(target: "server_log", "Tx missing signer");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+
+                    let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+                    match result {
+                        Ok(sig) => {
+                            info!(target: "server_log", "Miner {} successfully migrated to boost v2 of {}.\nSig: {}", user_pubkey.to_string(), mint.to_string(), sig.to_string());
+                            return Response::builder()
+                                .status(StatusCode::OK)
+                                .body("SUCCESS".to_string())
+                                .unwrap();
+                        }
+                        Err(e) => {
+                            error!(target: "server_log", "{} Boost v2 migration transaction failed...", user_pubkey.to_string());
+                            error!(target: "server_log", "Boost v2 migration tx Error: {:?}", e);
+                            return Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body("Failed to send tx".to_string())
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+        } else {
+            match get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint).await {
+                Ok(_) => {
+                    // Account already exist
+                    let ixs = tx.message.instructions.clone();
+
+                    // There should be one instructions
+                    if ixs.len() > 1 {
+                        error!(target: "server_log", "Too many instructions");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    }
+
+                    let base_ix = ore_miner_delegation::instruction::migrate_boost_to_v2(
+                        user_pubkey,
+                        wallet.miner_wallet.pubkey(),
+                        mint,
+                    );
+                    let mut accts = Vec::new();
+                    for account_index in ixs[0].accounts.clone() {
+                        accts.push(tx.key(0, account_index.into()));
+                    }
+
+                    if ixs[0].data.ne(&base_ix.data) {
+                        error!(target: "server_log", "data missmatch");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Invalid Tx".to_string())
+                            .unwrap();
+                    } else {
+                        info!(target: "server_log", "Valid boost migrate tx, submitting.");
+
+                        let hash = tx.get_recent_blockhash();
+                        if let Err(_) = tx.try_partial_sign(&[wallet.fee_wallet.as_ref()], *hash) {
+                            error!(target: "server_log", "Failed to partially sign tx");
+                            return Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body("Server Failed to sign tx.".to_string())
+                                .unwrap();
+                        }
+
+                        if !tx.is_signed() {
+                            error!(target: "server_log", "Tx missing signer");
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body("Invalid Tx".to_string())
+                                .unwrap();
+                        }
+
+                        let result = rpc_client.send_and_confirm_transaction(&tx).await;
+
+                        match result {
+                            Ok(sig) => {
+                                info!(target: "server_log", "Miner {} successfully migrated to boost v2 of {}.\nSig: {}", user_pubkey.to_string(), mint.to_string(), sig.to_string());
+                                return Response::builder()
+                                    .status(StatusCode::OK)
+                                    .body("SUCCESS".to_string())
+                                    .unwrap();
+                            }
+                            Err(e) => {
+                                error!(target: "server_log", "{} Boost v1 migration transaction failed...", user_pubkey.to_string());
+                                error!(target: "server_log", "Boost v2 migration tx Error: {:?}", e);
+                                return Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body("Failed to send tx".to_string())
+                                    .unwrap();
+                            }
+                        }
+                    }
+                },
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Account not initialized.".to_string())
                         .unwrap();
                 }
             }
