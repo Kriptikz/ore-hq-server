@@ -1005,4 +1005,76 @@ impl AppDatabase {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
     }
+
+    pub async fn get_stake_account_for_staker(
+        &self,
+        pool_id: i32,
+        staker_pubkey: String,
+        mint: String,
+    ) -> Result<StakeAccount, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM stake_accounts s WHERE s.pool_id = ? AND s.staker_pubkey = ? AND s.mint_pubkey = ? ORDER BY s.id ASC LIMIT 1")
+                        .bind::<Integer, _>(pool_id)
+                        .bind::<Text, _>(staker_pubkey)
+                        .bind::<Text, _>(mint)
+                        .get_result::<StakeAccount>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_stake_accounts_for_staker(
+        &self,
+        pool_id: i32,
+        staker_pubkey: String,
+    ) -> Result<Vec<StakeAccount>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM stake_accounts s WHERE s.pool_id = ? AND s.staker_pubkey = ? ORDER BY s.id ASC")
+                        .bind::<Integer, _>(pool_id)
+                        .bind::<Text, _>(staker_pubkey)
+                        .load::<StakeAccount>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
 }
