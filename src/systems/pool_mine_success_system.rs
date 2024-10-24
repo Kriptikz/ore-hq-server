@@ -301,9 +301,9 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     let ore_isc_rewards = (total_rewards as u128).saturating_mul(ORE_ISC_STAKE_PERCENTAGE as u128).saturating_div(100) as u64;
 
     info!(target: "server_log", "Total Rewards: {}", total_rewards);
-    info!(target: "server_log", "ore Rewards (10%): {}", ore_rewards);
-    info!(target: "server_log", "ore-sol Rewards (15%): {}", ore_sol_rewards);
-    info!(target: "server_log", "ore-isc Rewards (15%): {}", ore_isc_rewards);
+    info!(target: "server_log", "ore Rewards ({}%): {}", ORE_STAKE_PERCENTAGE, ore_rewards);
+    info!(target: "server_log", "ore-sol Rewards ({}%): {}", ORE_SOL_STAKE_PERCENTAGE, ore_sol_rewards);
+    info!(target: "server_log", "ore-isc Rewards ({}%): {}", ORE_ISC_STAKE_PERCENTAGE, ore_isc_rewards);
 
     if ore_rewards + ore_sol_rewards + ore_isc_rewards > staker_rewards {
         tracing::error!(target: "server_log", "Calculations exceeded max staker rewards of 40%!!!");
@@ -401,47 +401,42 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     tracing::info!(target: "server_log", "Total {} ore-isc boosted.", total_ore_isc_boosted as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64));
 
     let mut update_stake_rewards = vec![];
-
+    let mut total_distributed_for_ore = 0;
     for ore_stake_account in ore_stake_accounts.iter() {
+        let rewards_balance = ((ore_rewards as u128) * (ore_stake_account.staked_balance as u128 / total_ore_boosted as u128)) as u64;
         let stake_rewards = UpdateStakeAccountRewards {
             stake_pda: ore_stake_account.stake_pda.clone(),
-            rewards_balance: ((ore_rewards as u128) * (ore_stake_account.staked_balance as u128 / total_ore_boosted as u128)) as u64
+            rewards_balance,
         };
+        total_distributed_for_ore += rewards_balance;
         update_stake_rewards.push(stake_rewards);
     }
 
+    let mut total_distributed_for_ore_sol = 0;
     for ore_sol_stake_account in ore_sol_stake_accounts.iter() {
+        let rewards_balance = ((ore_rewards as u128) * (ore_sol_stake_account.staked_balance as u128 / total_ore_sol_boosted as u128)) as u64;
         let stake_rewards = UpdateStakeAccountRewards {
             stake_pda: ore_sol_stake_account.stake_pda.clone(),
-            rewards_balance: ((ore_rewards as u128) * (ore_sol_stake_account.staked_balance as u128 / total_ore_sol_boosted as u128)) as u64
+            rewards_balance,
         };
+        total_distributed_for_ore_sol += rewards_balance;
         update_stake_rewards.push(stake_rewards);
     }
 
+    let mut total_distributed_for_ore_isc = 0;
     for ore_isc_stake_account in ore_isc_stake_accounts.iter() {
+        let rewards_balance = ((ore_rewards as u128) * (ore_isc_stake_account.staked_balance as u128 / total_ore_isc_boosted as u128)) as u64;
         let stake_rewards = UpdateStakeAccountRewards {
             stake_pda: ore_isc_stake_account.stake_pda.clone(),
-            rewards_balance: ((ore_rewards as u128) * (ore_isc_stake_account.staked_balance as u128 / total_ore_isc_boosted as u128)) as u64
+            rewards_balance,
         };
+        total_distributed_for_ore_isc += rewards_balance;
         update_stake_rewards.push(stake_rewards);
     }
 
 
 
     let instant = Instant::now();
-    let mut total_distributed_for_ore = 0;
-    for sa in ore_stake_accounts.iter() {
-        total_distributed_for_ore += sa.rewards_balance;
-    }
-    let mut total_distributed_for_ore_sol = 0;
-    for sa in ore_sol_stake_accounts.iter() {
-        total_distributed_for_ore_sol += sa.rewards_balance;
-    }
-    let mut total_distributed_for_ore_isc = 0;
-    for sa in ore_isc_stake_accounts.iter() {
-        total_distributed_for_ore_isc += sa.rewards_balance;
-    }
-
     info!(target: "server_log", "Total distributed to stakers: {}", total_distributed_for_ore + total_distributed_for_ore_sol + total_distributed_for_ore_isc);
     info!(target: "server_log", "Total distributed for ore: {}", total_distributed_for_ore);
     info!(target: "server_log", "Total distributed for ore_sol: {}", total_distributed_for_ore_sol);
