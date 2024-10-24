@@ -1096,16 +1096,9 @@ async fn post_signup(
                 info!(target: "server_log", "No miner account exists. Signing up new user.");
             }
         }
-        let ore_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), user_pubkey, Pubkey::from_str(ORE_BOOST_MINT).unwrap());
-        let ore_sol_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), user_pubkey, Pubkey::from_str(ORE_SOL_BOOST_MINT).unwrap());
-        let ore_isc_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), user_pubkey, Pubkey::from_str(ORE_ISC_BOOST_MINT).unwrap());
-
         let res = app_database.signup_user_transaction(
             user_pubkey.to_string(),
             wallet.miner_wallet.pubkey().to_string(),
-            ore_delegated_boost_pda.0.to_string(),
-            ore_sol_delegated_boost_pda.0.to_string(),
-            ore_isc_delegated_boost_pda.0.to_string(),
         ).await;
 
         match res {
@@ -1172,16 +1165,9 @@ async fn post_signup_v2(
             }
         }
 
-        let ore_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), miner_pubkey, Pubkey::from_str(ORE_BOOST_MINT).unwrap());
-        let ore_sol_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), miner_pubkey, Pubkey::from_str(ORE_SOL_BOOST_MINT).unwrap());
-        let ore_isc_delegated_boost_pda = delegated_boost_pda(wallet.miner_wallet.pubkey(), miner_pubkey, Pubkey::from_str(ORE_ISC_BOOST_MINT).unwrap());
-
         let res = app_database.signup_user_transaction(
             miner_pubkey.to_string(),
             wallet.miner_wallet.pubkey().to_string(),
-            ore_delegated_boost_pda.0.to_string(),
-            ore_sol_delegated_boost_pda.0.to_string(),
-            ore_isc_delegated_boost_pda.0.to_string(),
         ).await;
 
         match res {

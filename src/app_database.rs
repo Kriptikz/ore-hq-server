@@ -706,9 +706,6 @@ impl AppDatabase {
         &self,
         user_pubkey: String,
         pool_authority_pubkey: String,
-        ore_boost_stake_pda: String,
-        ore_sol_boost_stake_pda: String,
-        ore_isc_boost_stake_pda: String,
     ) -> Result<(), AppDatabaseError> {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let user_pk = user_pubkey.clone();
@@ -732,27 +729,6 @@ impl AppDatabase {
                         diesel::sql_query("INSERT INTO rewards (miner_id, pool_id) VALUES (?, ?)")
                             .bind::<Integer, _>(miner.id)
                             .bind::<Integer, _>(pool.id)
-                            .execute(conn)?;
-
-                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, stake_pda) VALUES (?, ?, ?, ?)")
-                            .bind::<Integer, _>(pool.id)
-                            .bind::<Text, _>(ORE_BOOST_MINT)
-                            .bind::<Text, _>(user_pubkey.clone())
-                            .bind::<Text, _>(ore_boost_stake_pda)
-                            .execute(conn)?;
-
-                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, stake_pda) VALUES (?, ?, ?, ?)")
-                            .bind::<Integer, _>(pool.id)
-                            .bind::<Text, _>(ORE_SOL_BOOST_MINT)
-                            .bind::<Text, _>(user_pubkey.clone())
-                            .bind::<Text, _>(ore_sol_boost_stake_pda)
-                            .execute(conn)?;
-
-                        diesel::sql_query("INSERT INTO stake_accounts (pool_id, mint_pubkey, staker_pubkey, stake_pda) VALUES (?, ?, ?, ?)")
-                            .bind::<Integer, _>(pool.id)
-                            .bind::<Text, _>(ORE_ISC_BOOST_MINT)
-                            .bind::<Text, _>(user_pubkey)
-                            .bind::<Text, _>(ore_isc_boost_stake_pda)
                             .execute(conn)
                     })
                 })
