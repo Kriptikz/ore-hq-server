@@ -936,6 +936,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/stake", get(get_miner_stake))
         .route("/miner/boost/stake", get(get_miner_boost_stake))
         .route("/v2/miner/boost/stake", get(get_miner_boost_stake_v2))
+        .route("/v2/miner/boost/stake-accounts", get(get_miner_boost_stake_accounts_v2))
         .route("/stake-multiplier", get(get_stake_multiplier))
         .route("/boost-multiplier", get(get_boost_multiplier))
         // App RR Database routes
@@ -1489,6 +1490,24 @@ async fn get_miner_boost_stake_v2(
             return Ok(dec_amount.to_string());
         } else {
             return Err("Failed to get delgated boost account v2 balance".to_string());
+        }
+    } else {
+        return Err("Invalid pubkey".to_string());
+    }
+}
+
+async fn get_miner_boost_stake_accounts_v2(
+    query_params: Query<PubkeyParam>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+    Extension(app_config): Extension<Arc<Config>>,
+) -> impl IntoResponse {
+    if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let pool_id = app_config.pool_id;
+        if let Ok(result) = app_database.get_stake_accounts_for_staker(pool_id, user_pubkey.to_string()).await {
+            return Ok(Json(result));
+
+        } else {
+            return Err("Failed to get delgated boost accounts v2 from db".to_string());
         }
     } else {
         return Err("Invalid pubkey".to_string());
