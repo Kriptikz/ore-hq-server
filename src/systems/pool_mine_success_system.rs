@@ -367,7 +367,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
         };
     }
 
-    tracing::info!(target: "server_log", "Found {} ore-sol stake accounts.", ore_stake_accounts.len());
+    tracing::info!(target: "server_log", "Found {} ore-sol stake accounts.", ore_sol_stake_accounts.len());
     tracing::info!(target: "server_log", "Total {} ore-sol boosted.", total_ore_sol_boosted as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64));
 
     // get all the stake accounts for ore-isc mint
@@ -397,7 +397,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
         };
     }
 
-    tracing::info!(target: "server_log", "Found {} ore-isc stake accounts.", ore_stake_accounts.len());
+    tracing::info!(target: "server_log", "Found {} ore-isc stake accounts.", ore_isc_stake_accounts.len());
     tracing::info!(target: "server_log", "Total {} ore-isc boosted.", total_ore_isc_boosted as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64));
 
     let mut update_stake_rewards = vec![];
