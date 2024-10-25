@@ -1516,24 +1516,11 @@ async fn get_miner_boost_stake_accounts_v2(
 }
 
 async fn get_stake_multiplier(
-    Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(app_config): Extension<Arc<Config>>,
 ) -> impl IntoResponse {
     if app_config.stats_enabled {
-        let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
-        let proof = if let Ok(loaded_proof) = get_proof(&rpc_client, pubkey).await {
-            loaded_proof
-        } else {
-            error!(target: "server_log", "get_pool_staked: Failed to load proof.");
-            return Err("Stats not enabled for this server.".to_string());
-        };
-
-        if let Ok(config) = get_config(&rpc_client).await {
-            let multiplier = 1.0 + (proof.balance as f64 / config.top_balance as f64).min(1.0f64);
-            return Ok(Json(multiplier));
-        } else {
-            return Err("Failed to get ore config account".to_string());
-        }
+        let multiplier = 1.0;
+        return Ok(Json(multiplier));
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }
