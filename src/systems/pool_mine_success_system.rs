@@ -402,36 +402,43 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
 
     let mut update_stake_rewards = vec![];
     let mut total_distributed_for_ore = 0;
-    for ore_stake_account in ore_stake_accounts.iter() {
-        let rewards_balance = ((ore_rewards as u128) * (ore_stake_account.staked_balance as u128 / total_ore_boosted as u128)) as u64;
-        let stake_rewards = UpdateStakeAccountRewards {
-            stake_pda: ore_stake_account.stake_pda.clone(),
-            rewards_balance,
-        };
-        total_distributed_for_ore += rewards_balance;
-        update_stake_rewards.push(stake_rewards);
+    if total_ore_boosted > 0 {
+        for ore_stake_account in ore_stake_accounts.iter() {
+            let rewards_balance = ((ore_rewards as u128) * (ore_stake_account.staked_balance as u128 / total_ore_boosted as u128)) as u64;
+            info!(target: "server_log", "Added to ore rewards total: {}", rewards_balance);
+            let stake_rewards = UpdateStakeAccountRewards {
+                stake_pda: ore_stake_account.stake_pda.clone(),
+                rewards_balance,
+            };
+            total_distributed_for_ore += rewards_balance;
+            update_stake_rewards.push(stake_rewards);
+        }
     }
 
     let mut total_distributed_for_ore_sol = 0;
-    for ore_sol_stake_account in ore_sol_stake_accounts.iter() {
-        let rewards_balance = ((ore_rewards as u128) * (ore_sol_stake_account.staked_balance as u128 / total_ore_sol_boosted as u128)) as u64;
-        let stake_rewards = UpdateStakeAccountRewards {
-            stake_pda: ore_sol_stake_account.stake_pda.clone(),
-            rewards_balance,
-        };
-        total_distributed_for_ore_sol += rewards_balance;
-        update_stake_rewards.push(stake_rewards);
+    if total_ore_sol_boosted > 0 {
+        for ore_sol_stake_account in ore_sol_stake_accounts.iter() {
+            let rewards_balance = ((ore_sol_rewards as u128) * (ore_sol_stake_account.staked_balance as u128 / total_ore_sol_boosted as u128)) as u64;
+            let stake_rewards = UpdateStakeAccountRewards {
+                stake_pda: ore_sol_stake_account.stake_pda.clone(),
+                rewards_balance,
+            };
+            total_distributed_for_ore_sol += rewards_balance;
+            update_stake_rewards.push(stake_rewards);
+        }
     }
 
     let mut total_distributed_for_ore_isc = 0;
-    for ore_isc_stake_account in ore_isc_stake_accounts.iter() {
-        let rewards_balance = ((ore_rewards as u128) * (ore_isc_stake_account.staked_balance as u128 / total_ore_isc_boosted as u128)) as u64;
-        let stake_rewards = UpdateStakeAccountRewards {
-            stake_pda: ore_isc_stake_account.stake_pda.clone(),
-            rewards_balance,
-        };
-        total_distributed_for_ore_isc += rewards_balance;
-        update_stake_rewards.push(stake_rewards);
+    if total_ore_isc_boosted > 0 {
+        for ore_isc_stake_account in ore_isc_stake_accounts.iter() {
+            let rewards_balance = ((ore_isc_rewards as u128) * (ore_isc_stake_account.staked_balance as u128 / total_ore_isc_boosted as u128)) as u64;
+            let stake_rewards = UpdateStakeAccountRewards {
+                stake_pda: ore_isc_stake_account.stake_pda.clone(),
+                rewards_balance,
+            };
+            total_distributed_for_ore_isc += rewards_balance;
+            update_stake_rewards.push(stake_rewards);
+        }
     }
 
 
