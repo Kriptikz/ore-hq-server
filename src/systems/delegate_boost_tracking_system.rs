@@ -3,8 +3,8 @@ use std::{collections::{HashMap, HashSet}, str::FromStr, sync::Arc, time::Durati
 use futures::StreamExt;
 use ore_miner_delegation::{pda::managed_proof_pda, state::DelegatedBoostV2, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
-use solana_client::{nonblocking::pubsub_client::PubsubClient, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}, rpc_filter::{Memcmp, RpcFilterType}};
-use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
+use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}, rpc_filter::{Memcmp, RpcFilterType}};
+use solana_sdk::{commitment_config::{CommitmentConfig, CommitmentLevel}, pubkey::Pubkey};
 use tokio::{sync::mpsc::{self, UnboundedReceiver}, time::Instant};
 
 use crate::{app_database::AppDatabase, InsertStakeAccount, UpdateStakeAccount};
@@ -14,6 +14,7 @@ const STAKE_ACCOUNT_DB_UPDATE_INTERVAL_SECS: u64 = 2;
 pub async fn delegate_boost_tracking_system(
     ws_url: String,
     mining_pubkey: Pubkey,
+    rpc_client: Arc<RpcClient>,
     app_database: Arc<AppDatabase>,
 ) {
     let (updates_sender, update_receiver) = mpsc::unbounded_channel::<(Pubkey, DelegatedBoostV2)>();
@@ -27,7 +28,7 @@ pub async fn delegate_boost_tracking_system(
         }
     };
     tokio::spawn(async move {
-        update_database_staked_balances(update_receiver, app_database, pool.id).await;
+        update_database_staked_balances(update_receiver, app_database, rpc_client, pool.id, mining_pubkey).await;
     });
 
     loop {
@@ -79,10 +80,48 @@ pub async fn delegate_boost_tracking_system(
     }
 }
 
-async fn update_database_staked_balances(mut receiver: UnboundedReceiver<(Pubkey, DelegatedBoostV2)>, app_database: Arc<AppDatabase>, pool_id: i32) {
+async fn update_database_staked_balances(
+    mut receiver: UnboundedReceiver<(Pubkey, DelegatedBoostV2)>,
+    app_database: Arc<AppDatabase>,
+    rpc_client: Arc<RpcClient>,
+    pool_id: i32,
+    mining_pubkey: Pubkey
+) {
     tracing::info!(target: "server_log", "Fetching boost stake accounts from db...");
     let mut db_boost_stake_accounts = HashSet::new(); 
+    let mut delegate_boost_accounts = HashMap::new();
     let mut last_id: i32 = 0;
+    let managed_proof_authority_pda = managed_proof_pda(mining_pubkey);
+    // Load initial on-chain accounts via gpa
+    let program_accounts = match rpc_client.get_program_accounts_with_config(
+        &ore_miner_delegation::id(),
+        RpcProgramAccountsConfig {
+            filters: Some(vec![RpcFilterType::DataSize(152), RpcFilterType::Memcmp(Memcmp::new_raw_bytes(16, managed_proof_authority_pda.0.to_bytes().into()))]),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Finalized}),
+                min_context_slot: None,
+            },
+            with_context: None,
+        }
+    ).await {
+            Ok(pa) => {
+                pa
+            },
+            Err(e) => {
+                println!("Failed to get program_accounts for gpa. Error: {:?}", e);
+                vec![]
+            }
+    };
+
+    tracing::info!(target: "server_log", "Found {} program accounts", program_accounts.len());
+
+    for program_account in program_accounts.iter() {
+        if let Ok(delegate_boost_acct) = DelegatedBoostV2::try_from_bytes(&program_account.1.data) {
+            delegate_boost_accounts.insert(program_account.0, *delegate_boost_acct);
+        }
+    }
     loop {
         tokio::time::sleep(Duration::from_millis(400)).await;
         match app_database.get_stake_accounts(pool_id, last_id).await {
@@ -104,8 +143,8 @@ async fn update_database_staked_balances(mut receiver: UnboundedReceiver<(Pubkey
             }
         };
     }
-    let mut delegate_boost_accounts = HashMap::new();
     let mut update_stake_accounts_timer = Instant::now();
+    let mut gpa_timer = Instant::now();
     loop {
         // Cannot use recv with await as the next batch processing cannot rely on 
         // a new message to trigger db updates in time
@@ -114,6 +153,42 @@ async fn update_database_staked_balances(mut receiver: UnboundedReceiver<(Pubkey
             tracing::info!(target: "server_log", "Added new delegate boost account data to hashmap for update.");
         } else {
             tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+
+        // Every 5 minutes, perform gpa call to get all on-chain accounts for updates/inserts
+        if gpa_timer.elapsed().as_secs() >= 300 {
+            let program_accounts = match rpc_client.get_program_accounts_with_config(
+                &ore_miner_delegation::id(),
+                RpcProgramAccountsConfig {
+                    filters: Some(vec![RpcFilterType::DataSize(152), RpcFilterType::Memcmp(Memcmp::new_raw_bytes(16, managed_proof_authority_pda.0.to_bytes().into()))]),
+                    account_config: RpcAccountInfoConfig {
+                        encoding: Some(UiAccountEncoding::Base64),
+                        data_slice: None,
+                        commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Finalized}),
+                        min_context_slot: None,
+                    },
+                    with_context: None,
+                }
+            ).await {
+                    Ok(pa) => {
+                        pa
+                    },
+                    Err(e) => {
+                        println!("Failed to get program_accounts for gpa. Error: {:?}", e);
+                        vec![]
+                    }
+            };
+
+            tracing::info!(target: "server_log", "Found {} program accounts", program_accounts.len());
+
+            for program_account in program_accounts.iter() {
+                if let Ok(delegate_boost_acct) = DelegatedBoostV2::try_from_bytes(&program_account.1.data) {
+                    delegate_boost_accounts.insert(program_account.0, *delegate_boost_acct);
+                }
+            }
+
+            // Refresh gpa timer
+            gpa_timer = Instant::now();
         }
 
         if delegate_boost_accounts.len() > 0 {
