@@ -1,4 +1,5 @@
 use rand::seq::SliceRandom;
+use steel::AccountDeserialize as _;
 use std::{
     collections::HashMap,
     ops::{Mul, Range},
@@ -6,6 +7,8 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use ore_boost_api::state::{boost_pda, stake_pda};
+use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
@@ -539,12 +542,14 @@ pub async fn pool_submission_system(
                                         Arc::new(mine_success_sender.clone());
                                     let app_app_proof = app_proof.clone();
                                     let app_app_config = config.clone();
+                                    let app_app_wallet = app_wallet.clone();
                                     tokio::spawn(async move {
                                         let rpc_client = app_rpc_client;
                                         let app_database = app_app_database;
                                         let mine_success_sender = app_mine_success_sender;
                                         let app_proof = app_app_proof;
                                         let app_config = app_app_config;
+                                        let app_wallet = app_app_wallet;
                                         loop {
                                             if let Ok(txn_result) = rpc_client
                                                 .get_transaction_with_config(
@@ -655,16 +660,49 @@ pub async fn pool_submission_system(
                                                             let balance = (latest_proof.balance as f64)
                                                                 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
 
+                                                            let boost_mints = vec![
+                                                                Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
+                                                                Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
+                                                                Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
+                                                            ];
 
-                                                            let multiplier = if let Some(config) = loaded_config {
-                                                                if config.top_balance > 0 {
-                                                                    1.0 + (latest_proof.balance as f64 / config.top_balance as f64).min(1.0f64)
-                                                                } else {
-                                                                    1.0f64
+                                                            // Get pools boost stake accounts
+                                                            let mut boost_stake_acct_pdas = vec![];
+                                                            let mut boost_acct_pdas = vec![];
+
+                                                        let managed_proof = managed_proof_pda(app_wallet.miner_wallet.pubkey());
+                                                            for boost_mint in boost_mints {
+                                                                let boost_account_pda = boost_pda(boost_mint);
+                                                                let boost_stake_pda = stake_pda(managed_proof.0, boost_account_pda.0);
+                                                                boost_stake_acct_pdas.push(boost_stake_pda.0);
+                                                                boost_acct_pdas.push(boost_account_pda.0);
+                                                            }
+
+                                                            let mut stake_acct = vec![];
+                                                            let mut boost_acct = vec![];
+                                                            if let Ok(accounts) = rpc_client.get_multiple_accounts(&[boost_stake_acct_pdas, boost_acct_pdas].concat()).await {
+                                                                tracing::info!(target: "server_log", "Got {} accounts", accounts.len());
+                                                                for account in accounts {
+                                                                    if let Some(acc) = account {
+                                                                        if let Ok(a) = ore_boost_api::state::Stake::try_from_bytes(&acc.data) {
+                                                                            tracing::info!(target: "server_log", "Boost stake account: {:?}", a);
+                                                                            stake_acct.push(a.clone());
+                                                                            continue;
+                                                                        }
+                                                                        if let Ok(a) = ore_boost_api::state::Boost::try_from_bytes(&acc.data) {
+                                                                            tracing::info!(target: "server_log", "Boost account: {:?}", a);
+                                                                            boost_acct.push(a.clone());
+                                                                            continue;
+                                                                        }
+                                                                    }
                                                                 }
                                                             } else {
-                                                                1.0f64
-                                                            };
+                                                                tracing::error!(target: "server_log", "Failed to get accounts.")
+                                                            }
+                                                            let mut multiplier = 0.0f64;
+                                                            for (index,stake_a) in stake_acct.iter().enumerate() {
+                                                                multiplier += boost_acct[index].multiplier as f64 * (stake_a.balance as f64 / boost_acct[index].total_stake as f64);
+                                                            }
 
                                                             info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                             let _ = mine_success_sender.send(
