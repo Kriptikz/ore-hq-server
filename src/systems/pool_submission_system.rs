@@ -699,11 +699,11 @@ pub async fn pool_submission_system(
                                                             } else {
                                                                 tracing::error!(target: "server_log", "Failed to get accounts.")
                                                             }
-                                                            let mut multiplier = 1.0f64;
+                                                            let mut multiplier = 0.0f64;
                                                             for (index,stake_a) in stake_acct.iter().enumerate() {
                                                                 let boost_multiplier = boost_acct[index].multiplier as f64 * (stake_a.balance as f64 / boost_acct[index].total_stake as f64);
                                                                 info!(target: "server_log", "Multiplier {}: {}", boost_acct[index].mint, boost_multiplier);
-                                                                //multiplier += boost_multiplier
+                                                                multiplier += boost_multiplier
                                                             }
 
                                                             info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
@@ -850,11 +850,11 @@ pub async fn pool_submission_system(
                                                                 } else {
                                                                     tracing::error!(target: "server_log", "Failed to get boost stake accounts.")
                                                                 }
-                                                                let mut multiplier = 1.0f64;
+                                                                let mut multiplier = 0.0f64;
                                                                 for (index,stake_a) in stake_acct.iter().enumerate() {
                                                                     let boost_multiplier = boost_acct[index].multiplier as f64 * (stake_a.balance as f64 / boost_acct[index].total_stake as f64);
                                                                     info!(target: "server_log", "Multiplier {}: {}", boost_acct[index].mint, boost_multiplier);
-                                                                    //multiplier += boost_multiplier
+                                                                    multiplier += boost_multiplier
                                                                 }
 
                                                                 info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
