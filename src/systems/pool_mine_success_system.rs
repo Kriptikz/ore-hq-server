@@ -404,7 +404,8 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     let mut total_distributed_for_ore = 0;
     if total_ore_boosted > 0 {
         for ore_stake_account in ore_stake_accounts.iter() {
-            let rewards_balance = ((ore_rewards as u128) * (ore_stake_account.staked_balance as u128 / total_ore_boosted as u128)) as u64;
+            info!(target: "server_log", "Ore rewards to distribute: {}", ore_rewards);
+            let rewards_balance = (ore_rewards as u128 * ore_stake_account.staked_balance as u128 / total_ore_boosted as u128) as u64;
             info!(target: "server_log", "Added to ore rewards total: {}", rewards_balance);
             let stake_rewards = UpdateStakeAccountRewards {
                 stake_pda: ore_stake_account.stake_pda.clone(),
@@ -418,7 +419,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     let mut total_distributed_for_ore_sol = 0;
     if total_ore_sol_boosted > 0 {
         for ore_sol_stake_account in ore_sol_stake_accounts.iter() {
-            let rewards_balance = ((ore_sol_rewards as u128) * (ore_sol_stake_account.staked_balance as u128 / total_ore_sol_boosted as u128)) as u64;
+            let rewards_balance = (ore_sol_rewards as u128 * ore_sol_stake_account.staked_balance as u128 / total_ore_sol_boosted as u128) as u64;
             let stake_rewards = UpdateStakeAccountRewards {
                 stake_pda: ore_sol_stake_account.stake_pda.clone(),
                 rewards_balance,
@@ -431,7 +432,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     let mut total_distributed_for_ore_isc = 0;
     if total_ore_isc_boosted > 0 {
         for ore_isc_stake_account in ore_isc_stake_accounts.iter() {
-            let rewards_balance = ((ore_isc_rewards as u128) * (ore_isc_stake_account.staked_balance as u128 / total_ore_isc_boosted as u128)) as u64;
+            let rewards_balance = (ore_isc_rewards as u128 * ore_isc_stake_account.staked_balance as u128 / total_ore_isc_boosted as u128) as u64;
             let stake_rewards = UpdateStakeAccountRewards {
                 stake_pda: ore_isc_stake_account.stake_pda.clone(),
                 rewards_balance,
