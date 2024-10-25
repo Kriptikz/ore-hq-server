@@ -53,9 +53,7 @@ pub async fn pool_mine_success_system(
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Processing submission results for challenge: {}.", id, c);
                 let staker_rewards = (msg.rewards as u128).saturating_mul(TOTAL_STAKER_PERCENTAGE as u128).saturating_div(100) as u64;
-                // TODO: subtract staker rewards
-                //let total_rewards = msg.rewards - msg.commissions - msg.staker_rewards;
-                let total_rewards = msg.rewards - msg.commissions;
+                let total_rewards = msg.rewards - msg.commissions - staker_rewards;
                 info!(target: "server_log", "{} - Miners Rewards: {}", id, total_rewards);
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
                 info!(target: "server_log", "{} - Staker Rewards: {}", id, staker_rewards);
@@ -450,23 +448,23 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     info!(target: "server_log", "Total distributed for ore_sol: {}", total_distributed_for_ore_sol);
     info!(target: "server_log", "Total distributed for ore_isc: {}", total_distributed_for_ore_isc);
 
-    // let batch_size = 200;
-    //  info!(target: "server_log", "Updating staking rewards");
-    //  if update_stake_rewards.len() > 0 {
-    //      let mut batch_num = 1;
-    //      for batch in update_stake_rewards.chunks(batch_size) {
-    //          let instant = Instant::now();
-    //          info!(target: "server_log", "Updating stake reward batch {}", batch_num);
-    //          while let Err(_) = app_database.update_stake_accounts_rewards(batch.to_vec()).await {
-    //              tracing::error!(target: "server_log", "Failed to update rewards in db. Retrying...");
-    //              tokio::time::sleep(Duration::from_millis(500)).await;
-    //          }
-    //          info!(target: "server_log", "Updated reward batch {} in {}ms", batch_num, instant.elapsed().as_millis());
-    //          batch_num += 1;
-    //          tokio::time::sleep(Duration::from_millis(200)).await;
-    //      }
-    //      info!(target: "server_log", "Successfully updated rewards");
-    //  }
+    let batch_size = 200;
+     info!(target: "server_log", "Updating staking rewards");
+     if update_stake_rewards.len() > 0 {
+         let mut batch_num = 1;
+         for batch in update_stake_rewards.chunks(batch_size) {
+             let instant = Instant::now();
+             info!(target: "server_log", "Updating stake reward batch {}", batch_num);
+             while let Err(_) = app_database.update_stake_accounts_rewards(batch.to_vec()).await {
+                 tracing::error!(target: "server_log", "Failed to update rewards in db. Retrying...");
+                 tokio::time::sleep(Duration::from_millis(500)).await;
+             }
+             info!(target: "server_log", "Updated reward batch {} in {}ms", batch_num, instant.elapsed().as_millis());
+             batch_num += 1;
+             tokio::time::sleep(Duration::from_millis(200)).await;
+         }
+         info!(target: "server_log", "Successfully updated rewards");
+     }
     info!(target: "server_log", "Updated rewards in {}ms", instant.elapsed().as_millis());
 }
 
