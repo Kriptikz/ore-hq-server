@@ -58,15 +58,8 @@ pub async fn pool_mine_success_system(
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
                 info!(target: "server_log", "{} - Staker Rewards: {}", id, staker_rewards);
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
-                    let hashpower_percent = (msg_submission.hashpower as u128)
-                        .saturating_mul(1_000_000)
-                        .saturating_div(msg.total_hashpower as u128);
-
                     let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                    let earned_rewards = hashpower_percent
-                        .saturating_mul(total_rewards as u128)
-                        .saturating_div(1_000_000)
-                        as u64;
+                    let earned_rewards = (total_rewards as u128).saturating_mul(msg_submission.hashpower as u128).saturating_div(msg.total_hashpower as u128) as u64;
 
                     let new_earning = InsertEarning {
                         miner_id: msg_submission.miner_id,
@@ -402,9 +395,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     let mut total_distributed_for_ore = 0;
     if total_ore_boosted > 0 {
         for ore_stake_account in ore_stake_accounts.iter() {
-            info!(target: "server_log", "Ore rewards to distribute: {}", ore_rewards);
             let rewards_balance = (ore_rewards as u128 * ore_stake_account.staked_balance as u128 / total_ore_boosted as u128) as u64;
-            info!(target: "server_log", "Added to ore rewards total: {}", rewards_balance);
             let stake_rewards = UpdateStakeAccountRewards {
                 stake_pda: ore_stake_account.stake_pda.clone(),
                 rewards_balance,
