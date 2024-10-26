@@ -57,9 +57,11 @@ pub async fn pool_mine_success_system(
                 info!(target: "server_log", "{} - Miners Rewards: {}", id, total_rewards);
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
                 info!(target: "server_log", "{} - Staker Rewards: {}", id, staker_rewards);
+                let mut total_miners_earned_rewards = 0;
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
                     let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
                     let earned_rewards = (total_rewards as u128).saturating_mul(msg_submission.hashpower as u128).saturating_div(msg.total_hashpower as u128) as u64;
+                    total_miners_earned_rewards += earned_rewards;
 
                     let new_earning = InsertEarning {
                         miner_id: msg_submission.miner_id,
@@ -278,6 +280,7 @@ pub async fn pool_mine_success_system(
 
                 info!(target: "server_log", "{} - Processing stakers rewards", id);
                 process_stakers_rewards(msg.rewards, staker_rewards, &app_database, &app_config).await;
+                info!(target: "server_log", "{} - Total Distributed For Miners: {}", id, total_miners_earned_rewards);
 
 
                 info!(target: "server_log", "{} - Finished processing internal mine success for challenge: {}", id, c);
