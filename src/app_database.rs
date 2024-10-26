@@ -973,6 +973,12 @@ impl AppDatabase {
                             .map(|sa| format!("WHEN stake_pda = '{}' THEN rewards_balance + {}", sa.stake_pda, sa.rewards_balance))
                             .collect::<Vec<_>>()
                             .join(" ") +
+                        " END, total_rewards_earned = CASE " +
+                        &stake_accts
+                            .iter()
+                            .map(|sa| format!("WHEN stake_pda = '{}' THEN total_rewards_earned + {}", sa.stake_pda, sa.rewards_balance))
+                            .collect::<Vec<_>>()
+                            .join(" ") +
                         " END WHERE stake_pda IN (" +
                         &stake_accts
                             .iter()
