@@ -927,6 +927,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/claim", post(post_claim))
         .route("/v2/claim", post(post_claim_v2))
         .route("/v2/claim-stake-rewards", post(post_claim_stake_rewards_v2))
+        // v3 permissionless claim to staker wallet
+        .route("/v3/claim-stake-rewards", post(post_claim_stake_rewards_v3)) 
         .route("/stake", post(post_stake))
         .route("/stake-boost", post(post_stake_boost))
         .route("/v2/stake-boost", post(post_stake_boost_v2))
@@ -1975,6 +1977,86 @@ async fn post_claim_stake_rewards_v2(
     } else {
         error!(target: "server_log", "Claim stake rewards with invalid pubkey");
         return Err((StatusCode::BAD_REQUEST, "Invalid Pubkey".to_string()));
+    }
+}
+
+#[derive(Deserialize)]
+struct ClaimStakeRewardsParamsV3 {
+    pubkey: String,
+    mint: String,
+    amount: u64,
+}
+
+async fn post_claim_stake_rewards_v3(
+    query_params: Query<ClaimStakeRewardsParamsV3>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+    Extension(claims_queue): Extension<Arc<ClaimsQueue>>,
+) -> impl IntoResponse {
+    let mint_pubkey = match Pubkey::from_str(&query_params.mint) {
+        Ok(pk) => pk,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("invalid mint pubkey".to_string())
+                .unwrap();
+        }
+    };
+    if let Ok(staker_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+        let reader = claims_queue.queue.read().await;
+        let queue = reader.clone();
+        drop(reader);
+
+        if queue.contains_key(&((staker_pubkey, Some(mint_pubkey)))) {
+            return Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .body("QUEUED".to_string())
+                .unwrap();
+        }
+
+        let amount = query_params.amount;
+
+        // 0.00500000000
+        if amount < 500_000_000 {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("claim minimum is 0.005".to_string())
+                .unwrap();
+        }
+
+        if let Ok(stake_account) = app_database
+            .get_staker_rewards(staker_pubkey.to_string(), mint_pubkey.to_string())
+            .await
+        {
+            if amount > stake_account.rewards_balance {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("claim amount exceeds staker rewards balance".to_string())
+                    .unwrap();
+            }
+
+            let mut writer = claims_queue.queue.write().await;
+            writer.insert((staker_pubkey, Some(mint_pubkey)), ClaimsQueueItem{
+                receiver_pubkey: staker_pubkey,
+                amount,
+                mint: Some(mint_pubkey),
+            });
+            drop(writer);
+            return Response::builder()
+                .status(StatusCode::OK)
+                .body("SUCCESS".to_string())
+                .unwrap();
+        } else {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("failed to get staker account from database".to_string())
+                .unwrap();
+        }
+    } else {
+        error!(target: "server_log", "Claim staker rewards with invalid pubkey");
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Pubkey".to_string())
+            .unwrap();
     }
 }
 

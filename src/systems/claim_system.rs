@@ -33,7 +33,7 @@ pub async fn claim_system(
         }
         drop(reader);
 
-        if let Some(((user_pubkey, mint_pubkey), claim_queue_item)) = claim {
+        if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = claim {
 
             if let Some(mint_pubkey) = claim_queue_item.mint {
                 info!(target: "server_log", "Processing stakers claim");
