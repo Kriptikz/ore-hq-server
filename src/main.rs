@@ -1989,6 +1989,7 @@ struct ClaimStakeRewardsParamsV3 {
 
 async fn post_claim_stake_rewards_v3(
     query_params: Query<ClaimStakeRewardsParamsV3>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(app_database): Extension<Arc<AppDatabase>>,
     Extension(claims_queue): Extension<Arc<ClaimsQueue>>,
 ) -> impl IntoResponse {
@@ -2016,7 +2017,25 @@ async fn post_claim_stake_rewards_v3(
         let amount = query_params.amount;
 
         // 0.00500000000
-        if amount < 500_000_000 {
+        let ore_mint = get_ore_mint();
+        let receiver_token_account = get_associated_token_address(&staker_pubkey, &ore_mint);
+        let mut is_creating_ata = true;
+        if let Ok(response) = rpc_client
+            .get_token_account_balance(&receiver_token_account)
+            .await
+        {
+            if let Some(_amount) = response.ui_amount {
+                info!(target: "server_log", "staker claim beneficiary has valid token account.");
+                is_creating_ata = false;
+            }
+        }
+        if amount < 5_000_000 {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("claim minimum is 0.00005000000".to_string())
+                .unwrap();
+        }
+        if is_creating_ata && amount < 500_000_000 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("claim minimum is 0.005".to_string())
