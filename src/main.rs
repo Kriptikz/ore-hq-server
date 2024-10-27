@@ -119,7 +119,7 @@ struct ClaimsQueueItem {
 }
 
 struct ClaimsQueue {
-    queue: RwLock<HashMap<Pubkey, ClaimsQueueItem>>,
+    queue: RwLock<HashMap<(Pubkey, Option<Pubkey>), ClaimsQueueItem>>,
 }
 
 struct SubmissionWindow {
@@ -1677,7 +1677,7 @@ async fn post_claim(
         let queue = reader.clone();
         drop(reader);
 
-        if queue.contains_key(&miner_pubkey) {
+        if queue.contains_key(&(miner_pubkey, None)) {
             return Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .body("QUEUED".to_string())
@@ -1721,7 +1721,7 @@ async fn post_claim(
             }
 
             let mut writer = claims_queue.queue.write().await;
-            writer.insert(miner_pubkey, ClaimsQueueItem{
+            writer.insert((miner_pubkey, None), ClaimsQueueItem{
                 receiver_pubkey: miner_pubkey,
                 amount,
                 mint: None,
@@ -1796,7 +1796,7 @@ async fn post_claim_v2(
                 let queue = reader.clone();
                 drop(reader);
 
-                if queue.contains_key(&miner_pubkey) {
+                if queue.contains_key(&(miner_pubkey, None)) {
                     return Err((StatusCode::TOO_MANY_REQUESTS, "QUEUED".to_string()));
                 }
 
@@ -1828,7 +1828,7 @@ async fn post_claim_v2(
                     }
 
                     let mut writer = claims_queue.queue.write().await;
-                    writer.insert(miner_pubkey, ClaimsQueueItem{
+                    writer.insert((miner_pubkey, None), ClaimsQueueItem{
                         receiver_pubkey,
                         amount,
                         mint: None,
@@ -1921,7 +1921,7 @@ async fn post_claim_stake_rewards_v2(
                 let queue = reader.clone();
                 drop(reader);
 
-                if queue.contains_key(&staker_pubkey) {
+                if queue.contains_key(&(staker_pubkey, Some(mint_pubkey))) {
                     return Err((StatusCode::TOO_MANY_REQUESTS, "QUEUED".to_string()));
                 }
 
@@ -1956,7 +1956,7 @@ async fn post_claim_stake_rewards_v2(
                     }
 
                     let mut writer = claims_queue.queue.write().await;
-                    writer.insert(staker_pubkey, ClaimsQueueItem{
+                    writer.insert((staker_pubkey, Some(mint_pubkey)), ClaimsQueueItem{
                         receiver_pubkey,
                         amount,
                         mint: Some(mint_pubkey),

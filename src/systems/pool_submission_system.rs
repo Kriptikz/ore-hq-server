@@ -98,6 +98,7 @@ pub async fn pool_submission_system(
                         info!(target: "server_log", "Submission Challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                         let mut loaded_config = None;
                         info!(target: "server_log", "Getting latest config and busses data.");
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
                         if let (Ok(p), Ok(config), Ok(_busses)) =
                             get_proof_and_config_with_busses(&rpc_client, signer.pubkey()).await
                         {

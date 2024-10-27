@@ -33,7 +33,7 @@ pub async fn claim_system(
         }
         drop(reader);
 
-        if let Some((user_pubkey, claim_queue_item)) = claim {
+        if let Some(((user_pubkey, mint_pubkey), claim_queue_item)) = claim {
 
             if let Some(mint_pubkey) = claim_queue_item.mint {
                 info!(target: "server_log", "Processing stakers claim");
@@ -179,7 +179,7 @@ pub async fn claim_system(
 
                             // TODO: InsertStakerClaim
                             let mut writer = claims_queue.queue.write().await;
-                            writer.remove(&staker_pubkey);
+                            writer.remove(&(staker_pubkey, Some(mint_pubkey)));
                             drop(writer);
 
                             info!(target: "server_log", "Stake rewards claim successfully processed!");
@@ -356,7 +356,7 @@ pub async fn claim_system(
                             }
 
                             let mut writer = claims_queue.queue.write().await;
-                            writer.remove(&miner_pubkey);
+                            writer.remove(&(miner_pubkey, None));
                             drop(writer);
 
                             info!(target: "server_log", "Claim successfully processed!");
