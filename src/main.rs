@@ -114,7 +114,8 @@ struct AppState {
 #[derive(Clone, Copy)]
 struct ClaimsQueueItem {
     receiver_pubkey: Pubkey,
-    amount: u64
+    amount: u64,
+    mint: Option<Pubkey>,
 }
 
 struct ClaimsQueue {
@@ -925,6 +926,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/sol-balance", get(get_sol_balance))
         .route("/claim", post(post_claim))
         .route("/v2/claim", post(post_claim_v2))
+        .route("/v2/claim-stake-rewards", post(post_claim_stake_rewards_v2))
         .route("/stake", post(post_stake))
         .route("/stake-boost", post(post_stake_boost))
         .route("/v2/stake-boost", post(post_stake_boost_v2))
@@ -1722,6 +1724,7 @@ async fn post_claim(
             writer.insert(miner_pubkey, ClaimsQueueItem{
                 receiver_pubkey: miner_pubkey,
                 amount,
+                mint: None,
             });
             drop(writer);
             return Response::builder()
@@ -1828,6 +1831,7 @@ async fn post_claim_v2(
                     writer.insert(miner_pubkey, ClaimsQueueItem{
                         receiver_pubkey,
                         amount,
+                        mint: None,
                     });
                     drop(writer);
                     return Ok((StatusCode::OK, "SUCCESS"));
@@ -1842,6 +1846,134 @@ async fn post_claim_v2(
         }
     } else {
         error!(target: "server_log", "Claim with invalid pubkey");
+        return Err((StatusCode::BAD_REQUEST, "Invalid Pubkey".to_string()));
+    }
+}
+
+#[derive(Deserialize)]
+struct ClaimStakeRewardsParamsV2 {
+    timestamp: u64,
+    mint: String,
+    receiver_pubkey: String,
+    amount: u64,
+}
+
+async fn post_claim_stake_rewards_v2(
+    TypedHeader(auth_header): TypedHeader<axum_extra::headers::Authorization<Basic>>,
+    Extension(app_database): Extension<Arc<AppDatabase>>,
+    Extension(claims_queue): Extension<Arc<ClaimsQueue>>,
+    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    query_params: Query<ClaimStakeRewardsParamsV2>,
+) -> impl IntoResponse {
+    let msg_timestamp = query_params.timestamp;
+
+    let staker_pubkey_str = auth_header.username();
+    let signed_msg = auth_header.password();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs();
+
+    // Signed authentication message is only valid for 30 seconds
+    if (now - msg_timestamp) >= 30 {
+        return Err((StatusCode::UNAUTHORIZED, "Timestamp too old.".to_string()));
+    }
+    let receiver_pubkey = match Pubkey::from_str(&query_params.receiver_pubkey) {
+        Ok(pubkey) => {
+            pubkey
+        },
+        Err(_) => {
+            return Err((StatusCode::BAD_REQUEST, "Invalid receiver_pubkey provided.".to_string()))
+        }
+    };
+
+    let mint_pubkey = match Pubkey::from_str(&query_params.mint) {
+        Ok(pubkey) => {
+            pubkey
+        },
+        Err(_) => {
+            return Err((StatusCode::BAD_REQUEST, "Invalid mint pubkey provided.".to_string()))
+        }
+    };
+
+    let boost_mints = vec![
+        Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
+        Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
+        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
+    ];
+
+    if !boost_mints.contains(&mint_pubkey) {
+        return Err((StatusCode::BAD_REQUEST, "Invalid mint provided.".to_string()))
+    }
+
+    if let Ok(staker_pubkey) = Pubkey::from_str(staker_pubkey_str) {
+        if let Ok(signature) = Signature::from_str(signed_msg) {
+            let amount = query_params.amount;
+            let mut signed_msg = vec![];
+            signed_msg.extend(msg_timestamp.to_le_bytes());
+            signed_msg.extend(mint_pubkey.to_bytes());
+            signed_msg.extend(receiver_pubkey.to_bytes());
+            signed_msg.extend(amount.to_le_bytes());
+
+            if signature.verify(&staker_pubkey.to_bytes(), &signed_msg) {
+                let reader = claims_queue.queue.read().await;
+                let queue = reader.clone();
+                drop(reader);
+
+                if queue.contains_key(&staker_pubkey) {
+                    return Err((StatusCode::TOO_MANY_REQUESTS, "QUEUED".to_string()));
+                }
+
+                let amount = query_params.amount;
+
+                // 0.00500000000
+                let ore_mint = get_ore_mint();
+                let receiver_token_account = get_associated_token_address(&receiver_pubkey, &ore_mint);
+                let mut is_creating_ata = true;
+                if let Ok(response) = rpc_client
+                    .get_token_account_balance(&receiver_token_account)
+                    .await
+                {
+                    if let Some(_amount) = response.ui_amount {
+                        info!(target: "server_log", "staker claim beneficiary has valid token account.");
+                        is_creating_ata = false;
+                    }
+                }
+                if amount < 5_000_000 {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.00005000000".to_string()));
+                }
+                if is_creating_ata && amount < 500_000_000 {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.005".to_string()));
+                }
+
+                if let Ok(staker_rewards) = app_database
+                    .get_staker_rewards(staker_pubkey.to_string(), mint_pubkey.to_string())
+                    .await
+                {
+                    if amount > staker_rewards.rewards_balance {
+                        return Err((StatusCode::BAD_REQUEST, "claim amount exceeds staker rewards balance.".to_string()));
+                    }
+
+                    let mut writer = claims_queue.queue.write().await;
+                    writer.insert(staker_pubkey, ClaimsQueueItem{
+                        receiver_pubkey,
+                        amount,
+                        mint: Some(mint_pubkey),
+                    });
+                    drop(writer);
+                    return Ok((StatusCode::OK, "SUCCESS"));
+                } else {
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to get staker account from database".to_string()));
+                }
+            } else {
+                return Err((StatusCode::UNAUTHORIZED, "Sig verification failed".to_string()));
+            }
+        } else {
+            return Err((StatusCode::UNAUTHORIZED, "Invalid signature".to_string()));
+        }
+    } else {
+        error!(target: "server_log", "Claim stake rewards with invalid pubkey");
         return Err((StatusCode::BAD_REQUEST, "Invalid Pubkey".to_string()));
     }
 }

@@ -1083,4 +1083,72 @@ impl AppDatabase {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
     }
+
+    pub async fn get_staker_rewards(
+        &self,
+        staker_pubkey: String,
+        mint: String,
+    ) -> Result<models::StakeAccount, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn.interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT s.* FROM stake_accounts s WHERE s.staker_pubkey = ? AND s.mint_pubkey = ?")
+                .bind::<Text, _>(staker_pubkey)
+                .bind::<Text, _>(mint)
+                .get_result::<models::StakeAccount>(conn)
+            }).await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn decrease_stakers_rewards(
+        &self,
+        staker_id: i32,
+        rewards_to_decrease: u64,
+    ) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("UPDATE stake_accounts SET rewards_balance = rewards_balance - ? WHERE id = ?")
+                        .bind::<Unsigned<BigInt>, _>(rewards_to_decrease)
+                        .bind::<Integer, _>(staker_id)
+                        .execute(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(_query) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
 }
