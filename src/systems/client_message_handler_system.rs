@@ -64,7 +64,7 @@ pub async fn client_message_handler_system(
                     drop(reader);
 
                     if submission_windows_closed {
-                        tracing::error!(target: "server_log", "{} submitted after submission window was closed!", pubkey);
+                        //tracing::error!(target: "server_log", "{} submitted after submission window was closed!", pubkey);
 
                         let reader = app_state.read().await;
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
@@ -76,7 +76,7 @@ pub async fn client_message_handler_system(
                                 .send(Message::Text(msg))
                                 .await;
                         } else {
-                            tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
+                            //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                             return;
                         }
                         drop(reader);
@@ -90,7 +90,7 @@ pub async fn client_message_handler_system(
                         if let Some(nr) = reader.get(&pubkey) {
                             nr.clone()
                         } else {
-                            tracing::error!(target: "server_log", "Client nonce range not set!");
+                            //tracing::error!(target: "server_log", "Client nonce range not set!");
                             return;
                         }
                     };
@@ -108,7 +108,7 @@ pub async fn client_message_handler_system(
                     }
 
                     if !in_range {
-                        tracing::error!(target: "server_log", "Client submitted nonce out of assigned range");
+                        //tracing::error!(target: "server_log", "Client submitted nonce out of assigned range");
                         return;
                     }
 
@@ -117,7 +117,7 @@ pub async fn client_message_handler_system(
                     if let Some(app_client_socket) = reader.sockets.get(&addr) {
                         miner_id = app_client_socket.miner_id;
                     } else {
-                        tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
+                        //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                         return;
                     }
                     drop(reader);
@@ -192,7 +192,7 @@ pub async fn client_message_handler_system(
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
                             let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
                         } else {
-                            tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
+                            //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                             return;
                         }
                         drop(reader);

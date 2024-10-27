@@ -17,7 +17,7 @@ pub async fn pong_tracking_system(
 
         for pong in pongs.iter() {
             if pong.1.elapsed().as_secs() > 90 {
-                tracing::error!(target: "server_log", "Failed to get pong within 45s from client on socket: {}", pong.0);
+                //tracing::error!(target: "server_log", "Failed to get pong within 45s from client on socket: {}", pong.0);
                 let mut writer = app_state.write().await;
                 writer.sockets.remove(pong.0);
                 drop(writer);
