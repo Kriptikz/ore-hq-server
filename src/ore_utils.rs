@@ -402,7 +402,7 @@ pub fn get_cutoff(proof: Proof, buffer_time: u64) -> i64 {
         .as_secs() as i64;
     proof
         .last_hash_at
-        .saturating_add(62)
+        .saturating_add(60)
         .saturating_sub(buffer_time as i64)
         .saturating_sub(now)
 }
