@@ -34,7 +34,6 @@ pub async fn claim_system(
         drop(reader);
 
         if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = claim {
-
             if let Some(mint_pubkey) = claim_queue_item.mint {
                 info!(target: "server_log", "Processing stakers claim");
                 let staker_pubkey = user_pubkey;
@@ -371,6 +370,6 @@ pub async fn claim_system(
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
