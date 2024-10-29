@@ -160,7 +160,7 @@ pub async fn claim_system(
                                     }
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         };
 
                         match result {
@@ -316,7 +316,7 @@ pub async fn claim_system(
                                     }
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         };
 
                         match result {
@@ -508,7 +508,7 @@ pub async fn claim_system(
                                     }
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         };
 
                         match result {
@@ -664,7 +664,7 @@ pub async fn claim_system(
                                     }
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         };
 
                         match result {
@@ -856,7 +856,7 @@ pub async fn claim_system(
                                     }
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         };
 
                         match result {
@@ -1012,7 +1012,7 @@ pub async fn claim_system(
                                     }
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
                         };
 
                         match result {
