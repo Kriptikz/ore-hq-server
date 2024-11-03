@@ -7,26 +7,41 @@ use axum::{
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use spl_associated_token_account::get_associated_token_address;
+use tokio::{sync::RwLock, time::Instant};
 use tracing::error;
 
 use crate::{
-    app_rr_database,
-    ore_utils::{get_ore_mint, get_proof},
-    ChallengeWithDifficulty, Config, Txn,
+    app_rr_database, ore_utils::{get_ore_mint, get_proof}, ChallengeWithDifficulty, ChallengesCache, Config, Txn
 };
 use std::{str::FromStr, sync::Arc};
 
 pub async fn get_challenges(
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
     Extension(app_config): Extension<Arc<Config>>,
+    Extension(app_cache_challenges): Extension<Arc<RwLock<ChallengesCache>>>,
 ) -> Result<Json<Vec<ChallengeWithDifficulty>>, String> {
     if app_config.stats_enabled {
-        let res = app_rr_database.get_challenges().await;
+        let reader = app_cache_challenges.read().await;
+        let cached_challenges = reader.clone();
+        drop(reader);
+        if cached_challenges.item.len() > 0 && cached_challenges.last_updated_at.elapsed().as_secs() < 30 {
+            return Ok(Json(cached_challenges.item));
+        } else {
+            let res = app_rr_database.get_challenges().await;
 
-        match res {
-            Ok(challenges) => Ok(Json(challenges)),
-            Err(_) => Err("Failed to get submissions for miner".to_string()),
+            match res {
+                Ok(challenges) => {
+                    let mut writer = app_cache_challenges.write().await;
+                    writer.item = challenges.clone();
+                    writer.last_updated_at = Instant::now();
+                    drop(writer);
+
+                    Ok(Json(challenges))
+                }
+                Err(_) => Err("Failed to get submissions for miner".to_string()),
+            }
         }
+
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }

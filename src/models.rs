@@ -14,7 +14,7 @@ pub struct Challenge {
     pub rewards_earned: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, QueryableByName)]
+#[derive(Debug, Clone, Deserialize, Serialize, QueryableByName)]
 pub struct ChallengeWithDifficulty {
     #[diesel(sql_type = Integer)]
     pub id: i32,
@@ -101,7 +101,7 @@ pub struct Submission {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Deserialize, Serialize, QueryableByName)]
+#[derive(Debug, Clone, Deserialize, Serialize, QueryableByName)]
 pub struct SubmissionWithPubkey {
     #[diesel(sql_type = BigInt)]
     pub id: i64,
