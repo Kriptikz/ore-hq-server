@@ -105,9 +105,9 @@ pub async fn claim_system(
                     let amount = claim_queue_item.amount;
 
                     let mut claim_amount = amount;
-                    // 0.00400000000
+                    // 0.02_000_000_000
                     if is_creating_ata {
-                        claim_amount = amount - 400_000_000
+                        claim_amount = amount - 2_000_000_000
                     }
                     let ix =
                         crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
@@ -261,9 +261,9 @@ pub async fn claim_system(
                     let amount = claim_queue_item.amount;
 
                     let mut claim_amount = amount;
-                    // 0.00400000000
+                    // 0.02_000_000_000
                     if is_creating_ata {
-                        claim_amount = amount - 400_000_000
+                        claim_amount = amount - 2_000_000_000
                     }
                     let ix =
                         crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
@@ -453,9 +453,9 @@ pub async fn claim_system(
                     let amount = claim_queue_item.amount;
 
                     let mut claim_amount = amount;
-                    // 0.00400000000
+                    // 0.02_000_000_000
                     if is_creating_ata {
-                        claim_amount = amount - 400_000_000
+                        claim_amount = amount - 2_000_000_000
                     }
                     let ix =
                         crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
@@ -609,9 +609,9 @@ pub async fn claim_system(
                     let amount = claim_queue_item.amount;
 
                     let mut claim_amount = amount;
-                    // 0.00400000000
+                    // 0.02_000_000_000
                     if is_creating_ata {
-                        claim_amount = amount - 400_000_000
+                        claim_amount = amount - 2_000_000_000
                     }
                     let ix =
                         crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
@@ -801,9 +801,9 @@ pub async fn claim_system(
                     let amount = claim_queue_item.amount;
 
                     let mut claim_amount = amount;
-                    // 0.00400000000
+                    // 0.02_000_000_000
                     if is_creating_ata {
-                        claim_amount = amount - 400_000_000
+                        claim_amount = amount - 2_000_000_000
                     }
                     let ix =
                         crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
@@ -957,9 +957,9 @@ pub async fn claim_system(
                     let amount = claim_queue_item.amount;
 
                     let mut claim_amount = amount;
-                    // 0.00400000000
+                    // 0.02_000_000_000
                     if is_creating_ata {
-                        claim_amount = amount - 400_000_000
+                        claim_amount = amount - 2_000_000_000
                     }
                     let ix =
                         crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);

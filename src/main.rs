@@ -1752,11 +1752,11 @@ async fn post_claim(
 
         let amount = query_params.amount;
 
-        // 0.00500000000
-        if amount < 500_000_000 {
+        // 0.05000000000
+        if amount < 5_000_000_000 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body("claim minimum is 0.005".to_string())
+                .body("claim minimum is 0.05".to_string())
                 .unwrap();
         }
 
@@ -1868,9 +1868,9 @@ async fn post_claim_v2(
 
                 let amount = query_params.amount;
 
-                // 0.00500000000
-                if amount < 500_000_000 {
-                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.005".to_string()));
+                // 0.05000000000
+                if amount < 5_000_000_000 {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.05".to_string()));
                 }
 
                 if let Ok(miner_rewards) = app_database
@@ -2006,11 +2006,11 @@ async fn post_claim_stake_rewards_v2(
                         is_creating_ata = false;
                     }
                 }
-                if amount < 5_000_000 {
-                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.00005000000".to_string()));
+                if amount < 5_000_000_000 {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.05".to_string()));
                 }
-                if is_creating_ata && amount < 500_000_000 {
-                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.005".to_string()));
+                if is_creating_ata && amount < 5_000_000_000 {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.05".to_string()));
                 }
 
                 if let Ok(staker_rewards) = app_database
@@ -2080,7 +2080,6 @@ async fn post_claim_stake_rewards_v3(
 
         let amount = query_params.amount;
 
-        // 0.00500000000
         let ore_mint = get_ore_mint();
         let receiver_token_account = get_associated_token_address(&staker_pubkey, &ore_mint);
         let mut is_creating_ata = true;
@@ -2093,16 +2092,18 @@ async fn post_claim_stake_rewards_v3(
                 is_creating_ata = false;
             }
         }
-        if amount < 5_000_000 {
+        // 0.05000000000
+        if amount < 5_000_000_000 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body("claim minimum is 0.00005000000".to_string())
+                .body("claim minimum is 0.05".to_string())
                 .unwrap();
         }
-        if is_creating_ata && amount < 500_000_000 {
+        // 0.05000000000
+        if is_creating_ata && amount < 5_000_000_000 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body("claim minimum is 0.005".to_string())
+                .body("claim minimum is 0.05".to_string())
                 .unwrap();
         }
 
