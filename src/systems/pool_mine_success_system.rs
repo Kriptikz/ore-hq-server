@@ -169,7 +169,7 @@ pub async fn pool_mine_success_system(
 
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Adding earnings", id);
-                let batch_size = 200;
+                let batch_size = 1000;
                 if i_earnings.len() > 0 {
                     for batch in i_earnings.chunks(batch_size) {
                         while let Err(_) =
@@ -442,7 +442,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     info!(target: "server_log", "Total distributed for ore_sol: {}", total_distributed_for_ore_sol);
     info!(target: "server_log", "Total distributed for ore_isc: {}", total_distributed_for_ore_isc);
 
-    let batch_size = 200;
+    let batch_size = 1000;
      info!(target: "server_log", "Updating staking rewards");
      if update_stake_rewards.len() > 0 {
          let mut batch_num = 1;
