@@ -187,6 +187,27 @@ pub async fn pool_mine_success_system(
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 let instant = Instant::now();
+                info!(target: "server_log", "{} - Adding submissions", id);
+                if i_submissions.len() > 0 {
+                    for batch in i_submissions.chunks(batch_size) {
+                        info!(target: "server_log", "{} - Submissions batch size: {}", id, i_submissions.len());
+                        while let Err(_) =
+                            app_database.add_new_submissions_batch(batch.to_vec()).await
+                        {
+                            tracing::error!(target: "server_log", "{} - Failed to add new submissions batch. Retrying...", id);
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+
+                    info!(target: "server_log", "{} - Successfully added submissions batch", id);
+                }
+                info!(target: "server_log", "{} - Added submissions in {}ms", id, instant.elapsed().as_millis());
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                let batch_size = 400;
+                let instant = Instant::now();
                 info!(target: "server_log", "{} - Updating rewards", id);
                 if i_rewards.len() > 0 {
                     let mut batch_num = 1;
@@ -204,26 +225,6 @@ pub async fn pool_mine_success_system(
                     info!(target: "server_log", "{} - Successfully updated rewards", id);
                 }
                 info!(target: "server_log", "{} - Updated rewards in {}ms", id, instant.elapsed().as_millis());
-
-                tokio::time::sleep(Duration::from_millis(500)).await;
-
-                let instant = Instant::now();
-                info!(target: "server_log", "{} - Adding submissions", id);
-                if i_submissions.len() > 0 {
-                    for batch in i_submissions.chunks(batch_size) {
-                        info!(target: "server_log", "{} - Submissions batch size: {}", id, i_submissions.len());
-                        while let Err(_) =
-                            app_database.add_new_submissions_batch(batch.to_vec()).await
-                        {
-                            tracing::error!(target: "server_log", "{} - Failed to add new submissions batch. Retrying...", id);
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-
-                    info!(target: "server_log", "{} - Successfully added submissions batch", id);
-                }
-                info!(target: "server_log", "{} - Added submissions in {}ms", id, instant.elapsed().as_millis());
 
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -442,7 +443,7 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
     info!(target: "server_log", "Total distributed for ore_sol: {}", total_distributed_for_ore_sol);
     info!(target: "server_log", "Total distributed for ore_isc: {}", total_distributed_for_ore_isc);
 
-    let batch_size = 1000;
+    let batch_size = 400;
      info!(target: "server_log", "Updating staking rewards");
      if update_stake_rewards.len() > 0 {
          let mut batch_num = 1;
