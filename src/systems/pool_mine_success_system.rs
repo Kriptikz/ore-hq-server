@@ -190,7 +190,7 @@ pub async fn pool_mine_success_system(
                 info!(target: "server_log", "{} - Adding submissions", id);
                 if i_submissions.len() > 0 {
                     for batch in i_submissions.chunks(batch_size) {
-                        info!(target: "server_log", "{} - Submissions batch size: {}", id, i_submissions.len());
+                        info!(target: "server_log", "{} - Submissions batch size: {}", id, batch.len());
                         while let Err(_) =
                             app_database.add_new_submissions_batch(batch.to_vec()).await
                         {
@@ -202,7 +202,7 @@ pub async fn pool_mine_success_system(
 
                     info!(target: "server_log", "{} - Successfully added submissions batch", id);
                 }
-                info!(target: "server_log", "{} - Added submissions in {}ms", id, instant.elapsed().as_millis());
+                info!(target: "server_log", "{} - Added {} submissions in {}ms", id, i_submissions.len(), instant.elapsed().as_millis());
 
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
