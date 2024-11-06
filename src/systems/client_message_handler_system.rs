@@ -130,7 +130,7 @@ pub async fn client_message_handler_system(
 
                         if solution.is_valid(&challenge) {
                             let submission_uuid = Uuid::new_v4();
-                            tracing::info!(target: "submission_log", "{} - {} found diff: {}", submission_uuid, pubkey_str, diff);
+                            //tracing::info!(target: "submission_log", "{} - {} found diff: {}", submission_uuid, pubkey_str, diff);
                             // calculate rewards
                             let mut hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
                             if hashpower > 81_920 {
@@ -155,14 +155,14 @@ pub async fn client_message_handler_system(
                                         );
                                         if diff > epoch_hashes.best_hash.difficulty {
                                             tracing::info!(target: "server_log", "{} - New best diff: {}", submission_uuid, diff);
-                                            tracing::info!(target: "submission_log", "{} - New best diff: {}", submission_uuid, diff);
+                                            //tracing::info!(target: "submission_log", "{} - New best diff: {}", submission_uuid, diff);
                                             epoch_hashes.best_hash.difficulty = diff;
                                             epoch_hashes.best_hash.solution = Some(solution);
                                         }
                                         drop(epoch_hashes);
                                     }
                                 } else {
-                                    tracing::info!(target: "submission_log", "{} - Adding {} submission diff: {} to epoch_hashes submissions.", submission_uuid, pubkey_str, diff);
+                                    //tracing::info!(target: "submission_log", "{} - Adding {} submission diff: {} to epoch_hashes submissions.", submission_uuid, pubkey_str, diff);
                                     let mut epoch_hashes = epoch_hashes.write().await;
                                     epoch_hashes.submissions.insert(
                                         pubkey,
@@ -175,12 +175,12 @@ pub async fn client_message_handler_system(
                                     );
                                     if diff > epoch_hashes.best_hash.difficulty {
                                         tracing::info!(target: "server_log", "{} - New best diff: {}", submission_uuid, diff);
-                                        tracing::info!(target: "submission_log", "{} - New best diff: {}", submission_uuid, diff);
+                                        //tracing::info!(target: "submission_log", "{} - New best diff: {}", submission_uuid, diff);
                                         epoch_hashes.best_hash.difficulty = diff;
                                         epoch_hashes.best_hash.solution = Some(solution);
                                     }
                                     drop(epoch_hashes);
-                                    tracing::info!(target: "submission_log", "{} - Added {} submission diff: {} to epoch_hashes submissions.", submission_uuid, pubkey_str, diff);
+                                    //tracing::info!(target: "submission_log", "{} - Added {} submission diff: {} to epoch_hashes submissions.", submission_uuid, pubkey_str, diff);
                                 }
                             }
                         } else {

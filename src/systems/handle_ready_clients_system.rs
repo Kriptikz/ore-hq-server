@@ -71,8 +71,8 @@ pub async fn handle_ready_clients_system(
                     drop(lock);
                     let challenge = latest_proof.challenge;
 
-                    tracing::info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
-                    tracing::info!(target: "submission_log", "With cutoff: {}", cutoff);
+                    // tracing::info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
+                    // tracing::info!(target: "submission_log", "With cutoff: {}", cutoff);
                     for client in clients {
                         let app_client_nonce_ranges = app_client_nonce_ranges.clone();
                         let shared_state = app_state.read().await;

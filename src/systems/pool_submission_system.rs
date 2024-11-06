@@ -577,9 +577,9 @@ pub async fn pool_submission_system(
 
                                                         if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEvent>(&bytes) {
                                                             info!(target: "server_log", "MineEvent: {:?}", mine_event);
-                                                            info!(target: "submission_log", "MineEvent: {:?}", mine_event);
+                                                            //info!(target: "submission_log", "MineEvent: {:?}", mine_event);
                                                             info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                            info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                            //info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                             let full_rewards = mine_event.reward;
                                                             let commissions = (full_rewards as u128).saturating_mul(5).saturating_div(100) as u64;
 
@@ -727,9 +727,9 @@ pub async fn pool_submission_system(
                                                         } else {
                                                             if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEventWithBoosts>(&bytes) {
                                                                 info!(target: "server_log", "MineEvent: {:?}", mine_event);
-                                                                info!(target: "submission_log", "MineEvent: {:?}", mine_event);
+                                                                //info!(target: "submission_log", "MineEvent: {:?}", mine_event);
                                                                 info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                                info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                                //info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                                 let full_rewards = mine_event.reward;
                                                                 let commissions = full_rewards.mul(5).saturating_div(100);
 
