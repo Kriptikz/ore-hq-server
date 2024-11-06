@@ -125,11 +125,12 @@ pub async fn client_message_handler_system(
                     let lock = proof.lock().await;
                     let challenge = lock.challenge;
                     drop(lock);
-                    if solution.is_valid(&challenge) {
-                        let diff = solution.to_hash().difficulty();
-                        let submission_uuid = Uuid::new_v4();
-                        tracing::info!(target: "submission_log", "{} - {} found diff: {}", submission_uuid, pubkey_str, diff);
-                        if diff >= MIN_DIFF {
+
+                    let diff = solution.to_hash().difficulty();
+                    if diff >= MIN_DIFF {
+                        if solution.is_valid(&challenge) {
+                            let submission_uuid = Uuid::new_v4();
+                            tracing::info!(target: "submission_log", "{} - {} found diff: {}", submission_uuid, pubkey_str, diff);
                             // calculate rewards
                             let mut hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
                             if hashpower > 81_920 {
@@ -183,19 +184,19 @@ pub async fn client_message_handler_system(
                                 }
                             }
                         } else {
-                            tracing::error!(target: "server_log", "Diff to low, skipping");
+                            tracing::error!(target: "server_log", "{} returned an invalid solution!", pubkey);
+
+                            let reader = app_state.read().await;
+                            if let Some(app_client_socket) = reader.sockets.get(&addr) {
+                                let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
+                            } else {
+                                //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
+                                return;
+                            }
+                            drop(reader);
                         }
                     } else {
-                        tracing::error!(target: "server_log", "{} returned an invalid solution!", pubkey);
-
-                        let reader = app_state.read().await;
-                        if let Some(app_client_socket) = reader.sockets.get(&addr) {
-                            let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
-                        } else {
-                            //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
-                            return;
-                        }
-                        drop(reader);
+                        tracing::error!(target: "server_log", "Diff to low, skipping");
                     }
                 });
             }
