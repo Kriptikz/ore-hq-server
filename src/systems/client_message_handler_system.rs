@@ -49,85 +49,85 @@ pub async fn client_message_handler_system(
                 tracing::info!(target: "server_log", "Client {} has started mining!", addr.to_string());
             }
             ClientMessage::BestSolution(addr, solution, pubkey) => {
-                let app_epoch_hashes = epoch_hashes.clone();
-                let app_proof = proof.clone();
-                let app_client_nonce_ranges = client_nonce_ranges.clone();
-                let app_state = app_state.clone();
-                let app_submission_window = app_submission_window.clone();
-                tokio::spawn(async move {
-                    let epoch_hashes = app_epoch_hashes;
-                    let proof = app_proof;
-                    let client_nonce_ranges = app_client_nonce_ranges;
+                let diff = solution.to_hash().difficulty();
+                if diff >= MIN_DIFF {
+                    let app_epoch_hashes = epoch_hashes.clone();
+                    let app_proof = proof.clone();
+                    let app_client_nonce_ranges = client_nonce_ranges.clone();
+                    let app_state = app_state.clone();
+                    let app_submission_window = app_submission_window.clone();
+                    tokio::spawn(async move {
+                        let epoch_hashes = app_epoch_hashes;
+                        let proof = app_proof;
+                        let client_nonce_ranges = app_client_nonce_ranges;
 
-                    let reader = app_submission_window.read().await;
-                    let submission_windows_closed = reader.closed;
-                    drop(reader);
+                        let reader = app_submission_window.read().await;
+                        let submission_windows_closed = reader.closed;
+                        drop(reader);
 
-                    if submission_windows_closed {
-                        //tracing::error!(target: "server_log", "{} submitted after submission window was closed!", pubkey);
+                        if submission_windows_closed {
+                            //tracing::error!(target: "server_log", "{} submitted after submission window was closed!", pubkey);
+
+                            let reader = app_state.read().await;
+                            if let Some(app_client_socket) = reader.sockets.get(&addr) {
+                                let msg = format!("Late submission. Please make sure your hash time is under 60 seconds.");
+                                let _ = app_client_socket
+                                    .socket
+                                    .lock()
+                                    .await
+                                    .send(Message::Text(msg))
+                                    .await;
+                            } else {
+                                //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
+                                return;
+                            }
+                            drop(reader);
+                            return;
+                        }
+
+                        let pubkey_str = pubkey.to_string();
+
+                        let reader = client_nonce_ranges.read().await;
+                        let nonce_ranges: Vec<Range<u64>> = {
+                            if let Some(nr) = reader.get(&pubkey) {
+                                nr.clone()
+                            } else {
+                                //tracing::error!(target: "server_log", "Client nonce range not set!");
+                                return;
+                            }
+                        };
+                        drop(reader);
+
+                        let nonce = u64::from_le_bytes(solution.n);
+
+                        let mut in_range = false;
+
+                        for nonce_range in nonce_ranges.iter() {
+                            if nonce_range.contains(&nonce) {
+                                in_range = true;
+                                break;
+                            }
+                        }
+
+                        if !in_range {
+                            //tracing::error!(target: "server_log", "Client submitted nonce out of assigned range");
+                            return;
+                        }
 
                         let reader = app_state.read().await;
+                        let miner_id;
                         if let Some(app_client_socket) = reader.sockets.get(&addr) {
-                            let msg = format!("Late submission. Please make sure your hash time is under 60 seconds.");
-                            let _ = app_client_socket
-                                .socket
-                                .lock()
-                                .await
-                                .send(Message::Text(msg))
-                                .await;
+                            miner_id = app_client_socket.miner_id;
                         } else {
                             //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                             return;
                         }
                         drop(reader);
-                        return;
-                    }
 
-                    let pubkey_str = pubkey.to_string();
+                        let lock = proof.lock().await;
+                        let challenge = lock.challenge;
+                        drop(lock);
 
-                    let reader = client_nonce_ranges.read().await;
-                    let nonce_ranges: Vec<Range<u64>> = {
-                        if let Some(nr) = reader.get(&pubkey) {
-                            nr.clone()
-                        } else {
-                            //tracing::error!(target: "server_log", "Client nonce range not set!");
-                            return;
-                        }
-                    };
-                    drop(reader);
-
-                    let nonce = u64::from_le_bytes(solution.n);
-
-                    let mut in_range = false;
-
-                    for nonce_range in nonce_ranges.iter() {
-                        if nonce_range.contains(&nonce) {
-                            in_range = true;
-                            break;
-                        }
-                    }
-
-                    if !in_range {
-                        //tracing::error!(target: "server_log", "Client submitted nonce out of assigned range");
-                        return;
-                    }
-
-                    let reader = app_state.read().await;
-                    let miner_id;
-                    if let Some(app_client_socket) = reader.sockets.get(&addr) {
-                        miner_id = app_client_socket.miner_id;
-                    } else {
-                        //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
-                        return;
-                    }
-                    drop(reader);
-
-                    let lock = proof.lock().await;
-                    let challenge = lock.challenge;
-                    drop(lock);
-
-                    let diff = solution.to_hash().difficulty();
-                    if diff >= MIN_DIFF {
                         if solution.is_valid(&challenge) {
                             let submission_uuid = Uuid::new_v4();
                             tracing::info!(target: "submission_log", "{} - {} found diff: {}", submission_uuid, pubkey_str, diff);
@@ -195,10 +195,10 @@ pub async fn client_message_handler_system(
                             }
                             drop(reader);
                         }
-                    } else {
-                        tracing::error!(target: "server_log", "Diff to low, skipping");
-                    }
-                });
+                    });
+                } else {
+                    tracing::error!(target: "server_log", "Diff to low, skipping");
+                }
             }
         }
     }
