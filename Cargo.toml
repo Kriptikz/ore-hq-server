@@ -39,4 +39,5 @@ tracing-appender = "0.2.3"
 solana-transaction-status = "1.18.22"
 uuid = { version = "1.10.0", features = ["v4"] }
 steel = "1.3.0"
+reqwest = "0.11"
 

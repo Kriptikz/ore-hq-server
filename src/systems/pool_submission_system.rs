@@ -9,6 +9,7 @@ use std::{
 };
 use ore_boost_api::state::{boost_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
+use crate::app_metrics::AppMetricsEvent;
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
@@ -58,6 +59,7 @@ pub async fn pool_submission_system(
     app_submission_window: Arc<RwLock<SubmissionWindow>>,
     app_client_nonce_ranges: Arc<RwLock<HashMap<Pubkey, Vec<Range<u64>>>>>,
     app_last_challenge: Arc<Mutex<[u8; 32]>>,
+    app_metrics_sender: UnboundedSender<AppMetricsEvent>,
 ) {
     loop {
         let lock = app_proof.lock().await;
@@ -544,6 +546,7 @@ pub async fn pool_submission_system(
                                     let app_app_proof = app_proof.clone();
                                     let app_app_config = config.clone();
                                     let app_app_wallet = app_wallet.clone();
+                                    let app_metrics = app_metrics_sender.clone();
                                     tokio::spawn(async move {
                                         let rpc_client = app_rpc_client;
                                         let app_database = app_app_database;
@@ -551,6 +554,7 @@ pub async fn pool_submission_system(
                                         let app_proof = app_app_proof;
                                         let app_config = app_app_config;
                                         let app_wallet = app_app_wallet;
+                                        let app_metrics_sender = app_metrics;
                                         loop {
                                             if let Ok(txn_result) = rpc_client
                                                 .get_transaction_with_config(
@@ -728,7 +732,14 @@ pub async fn pool_submission_system(
                                                             if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEventWithBoosts>(&bytes) {
                                                                 info!(target: "server_log", "MineEvent: {:?}", mine_event);
                                                                 //info!(target: "submission_log", "MineEvent: {:?}", mine_event);
-                                                                info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                                let encoded_challenge = BASE64_STANDARD.encode(old_proof.challenge);
+                                                                info!(target: "server_log", "For Challenge: {:?}", encoded_challenge);
+                                                                match app_metrics_sender.send(AppMetricsEvent::MineEvent(*mine_event)) {
+                                                                    Ok(_) => {}
+                                                                    Err(_) => {
+                                                                        tracing::error!(target: "server_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
+                                                                    }
+                                                                }
                                                                 //info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
                                                                 let full_rewards = mine_event.reward;
                                                                 let commissions = full_rewards.mul(5).saturating_div(100);

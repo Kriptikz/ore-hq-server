@@ -20,8 +20,7 @@ use systems::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
-    ore_utils::{get_managed_proof_token_ata, get_proof_pda},
-    systems::{delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system},
+    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda}, systems::{app_metrics_system::metrics_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
 };
 
 use self::models::*;
@@ -78,6 +77,7 @@ mod routes;
 mod schema;
 mod systems;
 mod scripts;
+mod app_metrics;
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
@@ -314,6 +314,79 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             return Ok(())
         }
     };
+
+    let mut has_metrics_envs = true;
+    let metrics_url = match std::env::var("METRICS_URL") {
+        Ok(url) => {
+            url
+        },
+        Err(_) => {
+            println!("METRICS_URL env not set. Unable to track metrics");
+            has_metrics_envs = false;
+            "".to_string()
+        }
+    };
+
+    let metrics_token = match std::env::var("METRICS_TOKEN") {
+        Ok(token) => {
+            token
+        },
+        Err(_) => {
+            println!("METRICS_TOKEN env not set. Unable to track metrics");
+            has_metrics_envs = false;
+            "".to_string()
+        }
+    };
+
+    let metrics_org = match std::env::var("METRICS_ORG") {
+        Ok(org) => {
+            org
+        },
+        Err(_) => {
+            println!("METRICS_ORG env not set. Unable to track metrics");
+            has_metrics_envs = false;
+            "".to_string()
+        }
+    };
+
+    let metrics_bucket = match std::env::var("METRICS_BUCKET") {
+        Ok(bucket) => {
+            bucket
+        },
+        Err(_) => {
+            println!("METRICS_BUCKET env not set. Unable to track metrics");
+            has_metrics_envs = false;
+            "".to_string()
+        }
+    };
+
+    let metrics_host = match std::env::var("METRICS_HOST") {
+        Ok(host) => {
+            host
+        },
+        Err(_) => {
+            println!("METRICS_HOST env not set. Unable to track metrics");
+            has_metrics_envs = false;
+            "".to_string()
+        }
+    };
+
+    let (metrics_message_sender, metrics_message_receiver) =
+        tokio::sync::mpsc::unbounded_channel::<AppMetricsEvent>();
+
+    if has_metrics_envs {
+        tokio::spawn(async move {
+            metrics_system(
+                metrics_url,
+                metrics_token,
+                metrics_org,
+                metrics_bucket,
+                metrics_host,
+                metrics_message_receiver,
+            )
+            .await;
+        });
+    }
 
     let app_database = Arc::new(AppDatabase::new(database_url));
     let app_rr_database = Arc::new(AppRRDatabase::new(database_rr_url));
@@ -896,6 +969,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let app_submission_window = submission_window.clone();
     let app_client_nonce_ranges = client_nonce_ranges.clone();
     let app_last_challenge = last_challenge.clone();
+    let app_metrics = metrics_message_sender.clone();
     tokio::spawn(async move {
         pool_submission_system(
             app_proof,
@@ -913,6 +987,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             app_submission_window,
             app_client_nonce_ranges,
             app_last_challenge,
+            app_metrics,
         )
         .await;
     });
