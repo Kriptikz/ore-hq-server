@@ -21,12 +21,12 @@ pub async fn cache_update_system(
     challenges_cache: Arc<RwLock<ChallengesCache>>,
 ) {
     if app_config.stats_enabled {
-        let reader = boost_multiplier_cache.read().await;
-        let cached_boost_multiplier = reader.clone();
-        drop(reader);
         loop {
+            let reader = boost_multiplier_cache.read().await;
+            let cached_boost_multiplier = reader.clone();
+            drop(reader);
             // Cached Boost Multiplier
-            if cached_boost_multiplier.item.len() <= 0 && cached_boost_multiplier.last_updated_at.elapsed().as_secs() > CACHED_BOOST_MULTIPLIER_UPDATE_INTERVAL {
+            if cached_boost_multiplier.item.len() <= 0 || cached_boost_multiplier.last_updated_at.elapsed().as_secs() > CACHED_BOOST_MULTIPLIER_UPDATE_INTERVAL {
                 tracing::info!(target: "server_log", "get_boost_multiplier");
                 let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
                 let managed_proof = Pubkey::find_program_address(
