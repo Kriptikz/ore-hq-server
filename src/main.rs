@@ -20,7 +20,7 @@ use systems::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
-    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda}, systems::{app_metrics_system::metrics_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
+    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
 };
 
 use self::models::*;
@@ -869,6 +869,25 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .await;
     });
 
+    // Cache Update System
+    let app_rpc_client = rpc_client.clone();
+    let app_config = config.clone();
+    let last_challenge_cache = app_cache_last_challenge_submissions.clone();
+    let boost_multiplier_cache = app_cache_boost_multiplier.clone();
+    let challenges_cache = app_cache_challenges.clone();
+    let app_app_rr_database = app_rr_database.clone();
+    tokio::spawn(async move {
+        cache_update_system(
+            app_config,
+            app_rpc_client,
+            app_app_rr_database,
+            boost_multiplier_cache,
+            last_challenge_cache,
+            challenges_cache,
+        )
+        .await;
+    });
+
     // Track client pong timings
     let app_pongs = pongs.clone();
     let app_state = shared_state.clone();
@@ -1388,7 +1407,6 @@ async fn get_miner_rewards(
 }
 
 async fn get_last_challenge_submissions(
-    Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
     Extension(app_config): Extension<Arc<Config>>,
     Extension(app_cache_last_challenge_submissions): Extension<Arc<RwLock<LastChallengeSubmissionsCache>>>,
 ) -> Result<Json<Vec<SubmissionWithPubkey>>, String> {
@@ -1396,23 +1414,7 @@ async fn get_last_challenge_submissions(
         let reader = app_cache_last_challenge_submissions.read().await;
         let cached_boost_multiplier = reader.clone();
         drop(reader);
-
-        if cached_boost_multiplier.item.len() > 0 && cached_boost_multiplier.last_updated_at.elapsed().as_secs() < 15 {
-            return Ok(Json(cached_boost_multiplier.item));
-        } else {
-            let res = app_rr_database.get_last_challenge_submissions().await;
-
-            match res {
-                Ok(submissions) => {
-                    let mut writer = app_cache_last_challenge_submissions.write().await;
-                    writer.item = submissions.clone();
-                    writer.last_updated_at = Instant::now();
-                    drop(writer);
-                    Ok(Json(submissions))
-                }
-                Err(_) => Err("Failed to get submissions for miner".to_string()),
-            }
-        }
+        return Ok(Json(cached_boost_multiplier.item));
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }
@@ -1667,7 +1669,6 @@ pub struct BoostMultiplierData {
 }
 
 async fn get_boost_multiplier(
-    Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(app_config): Extension<Arc<Config>>,
     Extension(app_cache_boost_multiplier): Extension<Arc<RwLock<BoostMultiplierCache>>>,
 ) -> impl IntoResponse {
@@ -1675,75 +1676,7 @@ async fn get_boost_multiplier(
         let reader = app_cache_boost_multiplier.read().await;
         let cached_boost_multiplier = reader.clone();
         drop(reader);
-
-        if cached_boost_multiplier.item.len() > 0 && cached_boost_multiplier.last_updated_at.elapsed().as_secs() < 30 {
-            return Ok(Json(cached_boost_multiplier.item));
-        } else {
-            tracing::info!(target: "server_log", "get_boost_multiplier");
-            let pubkey = Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
-            let managed_proof = Pubkey::find_program_address(
-                &[b"managed-proof-account", pubkey.as_ref()],
-                &ore_miner_delegation::id(),
-            );
-
-            let boost_mints = vec![
-                Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-                Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-                Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-            ];
-
-            // Get pools boost stake accounts
-            let mut boost_stake_acct_pdas = vec![];
-            let mut boost_acct_pdas = vec![];
-
-            for boost_mint in boost_mints {
-                let boost_account_pda = boost_pda(boost_mint);
-                let boost_stake_pda = stake_pda(managed_proof.0, boost_account_pda.0);
-                tracing::info!(target: "server_log", "Boost stake PDA: {}", boost_stake_pda.0.to_string());
-                tracing::info!(target: "server_log", "Boost PDA: {}", boost_account_pda.0.to_string());
-                boost_stake_acct_pdas.push(boost_stake_pda.0);
-                boost_acct_pdas.push(boost_account_pda.0);
-            }
-
-            let mut stake_acct = vec![];
-            let mut boost_acct = vec![];
-            if let Ok(accounts) = rpc_client.get_multiple_accounts(&[boost_stake_acct_pdas, boost_acct_pdas].concat()).await {
-                tracing::info!(target: "server_log", "Got {} accounts", accounts.len());
-                for account in accounts {
-                    if let Some(acc) = account {
-                        if let Ok(a) = ore_boost_api::state::Stake::try_from_bytes(&acc.data) {
-                            tracing::info!(target: "server_log", "Boost stake account: {:?}", a);
-                            stake_acct.push(a.clone());
-                            continue;
-                        }
-                        if let Ok(a) = ore_boost_api::state::Boost::try_from_bytes(&acc.data) {
-                            tracing::info!(target: "server_log", "Boost account: {:?}", a);
-                            boost_acct.push(a.clone());
-                            continue;
-                        }
-                    }
-                }
-            } else {
-                tracing::error!(target: "server_log", "Failed to get accounts.")
-            }
-            let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-
-            let mut boost_multiplier_datas = vec![];
-            for (index,stake_a) in stake_acct.iter().enumerate() {
-                boost_multiplier_datas.push(BoostMultiplierData {
-                    boost_mint: boost_acct[index].mint.to_string(),
-                    staked_balance: (stake_a.balance as f64).div(decimals),
-                    total_stake_balance: (boost_acct[index].total_stake as f64).div(decimals),
-                    multiplier: boost_acct[index].multiplier,
-                })
-            }
-            let mut writer = app_cache_boost_multiplier.write().await;
-            writer.item = boost_multiplier_datas.clone();
-            writer.last_updated_at = Instant::now();
-            drop(writer);
-
-            return Ok(Json(boost_multiplier_datas));
-        }
+        return Ok(Json(cached_boost_multiplier.item));
     } else {
         return Err("Stats not enabled for this server.".to_string());
     }
