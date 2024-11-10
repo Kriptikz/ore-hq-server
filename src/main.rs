@@ -81,6 +81,7 @@ use spl_associated_token_account::{
 };
 use tokio::{
     sync::{mpsc::UnboundedSender, Mutex, RwLock},
+    task::JoinSet,
     time::Instant,
 };
 use tower_http::{
@@ -3395,7 +3396,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
         let socks = app_state.sockets.clone();
         drop(app_state);
 
-        let handles = socks.iter().map(|(who, socket)| {
+        let join_handle = socks.iter().map(|(who, socket)| {
             let who = who.clone();
             let socket = socket.clone();
             tokio::spawn(async move {
@@ -3414,9 +3415,12 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
             })
         });
 
+        let mut set = JoinSet::new();
+
         // remove any sockets where ping failed
         for handle in handles {
-            match handle.await {
+            set.spawn(async move {
+                match handle.await {
                 Ok(Some((who, pubkey))) => {
                     error!(target: "server_log", "Got error sending ping to client: {} on pk: {}.", who, pubkey);
                     let mut app_state = shared_state.write().await;
@@ -3426,10 +3430,12 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 Err(_) => {
                     error!(target: "server_log", "Got error sending ping to client.");
                 }
-            }
+            }});
         }
-
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::select! {
+            _ = set.join_all() => {}
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+        }
     }
 }
 
