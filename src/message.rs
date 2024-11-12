@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct ServerMessageStartMining {
     challenge: [u8; 32],
     cutoff: i64,
@@ -21,7 +22,7 @@ impl ServerMessageStartMining {
     }
 
     pub fn to_message_binary(&self) -> Vec<u8> {
-        let mut bin_data = Vec::new();
+        let mut bin_data = Vec::with_capacity(57);
         bin_data.push(0u8);
         bin_data.extend_from_slice(&self.challenge);
         bin_data.extend_from_slice(&self.cutoff.to_le_bytes());
@@ -32,6 +33,7 @@ impl ServerMessageStartMining {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerMessagePoolSubmissionResult {
     difficulty: u32,
     total_balance: f64,
@@ -76,7 +78,7 @@ impl ServerMessagePoolSubmissionResult {
     }
 
     pub fn to_message_binary(&self) -> Vec<u8> {
-        let mut bin_data = Vec::new();
+        let mut bin_data = Vec::with_capacity(101);
         bin_data.push(1u8);
         bin_data.extend_from_slice(&self.difficulty.to_le_bytes());
         bin_data.extend_from_slice(&self.total_balance.to_le_bytes());
