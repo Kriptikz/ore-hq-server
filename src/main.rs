@@ -9,11 +9,7 @@ use std::{
 };
 
 use ore_boost_api::state::{boost_pda, stake_pda};
-use ore_miner_delegation::{
-    pda::{delegated_boost_pda, managed_proof_pda},
-    state::DelegatedBoost,
-    utils::AccountDeserialize,
-};
+use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
 use steel::AccountDeserialize as _;
 use systems::{
@@ -24,15 +20,7 @@ use systems::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
-    app_metrics::AppMetricsEvent,
-    ore_utils::{get_managed_proof_token_ata, get_proof_pda},
-    systems::{
-        app_metrics_system::metrics_system, cache_update_system::cache_update_system,
-        delegate_boost_tracking_system::delegate_boost_tracking_system,
-        message_text_all_clients_system::message_text_all_clients_system,
-        pool_mine_success_system::pool_mine_success_system,
-        pool_submission_system::pool_submission_system,
-    },
+    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
 };
 
 use self::models::*;
@@ -54,26 +42,17 @@ use clap::{Parser, Subcommand};
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_utils::{
-    get_config, get_delegated_boost_account, get_delegated_boost_account_v2,
-    get_delegated_stake_account, get_ore_mint, get_original_proof, get_proof, get_register_ix,
-    ORE_TOKEN_DECIMALS,
+    get_config, get_delegated_boost_account, get_delegated_boost_account_v2, get_delegated_stake_account, get_ore_mint, get_original_proof, get_proof, get_register_ix, ORE_TOKEN_DECIMALS
 };
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::{Deserialize, Serialize};
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
     rpc_client::SerializableTransaction,
-    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
-    rpc_filter::{Memcmp, RpcFilterType},
+    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig}, rpc_filter::{Memcmp, RpcFilterType},
 };
 use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    compute_budget::ComputeBudgetInstruction,
-    native_token::{lamports_to_sol, LAMPORTS_PER_SOL},
-    pubkey::Pubkey,
-    signature::{read_keypair_file, Keypair, Signature},
-    signer::Signer,
-    transaction::Transaction,
+    commitment_config::{CommitmentConfig, CommitmentLevel}, compute_budget::ComputeBudgetInstruction, native_token::{lamports_to_sol, LAMPORTS_PER_SOL}, pubkey::Pubkey, signature::{read_keypair_file, Keypair, Signature}, signer::Signer, transaction::Transaction
 };
 use solana_transaction_status::TransactionConfirmationStatus;
 use spl_associated_token_account::{
@@ -81,7 +60,6 @@ use spl_associated_token_account::{
 };
 use tokio::{
     sync::{mpsc::UnboundedSender, Mutex, RwLock},
-    task::JoinSet,
     time::Instant,
 };
 use tower_http::{
@@ -91,15 +69,15 @@ use tower_http::{
 use tracing::{error, info};
 
 mod app_database;
-mod app_metrics;
 mod app_rr_database;
 mod message;
 mod models;
 mod proof_migration;
 mod routes;
 mod schema;
-mod scripts;
 mod systems;
+mod scripts;
+mod app_metrics;
 
 const MIN_DIFF: u32 = 8;
 const MIN_HASHPOWER: u64 = 5;
@@ -231,6 +209,7 @@ mod ore_utils;
 struct Args {
     #[command(subcommand)]
     command: Commands,
+
 }
 
 #[derive(Parser, Debug)]
@@ -270,6 +249,8 @@ struct ServeArgs {
     migrate: bool,
 }
 
+
+
 #[derive(Debug, Subcommand)]
 enum Commands {
     #[command(about = "Serve the pool webserver for mining.")]
@@ -304,8 +285,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     match cmd_args.command {
-        Commands::Serve(args) => serve(args).await,
-        Commands::UpdateStakeAccounts => scripts::update_stake_accounts().await,
+        Commands::Serve(args) => {
+            serve(args).await
+        }
+        Commands::UpdateStakeAccounts => {
+            scripts::update_stake_accounts().await
+        }
     }
 }
 
@@ -319,19 +304,22 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
     let database_rr_url = std::env::var("DATABASE_RR_URL").expect("DATABASE_RR_URL must be set.");
-    let commission_env =
-        std::env::var("COMMISSION_PUBKEY").expect("COMMISSION_PUBKEY must be set.");
+    let commission_env = std::env::var("COMMISSION_PUBKEY").expect("COMMISSION_PUBKEY must be set.");
     let commission_pubkey = match Pubkey::from_str(&commission_env) {
-        Ok(pk) => pk,
+        Ok(pk) => {
+            pk
+        },
         Err(_) => {
             println!("Invalid COMMISSION_PUBKEY");
-            return Ok(());
+            return Ok(())
         }
     };
 
     let mut has_metrics_envs = true;
     let metrics_url = match std::env::var("METRICS_URL") {
-        Ok(url) => url,
+        Ok(url) => {
+            url
+        },
         Err(_) => {
             println!("METRICS_URL env not set. Unable to track metrics");
             has_metrics_envs = false;
@@ -340,7 +328,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let metrics_token = match std::env::var("METRICS_TOKEN") {
-        Ok(token) => token,
+        Ok(token) => {
+            token
+        },
         Err(_) => {
             println!("METRICS_TOKEN env not set. Unable to track metrics");
             has_metrics_envs = false;
@@ -349,7 +339,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let metrics_org = match std::env::var("METRICS_ORG") {
-        Ok(org) => org,
+        Ok(org) => {
+            org
+        },
         Err(_) => {
             println!("METRICS_ORG env not set. Unable to track metrics");
             has_metrics_envs = false;
@@ -358,7 +350,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let metrics_bucket = match std::env::var("METRICS_BUCKET") {
-        Ok(bucket) => bucket,
+        Ok(bucket) => {
+            bucket
+        },
         Err(_) => {
             println!("METRICS_BUCKET env not set. Unable to track metrics");
             has_metrics_envs = false;
@@ -367,7 +361,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let metrics_host = match std::env::var("METRICS_HOST") {
-        Ok(host) => host,
+        Ok(host) => {
+            host
+        },
         Err(_) => {
             println!("METRICS_HOST env not set. Unable to track metrics");
             has_metrics_envs = false;
@@ -398,23 +394,20 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let priority_fee = Arc::new(args.priority_fee);
     let jito_tip = Arc::new(args.jito_tip);
 
-    let app_cache_boost_multiplier: Arc<RwLock<BoostMultiplierCache>> =
-        Arc::new(RwLock::new(BoostMultiplierCache {
-            item: vec![],
-            last_updated_at: Instant::now(),
-        }));
+    let app_cache_boost_multiplier: Arc<RwLock<BoostMultiplierCache>> = Arc::new(RwLock::new(BoostMultiplierCache {
+        item: vec![],
+        last_updated_at: Instant::now(),
+    }));
 
-    let app_cache_last_challenge_submissions: Arc<RwLock<LastChallengeSubmissionsCache>> =
-        Arc::new(RwLock::new(LastChallengeSubmissionsCache {
-            item: vec![],
-            last_updated_at: Instant::now(),
-        }));
+    let app_cache_last_challenge_submissions: Arc<RwLock<LastChallengeSubmissionsCache>> = Arc::new(RwLock::new(LastChallengeSubmissionsCache {
+        item: vec![],
+        last_updated_at: Instant::now(),
+    }));
 
-    let app_cache_challenges: Arc<RwLock<ChallengesCache>> =
-        Arc::new(RwLock::new(ChallengesCache {
-            item: vec![],
-            last_updated_at: Instant::now(),
-        }));
+    let app_cache_challenges: Arc<RwLock<ChallengesCache>> = Arc::new(RwLock::new(ChallengesCache {
+        item: vec![],
+        last_updated_at: Instant::now(),
+    }));
 
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
@@ -635,13 +628,12 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let boost_mints = vec![
         Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
         Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap(),
+        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
     ];
 
     for boost_mint in boost_mints {
         // create the managed proof token account
-        let managed_proof_boost_token_addr =
-            get_associated_token_address(&managed_proof.0, &boost_mint);
+        let managed_proof_boost_token_addr = get_associated_token_address(&managed_proof.0, &boost_mint);
         match rpc_client
             .get_token_account_balance(&managed_proof_boost_token_addr)
             .await
@@ -671,7 +663,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .send_and_confirm_transaction_with_spinner_and_commitment(
                         &tx,
                         CommitmentConfig {
-                            commitment: CommitmentLevel::Confirmed,
+        commitment: CommitmentLevel::Confirmed,
                         },
                     )
                     .await
@@ -681,10 +673,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-                        panic!(
-                            "Failed to create managed proof boost token account {}",
-                            boost_mint.to_string()
-                        );
+                        panic!("Failed to create managed proof boost token account {}", boost_mint.to_string());
                     }
                 }
             }
@@ -699,10 +688,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             Err(_e) => {
                 error!(target: "server_log", "Failed to get managed proof boost stake account for {}", boost_mint.to_string());
                 info!(target: "server_log", "Creating managed proof boost stake account for {}", boost_mint.to_string());
-                let ix = ore_miner_delegation::instruction::open_managed_proof_boost(
-                    wallet.pubkey(),
-                    boost_mint,
-                );
+                let ix = ore_miner_delegation::instruction::open_managed_proof_boost(wallet.pubkey(), boost_mint);
 
                 let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
 
@@ -717,7 +703,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .send_and_confirm_transaction_with_spinner_and_commitment(
                         &tx,
                         CommitmentConfig {
-                            commitment: CommitmentLevel::Confirmed,
+        commitment: CommitmentLevel::Confirmed,
                         },
                     )
                     .await
@@ -727,14 +713,12 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-                        panic!(
-                            "Failed to create managed proof boost stake account for {}",
-                            boost_mint.to_string()
-                        );
+                        panic!("Failed to create managed proof boost stake account for {}", boost_mint.to_string());
                     }
                 }
             }
         }
+
     }
 
     info!(target: "server_log", "Validating pool exists in db");
@@ -760,12 +744,10 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+
     info!(target: "server_log", "Validating commissions receiver is in db");
     let commission_miner_id;
-    match app_database
-        .get_miner_by_pubkey_str(commission_pubkey.to_string())
-        .await
-    {
+    match app_database.get_miner_by_pubkey_str(commission_pubkey.to_string()).await {
         Ok(miner) => {
             info!(target: "server_log", "Found commissions receiver in db.");
             commission_miner_id = miner.id;
@@ -774,22 +756,20 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             info!(target: "server_log", "Failed to get commissions receiver account from database.");
             info!(target: "server_log", "Inserting Commissions receiver account...");
 
-            let res = app_database
-                .signup_user_transaction(commission_pubkey.to_string(), wallet.pubkey().to_string())
-                .await;
+            let res = app_database.signup_user_transaction(
+                commission_pubkey.to_string(),
+                wallet.pubkey().to_string(),
+            ).await;
 
             match res {
                 Ok(_) => {
                     info!(target: "server_log", "Successfully inserted Commissions receiver account...");
-                    if let Ok(m) = app_database
-                        .get_miner_by_pubkey_str(commission_pubkey.to_string())
-                        .await
-                    {
+                    if let Ok(m) = app_database.get_miner_by_pubkey_str(commission_pubkey.to_string()).await {
                         commission_miner_id = m.id;
                     } else {
                         panic!("Failed to get commission miner id")
                     }
-                }
+                },
                 Err(_) => {
                     panic!("Failed to insert comissions receiver account")
                 }
@@ -925,9 +905,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             ws_url,
             app_wallet.miner_wallet.clone(),
             app_proof,
-            app_last_challenge,
-        )
-        .await;
+            app_last_challenge
+        ).await;
     });
 
     let app_wallet = wallet_extension.clone();
@@ -1044,13 +1023,15 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             app_config,
             app_wallet,
             mine_success_receiver,
-        )
-        .await;
+        ).await;
     });
 
     let app_shared_state = shared_state.clone();
     tokio::spawn(async move {
-        message_text_all_clients_system(app_shared_state, all_clients_receiver).await;
+        message_text_all_clients_system(
+            app_shared_state,
+            all_clients_receiver
+        ).await;
     });
 
     let cors = CorsLayer::new()
@@ -1074,7 +1055,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/v2/claim", post(post_claim_v2))
         .route("/v2/claim-stake-rewards", post(post_claim_stake_rewards_v2))
         // v3 permissionless claim to staker wallet
-        .route("/v3/claim-stake-rewards", post(post_claim_stake_rewards_v3))
+        .route("/v3/claim-stake-rewards", post(post_claim_stake_rewards_v3)) 
         .route("/stake", post(post_stake))
         .route("/stake-boost", post(post_stake_boost))
         .route("/v2/stake-boost", post(post_stake_boost_v2))
@@ -1089,10 +1070,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .route("/miner/stake", get(get_miner_stake))
         .route("/miner/boost/stake", get(get_miner_boost_stake))
         .route("/v2/miner/boost/stake", get(get_miner_boost_stake_v2))
-        .route(
-            "/v2/miner/boost/stake-accounts",
-            get(get_miner_boost_stake_accounts_v2),
-        )
+        .route("/v2/miner/boost/stake-accounts", get(get_miner_boost_stake_accounts_v2))
         .route("/stake-multiplier", get(get_stake_multiplier))
         .route("/boost-multiplier", get(get_boost_multiplier))
         // App RR Database routes
@@ -1147,6 +1125,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+
 async fn get_pool_authority_pubkey(
     Extension(wallet): Extension<Arc<WalletExtension>>,
 ) -> impl IntoResponse {
@@ -1170,12 +1149,7 @@ async fn get_pool_fee_payer_pubkey(
 async fn get_latest_blockhash(
     Extension(rpc_client): Extension<Arc<RpcClient>>,
 ) -> impl IntoResponse {
-    let latest_blockhash = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig {
-            commitment: CommitmentLevel::Finalized,
-        })
-        .await
-        .unwrap();
+    let latest_blockhash = rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await.unwrap();
 
     let serialized_blockhash = bincode::serialize(&latest_blockhash).unwrap();
 
@@ -1253,12 +1227,10 @@ async fn post_signup(
                 info!(target: "server_log", "No miner account exists. Signing up new user.");
             }
         }
-        let res = app_database
-            .signup_user_transaction(
-                user_pubkey.to_string(),
-                wallet.miner_wallet.pubkey().to_string(),
-            )
-            .await;
+        let res = app_database.signup_user_transaction(
+            user_pubkey.to_string(),
+            wallet.miner_wallet.pubkey().to_string(),
+        ).await;
 
         match res {
             Ok(_) => {
@@ -1267,7 +1239,7 @@ async fn post_signup(
                     .header("Content-Type", "text/text")
                     .body("SUCCESS".to_string())
                     .unwrap();
-            }
+            },
             Err(_) => {
                 error!(target: "server_log", "Failed to add miner to database");
                 return Response::builder()
@@ -1324,12 +1296,10 @@ async fn post_signup_v2(
             }
         }
 
-        let res = app_database
-            .signup_user_transaction(
-                miner_pubkey.to_string(),
-                wallet.miner_wallet.pubkey().to_string(),
-            )
-            .await;
+        let res = app_database.signup_user_transaction(
+            miner_pubkey.to_string(),
+            wallet.miner_wallet.pubkey().to_string(),
+        ).await;
 
         match res {
             Ok(_) => {
@@ -1338,7 +1308,7 @@ async fn post_signup_v2(
                     .header("Content-Type", "text/text")
                     .body("SUCCESS".to_string())
                     .unwrap();
-            }
+            },
             Err(_) => {
                 error!(target: "server_log", "Failed to add miner to database");
                 return Response::builder()
@@ -1356,7 +1326,9 @@ async fn post_signup_v2(
     }
 }
 
-async fn get_signup_fee(Extension(app_config): Extension<Arc<Config>>) -> impl IntoResponse {
+async fn get_signup_fee(
+    Extension(app_config): Extension<Arc<Config>>,
+) -> impl IntoResponse {
     return Response::builder()
         .status(StatusCode::OK)
         .body(app_config.signup_fee.to_string())
@@ -1436,9 +1408,7 @@ async fn get_miner_rewards(
 
 async fn get_last_challenge_submissions(
     Extension(app_config): Extension<Arc<Config>>,
-    Extension(app_cache_last_challenge_submissions): Extension<
-        Arc<RwLock<LastChallengeSubmissionsCache>>,
-    >,
+    Extension(app_cache_last_challenge_submissions): Extension<Arc<RwLock<LastChallengeSubmissionsCache>>>,
 ) -> Result<Json<Vec<SubmissionWithPubkey>>, String> {
     if app_config.stats_enabled {
         let reader = app_cache_last_challenge_submissions.read().await;
@@ -1545,7 +1515,9 @@ async fn get_miner_balance_v2(
     Extension(rpc_client): Extension<Arc<RpcClient>>,
 ) -> impl IntoResponse {
     let mint = match Pubkey::from_str(&query_params.mint) {
-        Ok(pk) => pk,
+        Ok(pk) => {
+            pk
+        },
         Err(_) => {
             error!(target: "server_log", "get_miner_balance_v2 - Failed to parse mint");
             return Response::builder()
@@ -1599,25 +1571,25 @@ async fn get_miner_stake(
     }
 }
 
+
+
 async fn get_miner_boost_stake(
     query_params: Query<PubkeyMintParam>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Extension(wallet): Extension<Arc<WalletExtension>>,
 ) -> impl IntoResponse {
     let mint = match Pubkey::from_str(&query_params.mint) {
-        Ok(pk) => pk,
+        Ok(pk) => {
+            pk
+        }
         Err(_) => {
             return Err("Invalid mint".to_string());
         }
     };
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        if let Ok(account) = get_delegated_boost_account(
-            &rpc_client,
-            user_pubkey,
-            wallet.miner_wallet.pubkey(),
-            mint,
-        )
-        .await
+        if let Ok(account) =
+            get_delegated_boost_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
         {
             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
             let dec_amount = (account.amount as f64).div(decimals);
@@ -1636,19 +1608,17 @@ async fn get_miner_boost_stake_v2(
     Extension(wallet): Extension<Arc<WalletExtension>>,
 ) -> impl IntoResponse {
     let mint = match Pubkey::from_str(&query_params.mint) {
-        Ok(pk) => pk,
+        Ok(pk) => {
+            pk
+        }
         Err(_) => {
             return Err("Invalid mint".to_string());
         }
     };
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
-        if let Ok(account) = get_delegated_boost_account_v2(
-            &rpc_client,
-            user_pubkey,
-            wallet.miner_wallet.pubkey(),
-            mint,
-        )
-        .await
+        if let Ok(account) =
+            get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
         {
             let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
             let dec_amount = (account.amount as f64).div(decimals);
@@ -1668,11 +1638,9 @@ async fn get_miner_boost_stake_accounts_v2(
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let pool_id = app_config.pool_id;
-        if let Ok(result) = app_database
-            .get_stake_accounts_for_staker(pool_id, user_pubkey.to_string())
-            .await
-        {
+        if let Ok(result) = app_database.get_stake_accounts_for_staker(pool_id, user_pubkey.to_string()).await {
             return Ok(Json(result));
+
         } else {
             return Err("Failed to get delgated boost accounts v2 from db".to_string());
         }
@@ -1681,7 +1649,9 @@ async fn get_miner_boost_stake_accounts_v2(
     }
 }
 
-async fn get_stake_multiplier(Extension(app_config): Extension<Arc<Config>>) -> impl IntoResponse {
+async fn get_stake_multiplier(
+    Extension(app_config): Extension<Arc<Config>>,
+) -> impl IntoResponse {
     if app_config.stats_enabled {
         let multiplier = 1.0;
         return Ok(Json(multiplier));
@@ -1825,14 +1795,11 @@ async fn post_claim(
             }
 
             let mut writer = claims_queue.queue.write().await;
-            writer.insert(
-                (miner_pubkey, None),
-                ClaimsQueueItem {
-                    receiver_pubkey: miner_pubkey,
-                    amount,
-                    mint: None,
-                },
-            );
+            writer.insert((miner_pubkey, None), ClaimsQueueItem{
+                receiver_pubkey: miner_pubkey,
+                amount,
+                mint: None,
+            });
             drop(writer);
             return Response::builder()
                 .status(StatusCode::OK)
@@ -1881,12 +1848,11 @@ async fn post_claim_v2(
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old.".to_string()));
     }
     let receiver_pubkey = match Pubkey::from_str(&query_params.receiver_pubkey) {
-        Ok(pubkey) => pubkey,
+        Ok(pubkey) => {
+            pubkey
+        },
         Err(_) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Invalid receiver_pubkey provided.".to_string(),
-            ))
+            return Err((StatusCode::BAD_REQUEST, "Invalid receiver_pubkey provided.".to_string()))
         }
     };
 
@@ -1899,6 +1865,7 @@ async fn post_claim_v2(
             signed_msg.extend(amount.to_le_bytes());
 
             if signature.verify(&miner_pubkey.to_bytes(), &signed_msg) {
+
                 let reader = claims_queue.queue.read().await;
                 let queue = reader.clone();
                 drop(reader);
@@ -1919,15 +1886,10 @@ async fn post_claim_v2(
                     .await
                 {
                     if amount > miner_rewards.balance {
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            "claim amount exceeds miner rewards balance.".to_string(),
-                        ));
+                        return Err((StatusCode::BAD_REQUEST, "claim amount exceeds miner rewards balance.".to_string()));
                     }
 
-                    if let Ok(last_claim) =
-                        app_database.get_last_claim(miner_rewards.miner_id).await
-                    {
+                    if let Ok(last_claim) = app_database.get_last_claim(miner_rewards.miner_id).await {
                         let last_claim_ts = last_claim.created_at.and_utc().timestamp();
                         let now = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -1935,35 +1897,23 @@ async fn post_claim_v2(
                             .as_secs() as i64;
                         let time_difference = now - last_claim_ts;
                         if time_difference <= 1800 {
-                            return Err((
-                                StatusCode::TOO_MANY_REQUESTS,
-                                time_difference.to_string(),
-                            ));
+                            return Err((StatusCode::TOO_MANY_REQUESTS, time_difference.to_string()));
                         }
                     }
 
                     let mut writer = claims_queue.queue.write().await;
-                    writer.insert(
-                        (miner_pubkey, None),
-                        ClaimsQueueItem {
-                            receiver_pubkey,
-                            amount,
-                            mint: None,
-                        },
-                    );
+                    writer.insert((miner_pubkey, None), ClaimsQueueItem{
+                        receiver_pubkey,
+                        amount,
+                        mint: None,
+                    });
                     drop(writer);
                     return Ok((StatusCode::OK, "SUCCESS"));
                 } else {
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to get miner account from database".to_string(),
-                    ));
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to get miner account from database".to_string()));
                 }
             } else {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    "Sig verification failed".to_string(),
-                ));
+                return Err((StatusCode::UNAUTHORIZED, "Sig verification failed".to_string()));
             }
         } else {
             return Err((StatusCode::UNAUTHORIZED, "Invalid signature".to_string()));
@@ -2004,36 +1954,31 @@ async fn post_claim_stake_rewards_v2(
         return Err((StatusCode::UNAUTHORIZED, "Timestamp too old.".to_string()));
     }
     let receiver_pubkey = match Pubkey::from_str(&query_params.receiver_pubkey) {
-        Ok(pubkey) => pubkey,
+        Ok(pubkey) => {
+            pubkey
+        },
         Err(_) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Invalid receiver_pubkey provided.".to_string(),
-            ))
+            return Err((StatusCode::BAD_REQUEST, "Invalid receiver_pubkey provided.".to_string()))
         }
     };
 
     let mint_pubkey = match Pubkey::from_str(&query_params.mint) {
-        Ok(pubkey) => pubkey,
+        Ok(pubkey) => {
+            pubkey
+        },
         Err(_) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Invalid mint pubkey provided.".to_string(),
-            ))
+            return Err((StatusCode::BAD_REQUEST, "Invalid mint pubkey provided.".to_string()))
         }
     };
 
     let boost_mints = vec![
         Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
         Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap(),
+        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
     ];
 
     if !boost_mints.contains(&mint_pubkey) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid mint provided.".to_string(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "Invalid mint provided.".to_string()))
     }
 
     if let Ok(staker_pubkey) = Pubkey::from_str(staker_pubkey_str) {
@@ -2058,8 +2003,7 @@ async fn post_claim_stake_rewards_v2(
 
                 // 0.00500000000
                 let ore_mint = get_ore_mint();
-                let receiver_token_account =
-                    get_associated_token_address(&receiver_pubkey, &ore_mint);
+                let receiver_token_account = get_associated_token_address(&receiver_pubkey, &ore_mint);
                 let mut is_creating_ata = true;
                 if let Ok(response) = rpc_client
                     .get_token_account_balance(&receiver_token_account)
@@ -2082,34 +2026,22 @@ async fn post_claim_stake_rewards_v2(
                     .await
                 {
                     if amount > staker_rewards.rewards_balance {
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            "claim amount exceeds staker rewards balance.".to_string(),
-                        ));
+                        return Err((StatusCode::BAD_REQUEST, "claim amount exceeds staker rewards balance.".to_string()));
                     }
 
                     let mut writer = claims_queue.queue.write().await;
-                    writer.insert(
-                        (staker_pubkey, Some(mint_pubkey)),
-                        ClaimsQueueItem {
-                            receiver_pubkey,
-                            amount,
-                            mint: Some(mint_pubkey),
-                        },
-                    );
+                    writer.insert((staker_pubkey, Some(mint_pubkey)), ClaimsQueueItem{
+                        receiver_pubkey,
+                        amount,
+                        mint: Some(mint_pubkey),
+                    });
                     drop(writer);
                     return Ok((StatusCode::OK, "SUCCESS"));
                 } else {
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to get staker account from database".to_string(),
-                    ));
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to get staker account from database".to_string()));
                 }
             } else {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    "Sig verification failed".to_string(),
-                ));
+                return Err((StatusCode::UNAUTHORIZED, "Sig verification failed".to_string()));
             }
         } else {
             return Err((StatusCode::UNAUTHORIZED, "Invalid signature".to_string()));
@@ -2195,14 +2127,11 @@ async fn post_claim_stake_rewards_v3(
             }
 
             let mut writer = claims_queue.queue.write().await;
-            writer.insert(
-                (staker_pubkey, Some(mint_pubkey)),
-                ClaimsQueueItem {
-                    receiver_pubkey: staker_pubkey,
-                    amount,
-                    mint: Some(mint_pubkey),
-                },
-            );
+            writer.insert((staker_pubkey, Some(mint_pubkey)), ClaimsQueueItem{
+                receiver_pubkey: staker_pubkey,
+                amount,
+                mint: Some(mint_pubkey),
+            });
             drop(writer);
             return Response::builder()
                 .status(StatusCode::OK)
@@ -2366,8 +2295,11 @@ async fn post_stake_boost_v2(
     body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+
         let mint = match Pubkey::from_str(&query_params.mint) {
-            Ok(pk) => pk,
+            Ok(pk) => {
+                pk
+            },
             Err(_) => {
                 error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
                 return Response::builder()
@@ -2398,13 +2330,9 @@ async fn post_stake_boost_v2(
                 .unwrap();
         }
 
-        if let Err(_) = get_delegated_boost_account_v2(
-            &rpc_client,
-            user_pubkey,
-            wallet.miner_wallet.pubkey(),
-            mint,
-        )
-        .await
+        if let Err(_) =
+            get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
         {
             let init_ix = ore_miner_delegation::instruction::init_delegate_boost_v2(
                 user_pubkey,
@@ -2436,14 +2364,11 @@ async fn post_stake_boost_v2(
                 let signature;
                 let mut attempts = 0;
                 loop {
-                    match rpc_client
-                        .send_transaction_with_config(&tx, rpc_config)
-                        .await
-                    {
+                    match rpc_client.send_transaction_with_config(&tx, rpc_config).await {
                         Ok(sig) => {
                             signature = sig;
                             break;
-                        }
+                        },
                         Err(e) => {
                             if attempts > 10 {
                                 return Response::builder()
@@ -2572,6 +2497,7 @@ struct MigrateBoostParams {
     init: bool,
 }
 
+
 async fn post_migrate_boost_v2(
     query_params: Query<MigrateBoostParams>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
@@ -2580,7 +2506,9 @@ async fn post_migrate_boost_v2(
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let mint = match Pubkey::from_str(&query_params.mint) {
-            Ok(pk) => pk,
+            Ok(pk) => {
+                pk
+            },
             Err(_) => {
                 error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
                 return Response::builder()
@@ -2602,20 +2530,13 @@ async fn post_migrate_boost_v2(
         };
 
         if query_params.init {
-            match get_delegated_boost_account_v2(
-                &rpc_client,
-                user_pubkey,
-                wallet.miner_wallet.pubkey(),
-                mint,
-            )
-            .await
-            {
+            match get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint).await {
                 Ok(_) => {
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .body("Account already initialized.".to_string())
                         .unwrap();
-                }
+                },
                 Err(_) => {
                     // Account does not already exist
                     let ixs = tx.message.instructions.clone();
@@ -2708,14 +2629,7 @@ async fn post_migrate_boost_v2(
                 }
             }
         } else {
-            match get_delegated_boost_account_v2(
-                &rpc_client,
-                user_pubkey,
-                wallet.miner_wallet.pubkey(),
-                mint,
-            )
-            .await
-            {
+            match get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint).await {
                 Ok(_) => {
                     // Account already exist
                     let ixs = tx.message.instructions.clone();
@@ -2785,7 +2699,7 @@ async fn post_migrate_boost_v2(
                             }
                         }
                     }
-                }
+                },
                 Err(_) => {
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
@@ -2817,8 +2731,11 @@ async fn post_unstake_boost(
     body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+
         let mint = match Pubkey::from_str(&query_params.mint) {
-            Ok(pk) => pk,
+            Ok(pk) => {
+                pk
+            },
             Err(_) => {
                 error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
                 return Response::builder()
@@ -2849,19 +2766,15 @@ async fn post_unstake_boost(
                 .unwrap();
         }
 
-        if let Err(_) = get_delegated_boost_account(
-            &rpc_client,
-            user_pubkey,
-            wallet.miner_wallet.pubkey(),
-            mint,
-        )
-        .await
+        if let Err(_) =
+            get_delegated_boost_account(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
         {
-            error!(target: "server_log", "unstake-boost error: invalid delegate boost account for user: {}", user_pubkey.to_string());
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("Failed to unstake boost".to_string())
-                .unwrap();
+                error!(target: "server_log", "unstake-boost error: invalid delegate boost account for user: {}", user_pubkey.to_string());
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to unstake boost".to_string())
+                    .unwrap();
         }
 
         let base_ix = ore_miner_delegation::instruction::undelegate_boost(
@@ -2939,8 +2852,11 @@ async fn post_unstake_boost_v2(
     body: String,
 ) -> impl IntoResponse {
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
+
         let mint = match Pubkey::from_str(&query_params.mint) {
-            Ok(pk) => pk,
+            Ok(pk) => {
+                pk
+            },
             Err(_) => {
                 error!(target: "server_log", "Failed to parse mint: {}", query_params.mint);
                 return Response::builder()
@@ -2971,19 +2887,15 @@ async fn post_unstake_boost_v2(
                 .unwrap();
         }
 
-        if let Err(_) = get_delegated_boost_account_v2(
-            &rpc_client,
-            user_pubkey,
-            wallet.miner_wallet.pubkey(),
-            mint,
-        )
-        .await
+        if let Err(_) =
+            get_delegated_boost_account_v2(&rpc_client, user_pubkey, wallet.miner_wallet.pubkey(), mint)
+                .await
         {
-            error!(target: "server_log", "unstake-boost error: invalid delegate boost account for user: {}", user_pubkey.to_string());
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("Failed to unstake boost".to_string())
-                .unwrap();
+                error!(target: "server_log", "unstake-boost error: invalid delegate boost account for user: {}", user_pubkey.to_string());
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Failed to unstake boost".to_string())
+                    .unwrap();
         }
 
         let base_ix = ore_miner_delegation::instruction::undelegate_boost_v2(
@@ -3396,10 +3308,11 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
         let socks = app_state.sockets.clone();
         drop(app_state);
 
-        let join_handle = socks.iter().map(|(who, socket)| {
+        let mut handles = Vec::new();
+        for (who, socket) in socks.iter() {
             let who = who.clone();
             let socket = socket.clone();
-            tokio::spawn(async move {
+            handles.push(tokio::spawn(async move {
                 if socket
                     .socket
                     .lock()
@@ -3412,15 +3325,12 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 } else {
                     return Some((who.clone(), socket.pubkey.clone()));
                 }
-            })
-        });
-
-        let mut set = JoinSet::new();
+            }));
+        }
 
         // remove any sockets where ping failed
         for handle in handles {
-            set.spawn(async move {
-                match handle.await {
+            match handle.await {
                 Ok(Some((who, pubkey))) => {
                     error!(target: "server_log", "Got error sending ping to client: {} on pk: {}.", who, pubkey);
                     let mut app_state = shared_state.write().await;
@@ -3430,50 +3340,40 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                 Err(_) => {
                     error!(target: "server_log", "Got error sending ping to client.");
                 }
-            }});
+            }
         }
-        tokio::select! {
-            _ = set.join_all() => {}
-            _ = tokio::time::sleep(Duration::from_secs(30)) => {}
-        }
+
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 
 async fn update_delegate_boost_stake_accounts(
     mining_pubkey: Pubkey,
     app_database: &Arc<AppDatabase>,
-    rpc_client: &Arc<RpcClient>,
+    rpc_client: &Arc<RpcClient>
 ) {
     let managed_proof_authority_pda = managed_proof_pda(mining_pubkey);
-    let program_accounts = match rpc_client
-        .get_program_accounts_with_config(
-            &ore_miner_delegation::id(),
-            RpcProgramAccountsConfig {
-                filters: Some(vec![
-                    RpcFilterType::DataSize(56),
-                    RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
-                        16,
-                        managed_proof_authority_pda.0.to_bytes().into(),
-                    )),
-                ]),
-                account_config: RpcAccountInfoConfig {
-                    encoding: Some(UiAccountEncoding::Base64),
-                    data_slice: None,
-                    commitment: Some(CommitmentConfig {
-                        commitment: CommitmentLevel::Finalized,
-                    }),
-                    min_context_slot: None,
-                },
-                with_context: None,
+    let program_accounts = match rpc_client.get_program_accounts_with_config(
+        &ore_miner_delegation::id(),
+        RpcProgramAccountsConfig {
+            filters: Some(vec![RpcFilterType::DataSize(56), RpcFilterType::Memcmp(Memcmp::new_raw_bytes(16, managed_proof_authority_pda.0.to_bytes().into()))]),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig { commitment: CommitmentLevel::Finalized}),
+                min_context_slot: None,
             },
-        )
-        .await
-    {
-        Ok(pa) => pa,
-        Err(e) => {
-            tracing::error!(target: "server_logs", "Failed to get program_accounts. Error: {:?}", e);
-            return;
+            with_context: None,
         }
+    ).await {
+            Ok(pa) => {
+                pa
+            },
+            Err(e) => {
+                tracing::error!(target: "server_logs", "Failed to get program_accounts. Error: {:?}", e);
+                return;
+            }
+
     };
 
     tracing::info!(target: "server_log", "Found {} program accounts", program_accounts.len());
@@ -3497,10 +3397,7 @@ async fn update_delegate_boost_stake_accounts(
         for (i, batch) in delegated_boosts_to_update.chunks(batch_size).enumerate() {
             let instant = Instant::now();
             tracing::info!(target: "server_log", "Updating batch {}", i);
-            while let Err(_) = app_database
-                .update_stake_accounts_staked_balance(batch.to_vec())
-                .await
-            {
+            while let Err(_) = app_database.update_stake_accounts_staked_balance(batch.to_vec()).await {
                 tracing::info!(target: "server_log", "Failed to update stake_account staked_balance in db. Retrying...");
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
@@ -3511,3 +3408,6 @@ async fn update_delegate_boost_stake_accounts(
     }
     tracing::info!(target: "server_log", "Updated stake_accounts in {}ms", instant.elapsed().as_millis());
 }
+
+
+
