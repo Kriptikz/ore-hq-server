@@ -8,8 +8,23 @@ pub enum AppMetricsError {
 }
 
 #[derive(Debug)]
+pub struct MetricsClaimEventData {
+    duration_ms: u64,
+    timestamp_ns: u64,
+    has_error: bool,
+    error: String,
+}
+
+#[derive(Debug)]
+pub struct MetricsProcessingClaimsEventData {
+    pub claims_queue_length: usize,
+}
+
+#[derive(Debug)]
 pub enum AppMetricsEvent {
     MineEvent(MineEventWithBoosts),
+    ClaimEvent(MetricsClaimEventData),
+    ProcessingClaimsEvent(MetricsProcessingClaimsEventData),
 }
 
 pub struct AppMetrics {

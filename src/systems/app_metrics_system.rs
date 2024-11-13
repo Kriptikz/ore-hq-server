@@ -57,6 +57,32 @@ pub async fn metrics_system(
                         }
                     }
 
+                },
+                AppMetricsEvent::ClaimEvent(_data) => {
+                },
+                AppMetricsEvent::ProcessingClaimsEvent(data) => {
+                    let ts_ns = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                        Ok(d) => {
+                            d.as_nanos()
+                        },
+                        Err(_d) => {
+                            tracing::error!(target: "server_log", "Time went backwards...");
+                            continue;
+                        }
+                    };
+                    let formatted_data = format!("claim_system_event,host={} queue_length={}u {}",
+                        app_metrics.hostname,
+                        data.claims_queue_length,
+                        ts_ns
+                    );
+                    match app_metrics.send_data_to_influxdb(formatted_data).await {
+                        Ok(_) => {
+                        },
+                        Err(e) => {
+                            tracing::error!(target: "server_log", "Failed to send metrics data to influxdb.\nError: {:?}", e);
+                        }
+                    }
+
                 }
             }
         }

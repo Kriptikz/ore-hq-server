@@ -859,12 +859,14 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let app_wallet = wallet_extension.clone();
     let app_claims_queue = claims_queue.clone();
     let app_app_database = app_database.clone();
+    let app_metrics = metrics_message_sender.clone();
     tokio::spawn(async move {
         claim_system(
             app_claims_queue,
             app_rpc_client,
             app_wallet.miner_wallet.clone(),
             app_app_database,
+            app_metrics,
         )
         .await;
     });
