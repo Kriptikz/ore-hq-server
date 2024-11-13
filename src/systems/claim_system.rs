@@ -10,11 +10,11 @@ use solana_sdk::{
 use solana_transaction_status::TransactionConfirmationStatus;
 use spl_associated_token_account::get_associated_token_address;
 use steel::Pubkey;
-use tokio::time::Instant;
+use tokio::{sync::mpsc::UnboundedSender, time::Instant};
 use tracing::{error, info};
 
 use crate::{
-    app_database::AppDatabase, ore_utils::{get_ore_mint, ORE_TOKEN_DECIMALS}, ClaimsQueue, ClaimsQueueItem, InsertClaim, InsertTxn
+    app_database::AppDatabase, app_metrics::{AppMetricsEvent, MetricsProcessingClaimsEventData}, ore_utils::{get_ore_mint, ORE_TOKEN_DECIMALS}, ClaimsQueue, ClaimsQueueItem, InsertClaim, InsertTxn
 };
 
 pub async fn claim_system(
@@ -22,6 +22,7 @@ pub async fn claim_system(
     rpc_client: Arc<RpcClient>,
     wallet: Arc<Keypair>,
     app_database: Arc<AppDatabase>,
+    app_metrics_sender: UnboundedSender<AppMetricsEvent>,
 ) {
     loop {
         let mut handles = Vec::new();
@@ -30,71 +31,82 @@ pub async fn claim_system(
         let mut second_claim = None;
         let mut third_claim = None;
         let reader = claims_queue.queue.read().await;
-        info!(target: "server_log", "Claims queue length: {}", reader.len());
+        let claims_queue_len = reader.len();
+        info!(target: "server_log", "Claims queue length: {}", claims_queue_len);
 
-        let mut reader_iter = reader.iter();
-        let first_item = reader_iter.next();
-        if let Some(item) = first_item {
-            first_claim = Some((item.0.clone(), item.1.clone()));
-        }
-        let second_item = reader_iter.next();
-        if let Some(item) = second_item {
-            second_claim = Some((item.0.clone(), item.1.clone()));
-        }
-        let third_item = reader_iter.next();
-        if let Some(item) = third_item {
-            third_claim = Some((item.0.clone(), item.1.clone()));
-        }
-        drop(reader);
+        if claims_queue_len > 0 {
+            let processing_claims_event_data = MetricsProcessingClaimsEventData {
+                claims_queue_length: claims_queue_len,
+            };
+            match app_metrics_sender.send(AppMetricsEvent::ProcessingClaimsEvent(processing_claims_event_data)) {
+                Ok(_) => {}
+                Err(_) => {
+                    tracing::error!(target: "server_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
+                }
+            }
+            let mut reader_iter = reader.iter();
+            let first_item = reader_iter.next();
+            if let Some(item) = first_item {
+                first_claim = Some((item.0.clone(), item.1.clone()));
+            }
+            let second_item = reader_iter.next();
+            if let Some(item) = second_item {
+                second_claim = Some((item.0.clone(), item.1.clone()));
+            }
+            let third_item = reader_iter.next();
+            if let Some(item) = third_item {
+                third_claim = Some((item.0.clone(), item.1.clone()));
+            }
+            drop(reader);
 
-        let cq = claims_queue.clone();
-        let rpc = rpc_client.clone();
-        let w = wallet.clone();
-        let adb = app_database.clone();
-        handles.push(tokio::spawn(async move {
-            let claims_queue = cq;
-            let rpc_client = rpc;
-            let wallet = w;
-            let app_database = adb;
-
+            let cq = claims_queue.clone();
+            let rpc = rpc_client.clone();
+            let w = wallet.clone();
+            let adb = app_database.clone();
             if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = first_claim {
-                process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
+                handles.push(tokio::spawn(async move {
+                    let claims_queue = cq;
+                    let rpc_client = rpc;
+                    let wallet = w;
+                    let app_database = adb;
+
+                        process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
+                }));
             }
-        }));
-
-        let cq = claims_queue.clone();
-        let rpc = rpc_client.clone();
-        let w = wallet.clone();
-        let adb = app_database.clone();
-        handles.push(tokio::spawn(async move {
-            let claims_queue = cq;
-            let rpc_client = rpc;
-            let wallet = w;
-            let app_database = adb;
-
+            let cq = claims_queue.clone();
+            let rpc = rpc_client.clone();
+            let w = wallet.clone();
+            let adb = app_database.clone();
             if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = second_claim {
-                process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
+                handles.push(tokio::spawn(async move {
+                    let claims_queue = cq;
+                    let rpc_client = rpc;
+                    let wallet = w;
+                    let app_database = adb;
+
+                        process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
+                }));
             }
-        }));
 
-        let cq = claims_queue.clone();
-        let rpc = rpc_client.clone();
-        let w = wallet.clone();
-        let adb = app_database.clone();
-        handles.push(tokio::spawn(async move {
-            let claims_queue = cq;
-            let rpc_client = rpc;
-            let wallet = w;
-            let app_database = adb;
-
+            let cq = claims_queue.clone();
+            let rpc = rpc_client.clone();
+            let w = wallet.clone();
+            let adb = app_database.clone();
             if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = third_claim {
-                process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
-            }
-        }));
+                handles.push(tokio::spawn(async move {
+                    let claims_queue = cq;
+                    let rpc_client = rpc;
+                    let wallet = w;
+                    let app_database = adb;
 
-        for handle in handles {
-            // wait for spawned tasks to finish
-            let _ = handle.await;
+                        process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
+                }));
+            }
+
+            for handle in handles {
+                // wait for spawned tasks to finish
+                let _ = handle.await;
+            }
         }
 
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -188,16 +200,29 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             };
 
             let signature;
+            let mut send_attempts = 1;
             loop {
-                if let Ok(sig) = rpc_client
+                match rpc_client
                     .send_transaction_with_config(&tx, rpc_config)
-                    .await
+                    .await 
                 {
-                    signature = sig;
-                    break;
-                } else {
-                    error!(target: "server_log", "Failed to send stakers claim transaction. retrying in 2 seconds...");
-                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                        Ok(sig) => {
+                            signature = sig;
+                            break;
+                        },
+                        Err(e) => {
+                            if send_attempts > 10 {
+                                error!(target: "server_log", "Failed to send stakers claim transaction.\nError: {:?}.\nRetry Limit Reached. Removing claim from queue.", e);
+                                let mut writer = claims_queue.queue.write().await;
+                                writer.remove(&(staker_pubkey, Some(mint_pubkey)));
+                                drop(writer);
+                                return;
+                            } else {
+                                send_attempts += 1;
+                                error!(target: "server_log", "Failed to send stakers claim transaction.\nError: {:?}.\nRetrying in 2 seconds...", e);
+                                tokio::time::sleep(Duration::from_millis(2000)).await;
+                            }
+                        }
                 }
             }
 
@@ -302,7 +327,6 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             return;
         }
 
-
         let prio_fee: u32 = 20_000;
 
         let mut is_creating_ata = false;
@@ -362,16 +386,29 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             };
 
             let signature;
+            let mut send_attempts = 1;
             loop {
-                if let Ok(sig) = rpc_client
+                match rpc_client
                     .send_transaction_with_config(&tx, rpc_config)
-                    .await
+                    .await 
                 {
-                    signature = sig;
-                    break;
-                } else {
-                    error!(target: "server_log", "Failed to send claim transaction. retrying in 2 seconds...");
-                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                        Ok(sig) => {
+                            signature = sig;
+                            break;
+                        },
+                        Err(e) => {
+                            if send_attempts > 10 {
+                                error!(target: "server_log", "Failed to send claim transaction.\nError: {:?}\nRetry limit reached. Removing claim from queue.", e);
+                                let mut writer = claims_queue.queue.write().await;
+                                writer.remove(&(miner_pubkey, None));
+                                drop(writer);
+                                return;
+                            } else {
+                                send_attempts += 1;
+                                error!(target: "server_log", "Failed to send claim transaction.\nError: {:?}.\n retrying in 2 seconds...", e);
+                                tokio::time::sleep(Duration::from_millis(2000)).await;
+                            }
+                        }
                 }
             }
 
