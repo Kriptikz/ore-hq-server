@@ -108,6 +108,26 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
         let ore_mint = get_ore_mint();
         let receiver_pubkey = claim_queue_item.receiver_pubkey;
         let receiver_token_account = get_associated_token_address(&receiver_pubkey, &ore_mint);
+        let amount = claim_queue_item.amount;
+
+        let mut claim_amount = amount;
+
+        if let Ok(stake_account) = app_database
+            .get_staker_rewards(staker_pubkey.to_string(), mint_pubkey.to_string())
+            .await
+        {
+            if amount > stake_account.rewards_balance {
+                let mut writer = claims_queue.queue.write().await;
+                writer.remove(&(staker_pubkey, Some(mint_pubkey)));
+                drop(writer);
+                return;
+            }
+        } else {
+            let mut writer = claims_queue.queue.write().await;
+            writer.remove(&(staker_pubkey, Some(mint_pubkey)));
+            drop(writer);
+            return;
+        }
 
         let prio_fee: u32 = 20_000;
 
@@ -145,9 +165,6 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             )
         }
 
-        let amount = claim_queue_item.amount;
-
-        let mut claim_amount = amount;
         // 0.02_000_000_000
         if is_creating_ata {
             claim_amount = amount - 2_000_000_000
@@ -264,6 +281,27 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
         let ore_mint = get_ore_mint();
         let receiver_pubkey = claim_queue_item.receiver_pubkey;
         let receiver_token_account = get_associated_token_address(&receiver_pubkey, &ore_mint);
+        let amount = claim_queue_item.amount;
+
+        let mut claim_amount = amount;
+
+        if let Ok(miner_rewards) = app_database
+            .get_miner_rewards(miner_pubkey.to_string())
+            .await
+        {
+            if amount > miner_rewards.balance {
+                let mut writer = claims_queue.queue.write().await;
+                writer.remove(&(miner_pubkey, None));
+                drop(writer);
+                return;
+            }
+        } else {
+            let mut writer = claims_queue.queue.write().await;
+            writer.remove(&(miner_pubkey, None));
+            drop(writer);
+            return;
+        }
+
 
         let prio_fee: u32 = 20_000;
 
@@ -301,9 +339,6 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             )
         }
 
-        let amount = claim_queue_item.amount;
-
-        let mut claim_amount = amount;
         // 0.02_000_000_000
         if is_creating_ata {
             claim_amount = amount - 2_000_000_000
