@@ -227,7 +227,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             }
 
             let result: Result<Signature, String> = loop {
-                if expired_timer.elapsed().as_secs() >= 360 {
+                if expired_timer.elapsed().as_secs() >= 600 {
                     break Err("Transaction Expired".to_string());
                 }
                 let results = rpc_client.get_signature_statuses(&[signature]).await;
@@ -413,7 +413,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             }
 
             let result: Result<Signature, String> = loop {
-                if expired_timer.elapsed().as_secs() >= 360 {
+                if expired_timer.elapsed().as_secs() >= 600 {
                     break Err("Transaction Expired".to_string());
                 }
                 let results = rpc_client.get_signature_statuses(&[signature]).await;
