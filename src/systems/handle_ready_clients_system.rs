@@ -73,11 +73,11 @@ pub async fn handle_ready_clients_system(
 
                     // tracing::info!(target: "submission_log", "Giving clients challenge: {}", BASE64_STANDARD.encode(challenge));
                     // tracing::info!(target: "submission_log", "With cutoff: {}", cutoff);
+                    let shared_state = app_state.read().await;
+                    let sockets = shared_state.sockets.clone();
+                    drop(shared_state);
                     for client in clients {
                         let app_client_nonce_ranges = app_client_nonce_ranges.clone();
-                        let shared_state = app_state.read().await;
-                        let sockets = shared_state.sockets.clone();
-                        drop(shared_state);
                         if let Some(sender) = sockets.get(&client) {
                             let nonce_range = {
                                 let mut nonce = app_nonce.lock().await;
