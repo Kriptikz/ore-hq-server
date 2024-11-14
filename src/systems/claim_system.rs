@@ -17,7 +17,7 @@ use crate::{
     app_database::AppDatabase, app_metrics::{AppMetricsEvent, MetricsProcessingClaimsEventData}, ore_utils::{get_ore_mint, ORE_TOKEN_DECIMALS}, ClaimsQueue, ClaimsQueueItem, InsertClaim, InsertTxn
 };
 
-const CLAIMS_PROCESSING_AMOUNT: usize = 5;
+const CLAIMS_PROCESSING_AMOUNT: usize = 10;
 
 pub async fn claim_system(
     claims_queue: Arc<ClaimsQueue>,
@@ -67,6 +67,7 @@ pub async fn claim_system(
                     let app_database = adb;
                         process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
                 }));
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
             for handle in handles {
@@ -201,7 +202,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                 if let Ok(response) = results {
                     let statuses = response.value;
                     if let Some(status) = &statuses[0] {
-                        info!(target: "claim_log", "Claim for {}  -- elapsed: {} -- status: {:?}", user_pubkey.to_string(), elapsed, status);
+                        info!(target: "claim_log", "Staker claim for {}  -- elapsed: {} -- status: {:?}", user_pubkey.to_string(), elapsed, status);
                         if status.confirmation_status()
                             == TransactionConfirmationStatus::Finalized
                         {
@@ -381,13 +382,15 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             }
 
             let result: Result<Signature, String> = loop {
-                if expired_timer.elapsed().as_secs() >= 600 {
+                let elapsed = expired_timer.elapsed().as_secs();
+                if elapsed >= 600 {
                     break Err("Transaction Expired".to_string());
                 }
                 let results = rpc_client.get_signature_statuses(&[signature]).await;
                 if let Ok(response) = results {
                     let statuses = response.value;
                     if let Some(status) = &statuses[0] {
+                        info!(target: "claim_log", "Miner claim for {}  -- elapsed: {} -- status: {:?}", user_pubkey.to_string(), elapsed, status);
                         if status.confirmation_status()
                             == TransactionConfirmationStatus::Finalized
                         {
