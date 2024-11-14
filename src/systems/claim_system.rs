@@ -31,7 +31,7 @@ pub async fn claim_system(
 
         let reader = claims_queue.queue.read().await;
         let claims_queue_len = reader.len();
-        info!(target: "server_log", "Claims queue length: {}", claims_queue_len);
+        info!(target: "claim_log", "Claims queue length: {}", claims_queue_len);
 
         if claims_queue_len > 0 {
             let processing_claims_event_data = MetricsProcessingClaimsEventData {
@@ -40,7 +40,7 @@ pub async fn claim_system(
             match app_metrics_sender.send(AppMetricsEvent::ProcessingClaimsEvent(processing_claims_event_data)) {
                 Ok(_) => {}
                 Err(_) => {
-                    tracing::error!(target: "server_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
+                    tracing::error!(target: "claim_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
                 }
             }
 
@@ -81,7 +81,7 @@ pub async fn claim_system(
 
 async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, rpc_client: Arc<RpcClient>, wallet: Arc<Keypair>, app_database: Arc<AppDatabase>, claims_queue: Arc<ClaimsQueue>) {
     if let Some(mint_pubkey) = claim_queue_item.mint {
-        info!(target: "server_log", "Processing stakers claim");
+        info!(target: "claim_log", "Processing stakers claim");
         let staker_pubkey = user_pubkey;
         let ore_mint = get_ore_mint();
         let receiver_pubkey = claim_queue_item.receiver_pubkey;
@@ -118,9 +118,9 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             .await
         {
             if let Some(_amount) = response.ui_amount {
-                info!(target: "server_log", "staker claim beneficiary has valid token account.");
+                info!(target: "claim_log", "staker claim beneficiary has valid token account.");
             } else {
-                info!(target: "server_log", "will create token account for staker claim beneficiary");
+                info!(target: "claim_log", "will create token account for staker claim beneficiary");
                 ixs.push(
                     spl_associated_token_account::instruction::create_associated_token_account(
                         &wallet.pubkey(),
@@ -131,7 +131,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                 )
             }
         } else {
-            info!(target: "server_log", "Adding create ata ix for staker claim");
+            info!(target: "claim_log", "Adding create ata ix for staker claim");
             is_creating_ata = true;
             ixs.push(
                 spl_associated_token_account::instruction::create_associated_token_account(
@@ -178,14 +178,14 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         },
                         Err(e) => {
                             if send_attempts > 10 {
-                                error!(target: "server_log", "Failed to send stakers claim transaction.\nError: {:?}.\nRetry Limit Reached. Removing claim from queue.", e);
+                                error!(target: "claim_log", "Failed to send stakers claim transaction.\nError: {:?}.\nRetry Limit Reached. Removing claim from queue.", e);
                                 let mut writer = claims_queue.queue.write().await;
                                 writer.remove(&(staker_pubkey, Some(mint_pubkey)));
                                 drop(writer);
                                 return;
                             } else {
                                 send_attempts += 1;
-                                error!(target: "server_log", "Failed to send stakers claim transaction.\nError: {:?}.\nRetrying in 2 seconds...", e);
+                                error!(target: "claim_log", "Failed to send stakers claim transaction.\nError: {:?}.\nRetrying in 2 seconds...", e);
                                 tokio::time::sleep(Duration::from_millis(2000)).await;
                             }
                         }
@@ -217,7 +217,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             match result {
                 Ok(sig) => {
                     let amount_dec = amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                    info!(target: "server_log", "Staker {} successfully claimed {}.\nSig: {}", staker_pubkey.to_string(), amount_dec, sig.to_string());
+                    info!(target: "claim_log", "Staker {} successfully claimed {}.\nSig: {}", staker_pubkey.to_string(), amount_dec, sig.to_string());
 
                     // TODO: use transacions, or at least put them into one query
                     let db_pool = app_database
@@ -231,14 +231,14 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                     while let Err(_) =
                         app_database.decrease_stakers_rewards(staker.id, amount).await
                     {
-                        error!(target: "server_log", "Failed to decrease stakers rewards! Retrying...");
+                        error!(target: "claim_log", "Failed to decrease stakers rewards! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
                     while let Err(_) = app_database
                         .update_pool_claimed(wallet.pubkey().to_string(), amount)
                         .await
                     {
-                        error!(target: "server_log", "Failed to increase pool claimed amount! Retrying...");
+                        error!(target: "claim_log", "Failed to increase pool claimed amount! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
 
@@ -248,7 +248,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         priority_fee: prio_fee,
                     };
                     while let Err(_) = app_database.add_new_txn(itxn.clone()).await {
-                        error!(target: "server_log", "Failed to add new staker-claim txn! Retrying...");
+                        error!(target: "claim_log", "Failed to add new staker-claim txn! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
 
@@ -257,17 +257,17 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                     writer.remove(&(staker_pubkey, Some(mint_pubkey)));
                     drop(writer);
 
-                    info!(target: "server_log", "Stake rewards claim successfully processed!");
+                    info!(target: "claim_log", "Stake rewards claim successfully processed!");
                 }
                 Err(e) => {
-                    error!(target: "server_log", "ERROR: {:?}", e);
+                    error!(target: "claim_log", "ERROR: {:?}", e);
                 }
             }
         } else {
-            error!(target: "server_log", "Failed to confirm transaction, will retry on next iteration.");
+            error!(target: "claim_log", "Failed to confirm transaction, will retry on next iteration.");
         }
     } else {
-        info!(target: "server_log", "Processing miners claim");
+        info!(target: "claim_log", "Processing miners claim");
         let miner_pubkey = user_pubkey;
         let ore_mint = get_ore_mint();
         let receiver_pubkey = claim_queue_item.receiver_pubkey;
@@ -304,9 +304,9 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             .await
         {
             if let Some(_amount) = response.ui_amount {
-                info!(target: "server_log", "miner has valid token account.");
+                info!(target: "claim_log", "miner has valid token account.");
             } else {
-                info!(target: "server_log", "will create token account for miner");
+                info!(target: "claim_log", "will create token account for miner");
                 ixs.push(
                     spl_associated_token_account::instruction::create_associated_token_account(
                         &wallet.pubkey(),
@@ -317,7 +317,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                 )
             }
         } else {
-            info!(target: "server_log", "Adding create ata ix for miner claim");
+            info!(target: "claim_log", "Adding create ata ix for miner claim");
             is_creating_ata = true;
             ixs.push(
                 spl_associated_token_account::instruction::create_associated_token_account(
@@ -364,14 +364,14 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         },
                         Err(e) => {
                             if send_attempts > 10 {
-                                error!(target: "server_log", "Failed to send claim transaction.\nError: {:?}\nRetry limit reached. Removing claim from queue.", e);
+                                error!(target: "claim_log", "Failed to send claim transaction.\nError: {:?}\nRetry limit reached. Removing claim from queue.", e);
                                 let mut writer = claims_queue.queue.write().await;
                                 writer.remove(&(miner_pubkey, None));
                                 drop(writer);
                                 return;
                             } else {
                                 send_attempts += 1;
-                                error!(target: "server_log", "Failed to send claim transaction.\nError: {:?}.\n retrying in 2 seconds...", e);
+                                error!(target: "claim_log", "Failed to send claim transaction.\nError: {:?}.\n retrying in 2 seconds...", e);
                                 tokio::time::sleep(Duration::from_millis(2000)).await;
                             }
                         }
@@ -403,7 +403,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             match result {
                 Ok(sig) => {
                     let amount_dec = amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                    info!(target: "server_log", "Miner {} successfully claimed {}.\nSig: {}", miner_pubkey.to_string(), amount_dec, sig.to_string());
+                    info!(target: "claim_log", "Miner {} successfully claimed {}.\nSig: {}", miner_pubkey.to_string(), amount_dec, sig.to_string());
 
                     // TODO: use transacions, or at least put them into one query
                     let miner = app_database
@@ -417,14 +417,14 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                     while let Err(_) =
                         app_database.decrease_miner_reward(miner.id, amount).await
                     {
-                        error!(target: "server_log", "Failed to decrease stakers rewards! Retrying...");
+                        error!(target: "claim_log", "Failed to decrease stakers rewards! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
                     while let Err(_) = app_database
                         .update_pool_claimed(wallet.pubkey().to_string(), amount)
                         .await
                     {
-                        error!(target: "server_log", "Failed to increase pool claimed amount! Retrying...");
+                        error!(target: "claim_log", "Failed to increase pool claimed amount! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
 
@@ -434,7 +434,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         priority_fee: prio_fee,
                     };
                     while let Err(_) = app_database.add_new_txn(itxn.clone()).await {
-                        error!(target: "server_log", "Failed to increase pool claimed amount! Retrying...");
+                        error!(target: "claim_log", "Failed to increase pool claimed amount! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
 
@@ -444,7 +444,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                             txn_id = ntxn.id;
                             break;
                         } else {
-                            error!(target: "server_log", "Failed to get tx by sig! Retrying...");
+                            error!(target: "claim_log", "Failed to get tx by sig! Retrying...");
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
                     }
@@ -456,7 +456,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         amount,
                     };
                     while let Err(_) = app_database.add_new_claim(iclaim).await {
-                        error!(target: "server_log", "Failed add new claim to db! Retrying...");
+                        error!(target: "claim_log", "Failed add new claim to db! Retrying...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
 
@@ -464,14 +464,14 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                     writer.remove(&(miner_pubkey, None));
                     drop(writer);
 
-                    info!(target: "server_log", "Claim successfully processed!");
+                    info!(target: "claim_log", "Claim successfully processed!");
                 }
                 Err(e) => {
-                    error!(target: "server_log", "ERROR: {:?}", e);
+                    error!(target: "claim_log", "ERROR: {:?}", e);
                 }
             }
         } else {
-            error!(target: "server_log", "Failed to confirm transaction, will retry on next iteration.");
+            error!(target: "claim_log", "Failed to confirm transaction, will retry on next iteration.");
         }
     }
 }

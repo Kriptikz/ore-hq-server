@@ -278,10 +278,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
     //         metadata.target() == "submission_log"
     //     }));
+    //
+
+    let claim_logs = tracing_appender::rolling::daily("./logs", "ore-hq-claims.log");
+    let (claim_logs, _guard) = tracing_appender::non_blocking(claim_logs);
+    let claim_log_layer = tracing_subscriber::fmt::layer()
+        .with_writer(claim_logs)
+        .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+            metadata.target() == "claim_log"
+        }));
 
     tracing_subscriber::registry()
         .with(server_log_layer)
         //.with(submission_log_layer)
+        .with(claim_log_layer)
         .init();
 
     match cmd_args.command {
