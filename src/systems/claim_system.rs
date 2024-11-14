@@ -17,6 +17,8 @@ use crate::{
     app_database::AppDatabase, app_metrics::{AppMetricsEvent, MetricsProcessingClaimsEventData}, ore_utils::{get_ore_mint, ORE_TOKEN_DECIMALS}, ClaimsQueue, ClaimsQueueItem, InsertClaim, InsertTxn
 };
 
+const CLAIMS_PROCESSING_AMOUNT: usize = 5;
+
 pub async fn claim_system(
     claims_queue: Arc<ClaimsQueue>,
     rpc_client: Arc<RpcClient>,
@@ -27,9 +29,6 @@ pub async fn claim_system(
     loop {
         let mut handles = Vec::new();
 
-        let mut first_claim = None;
-        let mut second_claim = None;
-        let mut third_claim = None;
         let reader = claims_queue.queue.read().await;
         let claims_queue_len = reader.len();
         info!(target: "server_log", "Claims queue length: {}", claims_queue_len);
@@ -44,61 +43,28 @@ pub async fn claim_system(
                     tracing::error!(target: "server_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
                 }
             }
-            let mut reader_iter = reader.iter();
-            let first_item = reader_iter.next();
-            if let Some(item) = first_item {
-                first_claim = Some((item.0.clone(), item.1.clone()));
-            }
-            let second_item = reader_iter.next();
-            if let Some(item) = second_item {
-                second_claim = Some((item.0.clone(), item.1.clone()));
-            }
-            let third_item = reader_iter.next();
-            if let Some(item) = third_item {
-                third_claim = Some((item.0.clone(), item.1.clone()));
+
+            let mut selected_claims = Vec::with_capacity(CLAIMS_PROCESSING_AMOUNT);
+            for (i, item) in reader.iter().enumerate() {
+                if i >= CLAIMS_PROCESSING_AMOUNT {
+                    break;
+                }
+
+               selected_claims.push((item.0.clone(), item.1.clone()));
             }
             drop(reader);
 
-            let cq = claims_queue.clone();
-            let rpc = rpc_client.clone();
-            let w = wallet.clone();
-            let adb = app_database.clone();
-            if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = first_claim {
+
+            for ((user_pubkey, _mint_pubkey), claim_queue_item) in selected_claims {
+                let cq = claims_queue.clone();
+                let rpc = rpc_client.clone();
+                let w = wallet.clone();
+                let adb = app_database.clone();
                 handles.push(tokio::spawn(async move {
                     let claims_queue = cq;
                     let rpc_client = rpc;
                     let wallet = w;
                     let app_database = adb;
-
-                        process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
-                }));
-            }
-            let cq = claims_queue.clone();
-            let rpc = rpc_client.clone();
-            let w = wallet.clone();
-            let adb = app_database.clone();
-            if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = second_claim {
-                handles.push(tokio::spawn(async move {
-                    let claims_queue = cq;
-                    let rpc_client = rpc;
-                    let wallet = w;
-                    let app_database = adb;
-
-                        process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
-                }));
-            }
-
-            let cq = claims_queue.clone();
-            let rpc = rpc_client.clone();
-            let w = wallet.clone();
-            let adb = app_database.clone();
-            if let Some(((user_pubkey, _mint_pubkey), claim_queue_item)) = third_claim {
-                handles.push(tokio::spawn(async move {
-                    let claims_queue = cq;
-                    let rpc_client = rpc;
-                    let wallet = w;
-                    let app_database = adb;
-
                         process_claim(user_pubkey, claim_queue_item, rpc_client, wallet, app_database, claims_queue).await;
                 }));
             }
