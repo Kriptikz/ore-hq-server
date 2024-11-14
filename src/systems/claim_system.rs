@@ -107,7 +107,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             return;
         }
 
-        let prio_fee: u32 = 20_000;
+        let prio_fee: u32 = 100_000;
 
         let mut is_creating_ata = false;
         let mut ixs = Vec::new();
@@ -193,13 +193,15 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             }
 
             let result: Result<Signature, String> = loop {
-                if expired_timer.elapsed().as_secs() >= 600 {
+                let elapsed = expired_timer.elapsed().as_secs();
+                if elapsed >= 600 {
                     break Err("Transaction Expired".to_string());
                 }
                 let results = rpc_client.get_signature_statuses(&[signature]).await;
                 if let Ok(response) = results {
                     let statuses = response.value;
                     if let Some(status) = &statuses[0] {
+                        info!(target: "claim_log", "Claim for {}  -- elapsed: {} -- status: {:?}", user_pubkey.to_string(), elapsed, status);
                         if status.confirmation_status()
                             == TransactionConfirmationStatus::Finalized
                         {
@@ -293,7 +295,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             return;
         }
 
-        let prio_fee: u32 = 20_000;
+        let prio_fee: u32 = 100_000;
 
         let mut is_creating_ata = false;
         let mut ixs = Vec::new();
