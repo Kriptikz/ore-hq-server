@@ -202,7 +202,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                 if let Ok(response) = results {
                     let statuses = response.value;
                     if let Some(status) = &statuses[0] {
-                        info!(target: "claim_log", "Staker claim for {}  -- elapsed: {} -- status: {:?}", user_pubkey.to_string(), elapsed, status);
+                        info!(target: "claim_log", "Staker claim for {} -- elapsed: {}  -- status: {:?}", user_pubkey.to_string(), elapsed, status);
                         if status.confirmation_status()
                             == TransactionConfirmationStatus::Finalized
                         {
@@ -212,8 +212,14 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                             }
                             break Ok(signature);
                         }
+                    } else {
+                        info!(target: "claim_log", "Staker claim for {} -- elapsed: {}  -- status: None", user_pubkey.to_string(), elapsed);
                     }
+                } else {
+                    info!(target: "claim_log", "Staker claim for {} -- elapsed: {}  -- status: GET SIG RPC ERROR", user_pubkey.to_string(), elapsed);
                 }
+                // Send the txn again
+                let _ = rpc_client.send_transaction_with_config(&tx, rpc_config).await;
                 tokio::time::sleep(Duration::from_millis(5000)).await;
             };
 
