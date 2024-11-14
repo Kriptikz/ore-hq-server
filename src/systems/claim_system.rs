@@ -245,7 +245,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         }
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(2000)).await;
+                tokio::time::sleep(Duration::from_millis(5000)).await;
             };
 
             match result {
@@ -431,7 +431,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                         }
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(2000)).await;
+                tokio::time::sleep(Duration::from_millis(5000)).await;
             };
 
             match result {
