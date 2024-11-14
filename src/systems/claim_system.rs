@@ -235,7 +235,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                     let statuses = response.value;
                     if let Some(status) = &statuses[0] {
                         if status.confirmation_status()
-                            == TransactionConfirmationStatus::Confirmed
+                            == TransactionConfirmationStatus::Finalized
                         {
                             if status.err.is_some() {
                                 let e_str = format!("Stake Claim Transaction Failed: {:?}", status.err);
@@ -421,7 +421,7 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
                     let statuses = response.value;
                     if let Some(status) = &statuses[0] {
                         if status.confirmation_status()
-                            == TransactionConfirmationStatus::Confirmed
+                            == TransactionConfirmationStatus::Finalized
                         {
                             if status.err.is_some() {
                                 let e_str = format!("Transaction Failed: {:?}", status.err);
