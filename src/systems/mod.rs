@@ -9,3 +9,4 @@ pub mod message_text_all_clients_system;
 pub mod delegate_boost_tracking_system;
 pub mod app_metrics_system;
 pub mod cache_update_system;
+pub mod client_submissions_handler;
