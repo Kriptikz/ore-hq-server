@@ -53,10 +53,10 @@ pub async fn client_submissions_handler(
                         .await;
                 } else {
                     //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
-                    return;
+                    continue;
                 }
                 drop(reader);
-                return;
+                continue;
             }
 
             let reader = client_nonce_ranges.read().await;
@@ -65,7 +65,7 @@ pub async fn client_submissions_handler(
                     nr.clone()
                 } else {
                     //tracing::error!(target: "server_log", "Client nonce range not set!");
-                    return;
+                    continue;
                 }
             };
             drop(reader);
@@ -83,7 +83,7 @@ pub async fn client_submissions_handler(
 
             if !in_range {
                 //tracing::error!(target: "server_log", "Client submitted nonce out of assigned range");
-                return;
+                continue;
             }
 
             let reader = app_state.read().await;
@@ -92,7 +92,7 @@ pub async fn client_submissions_handler(
                 miner_id = app_client_socket.miner_id;
             } else {
                 //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
-                return;
+                continue;
             }
             drop(reader);
 
@@ -163,7 +163,7 @@ pub async fn client_submissions_handler(
                     let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
                 } else {
                     //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
-                    return;
+                    continue;
                 }
                 drop(reader);
             }
