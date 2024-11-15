@@ -157,6 +157,7 @@ async fn update_database_staked_balances(
 
         // Every 5 minutes, perform gpa call to get all on-chain accounts for updates/inserts
         if gpa_timer.elapsed().as_secs() >= 300 {
+            tracing::info!(target: "server_log", "Performaing staking GPA rpc call.");
             let program_accounts = match rpc_client.get_program_accounts_with_config(
                 &ore_miner_delegation::id(),
                 RpcProgramAccountsConfig {
@@ -192,6 +193,7 @@ async fn update_database_staked_balances(
         }
 
         if delegate_boost_accounts.len() > 0 {
+            tracing::info!(target: "server_log", "Processing {} delegate boost accounts updates...", delegate_boost_accounts.len());
             if update_stake_accounts_timer.elapsed().as_secs() >= STAKE_ACCOUNT_DB_UPDATE_INTERVAL_SECS {
                 // Update database staked balances
                 let mut ba_inserts = Vec::new();
