@@ -56,12 +56,9 @@ pub async fn client_message_handler_system(
             }
             ClientMessage::Ready(addr) => {
                 let ready_clients = ready_clients.clone();
-                tokio::spawn(async move {
-                    let ready_clients = ready_clients.clone();
-                    let mut lock = ready_clients.lock().await;
-                    lock.insert(addr);
-                    drop(lock);
-                });
+                let mut lock = ready_clients.lock().await;
+                lock.insert(addr);
+                drop(lock);
             }
             ClientMessage::Mining(addr) => {
                 tracing::info!(target: "server_log", "Client {} has started mining!", addr.to_string());
