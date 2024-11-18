@@ -15,8 +15,7 @@ use solana_sdk::pubkey::Pubkey;
 use tokio::sync::{mpsc::UnboundedReceiver, Mutex, RwLock};
 
 use crate::{
-    AppState, EpochHashes, InternalMessageSubmission, SubmissionWindow,
-    MIN_DIFF, MIN_HASHPOWER,
+    AppState, EpochHashes, InternalMessageSubmission, SubmissionWindow, MAX_CALCULATED_HASHPOWER, MIN_DIFF, MIN_HASHPOWER
 };
 
 pub struct ClientBestSolution {
@@ -105,8 +104,8 @@ pub async fn client_submissions_handler(
                 //tracing::info!(target: "submission_log", "{} - {} found diff: {}", submission_uuid, pubkey_str, diff);
                 // calculate rewards
                 let mut hashpower = MIN_HASHPOWER * 2u64.pow(diff - MIN_DIFF);
-                if hashpower > 81_920 {
-                    hashpower = 81_920;
+                if hashpower > MAX_CALCULATED_HASHPOWER {
+                    hashpower = MAX_CALCULATED_HASHPOWER;
                 }
                 {
                     let reader = epoch_hashes.read().await;

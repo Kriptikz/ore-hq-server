@@ -79,8 +79,9 @@ mod systems;
 mod scripts;
 mod app_metrics;
 
-const MIN_DIFF: u32 = 8;
-const MIN_HASHPOWER: u64 = 5;
+const MIN_DIFF: u32 = 12;
+const MIN_HASHPOWER: u64 = 80; // difficulty 12
+const MAX_CALCULATED_HASHPOWER: u64 = 327_680; // difficulty 24
 
 const ORE_BOOST_MINT: &str = "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp";
 const ORE_SOL_BOOST_MINT: &str = "DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN";
