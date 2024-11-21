@@ -311,6 +311,15 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let fee_wallet_path_str =
         std::env::var("FEE_WALLET_PATH").expect("FEE_WALLET_PATH must be set.");
     let rpc_url = std::env::var("RPC_URL").expect("RPC_URL must be set.");
+    let rpc_2_url = match std::env::var("RPC_2_URL") {
+        Ok(url) => {
+            url
+        },
+        Err(_) => {
+            println!("Invalid RPC_2_URL, defaulting to original RPC_URL");
+            rpc_url.clone()
+        }
+    };
     let rpc_ws_url = std::env::var("RPC_WS_URL").expect("RPC_WS_URL must be set.");
     let password = std::env::var("PASSWORD").expect("PASSWORD must be set.");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
@@ -445,6 +454,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     info!(target: "server_log", "establishing rpc connection...");
     let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
+    let rpc_2_client = RpcClient::new_with_commitment(rpc_2_url, CommitmentConfig::confirmed());
     let jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/transactions".to_string();
     let jito_client = RpcClient::new(jito_url);
 
@@ -862,6 +872,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let submission_window = Arc::new(RwLock::new(SubmissionWindow { closed: false }));
 
     let rpc_client = Arc::new(rpc_client);
+    let rpc_2_client = Arc::new(rpc_2_client);
     let jito_client = Arc::new(jito_client);
 
     let last_challenge = Arc::new(Mutex::new([0u8; 32]));
@@ -1105,7 +1116,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(config))
         .layer(Extension(wallet_extension))
         .layer(Extension(client_channel))
-        .layer(Extension(rpc_client))
+        .layer(Extension(rpc_2_client))
         .layer(Extension(client_nonce_ranges))
         .layer(Extension(claims_queue))
         .layer(Extension(submission_window))
