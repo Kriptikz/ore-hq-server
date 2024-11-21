@@ -2318,10 +2318,10 @@ async fn post_stake_boost_v2(
     Extension(wallet): Extension<Arc<WalletExtension>>,
     body: String,
 ) -> impl IntoResponse {
-    if query_params.amount < 100 {
+    if query_params.amount < 1_000_000_000 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body("Stake minimum of 100".to_string())
+                .body("Stake minimum of 0.01".to_string())
                 .unwrap();
     }
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
