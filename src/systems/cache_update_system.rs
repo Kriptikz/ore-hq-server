@@ -2,14 +2,17 @@ use std::{ops::Div, str::FromStr as _, sync::Arc, time::Duration};
 
 use ore_boost_api::state::{boost_pda, stake_pda};
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
 use steel::{AccountDeserialize as _, Pubkey};
 use tokio::{sync::RwLock, time::Instant};
+use base64::{prelude::BASE64_STANDARD, Engine};
 
-use crate::{app_database::AppDatabase, app_rr_database::AppRRDatabase, ore_utils::ORE_TOKEN_DECIMALS, BoostMultiplierCache, BoostMultiplierData, ChallengesCache, Config, LastChallengeSubmissionsCache, WalletExtension};
+use crate::{app_database::AppDatabase, app_rr_database::AppRRDatabase, ore_utils::ORE_TOKEN_DECIMALS, BoostMultiplierCache, BoostMultiplierData, ChallengesCache, Config, LastChallengeSubmissionsCache, LatestBlockhashCache, WalletExtension};
 
 const CACHED_BOOST_MULTIPLIER_UPDATE_INTERVAL: u64 = 30;
 const CACHED_LAST_CHALLENGE_SUBMISSIONS_UPDATE_INTERVAL: u64 = 60;
 const CACHED_CHALLENGES_UPDATE_INTERVAL: u64 = 60;
+const CACHED_LATEST_BLOCKHASH_UPDATE_INTERVAL: u64 = 20;
 
 
 pub async fn cache_update_system(
@@ -19,6 +22,7 @@ pub async fn cache_update_system(
     boost_multiplier_cache: Arc<RwLock<BoostMultiplierCache>>,
     last_challenge_submission_cache: Arc<RwLock<LastChallengeSubmissionsCache>>,
     challenges_cache: Arc<RwLock<ChallengesCache>>,
+    latest_blockhash_cache: Arc<RwLock<LatestBlockhashCache>>,
 ) {
     if app_config.stats_enabled {
         loop {
@@ -126,6 +130,32 @@ pub async fn cache_update_system(
                     }
                     Err(_) => {},
                 }
+            }
+
+            // Cached LatestBlockhash
+            let reader = latest_blockhash_cache.read().await;
+            let cached_lb = reader.clone();
+            drop(reader);
+            if cached_lb.last_updated_at.elapsed().as_secs() > CACHED_LATEST_BLOCKHASH_UPDATE_INTERVAL {
+                let lbhash;
+                loop {
+                    match rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await {
+                            Ok(lb) => {
+                                lbhash = lb;
+                                break;
+                            },
+                            Err(e) => {
+                                tracing::error!(target: "server_log", "Failed to get latest blockhash in cache system. E: {:?}\n Retrying in 2 secs...", e);
+                                tokio::time::sleep(Duration::from_secs(2000)).await;
+                            }
+                    };
+                }
+                let serialized_blockhash = bincode::serialize(&lbhash).unwrap();
+                let encoded_blockhash = BASE64_STANDARD.encode(serialized_blockhash);
+                let mut writer = latest_blockhash_cache.write().await;
+                writer.item = encoded_blockhash.clone();
+                writer.last_updated_at = Instant::now();
+                drop(writer);
             }
 
             tokio::time::sleep(Duration::from_secs(5)).await;

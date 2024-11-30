@@ -203,6 +203,12 @@ pub struct ChallengesCache {
     last_updated_at: Instant,
 }
 
+#[derive(Clone)]
+pub struct LatestBlockhashCache {
+    item: String,
+    last_updated_at: Instant,
+}
+
 mod ore_utils;
 
 #[derive(Parser, Debug)]
@@ -429,6 +435,12 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         last_updated_at: Instant::now(),
     }));
 
+
+    let app_cache_boost_multiplier: Arc<RwLock<BoostMultiplierCache>> = Arc::new(RwLock::new(BoostMultiplierCache {
+        item: vec![],
+        last_updated_at: Instant::now(),
+    }));
+
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
 
@@ -457,6 +469,29 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let rpc_2_client = RpcClient::new_with_commitment(rpc_2_url, CommitmentConfig::confirmed());
     let jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/transactions".to_string();
     let jito_client = RpcClient::new(jito_url);
+
+    info!(target: "server_log", "Getting latest blockhash.");
+
+    let lbhash;
+    loop {
+        match rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await {
+                Ok(lb) => {
+                    lbhash = lb;
+                    break;
+                },
+                Err(e) => {
+                    error!(target: "server_log", "Failed to get initial blockhash for cache. E: {:?}\n Retrying in 2 secs...", e);
+                    tokio::time::sleep(Duration::from_secs(2000)).await;
+                }
+        };
+    }
+    let serialized_blockhash = bincode::serialize(&lbhash).unwrap();
+    let encoded_blockhash = BASE64_STANDARD.encode(serialized_blockhash);
+
+    let app_cache_latest_blockhash_cache: Arc<RwLock<LatestBlockhashCache>> = Arc::new(RwLock::new(LatestBlockhashCache {
+        item: encoded_blockhash,
+        last_updated_at: Instant::now(),
+    }));
 
     info!(target: "server_log", "loading sol balance...");
     let balance = if let Ok(balance) = rpc_client.get_balance(&wallet.pubkey()).await {
@@ -899,6 +934,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let last_challenge_cache = app_cache_last_challenge_submissions.clone();
     let boost_multiplier_cache = app_cache_boost_multiplier.clone();
     let challenges_cache = app_cache_challenges.clone();
+    let latest_blockhash_cache = app_cache_latest_blockhash_cache.clone();
     let app_app_rr_database = app_rr_database.clone();
     tokio::spawn(async move {
         cache_update_system(
@@ -908,6 +944,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             boost_multiplier_cache,
             last_challenge_cache,
             challenges_cache,
+            latest_blockhash_cache
         )
         .await;
     });
@@ -1123,6 +1160,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(app_cache_boost_multiplier))
         .layer(Extension(app_cache_last_challenge_submissions))
         .layer(Extension(app_cache_challenges))
+        .layer(Extension(app_cache_latest_blockhash_cache))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -1171,13 +1209,11 @@ async fn get_pool_fee_payer_pubkey(
 }
 
 async fn get_latest_blockhash(
-    Extension(rpc_client): Extension<Arc<RpcClient>>,
+    Extension(app_cached_latest_blockhash): Extension<Arc<RwLock<LatestBlockhashCache>>>,
 ) -> impl IntoResponse {
-    let latest_blockhash = rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await.unwrap();
-
-    let serialized_blockhash = bincode::serialize(&latest_blockhash).unwrap();
-
-    let encoded_blockhash = BASE64_STANDARD.encode(serialized_blockhash);
+    let reader = app_cached_latest_blockhash.read().await;
+    let encoded_blockhash = reader.item.clone();
+    drop(reader);
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/text")
