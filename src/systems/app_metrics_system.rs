@@ -85,7 +85,16 @@ pub async fn metrics_system(
 
                 },
                 AppMetricsEvent::RouteEvent(data) => {
-                    let formatted_data = format!("route_event,host={} route={},method={},status_code={},request={}u,response={}u,latency={}u {}",
+                    let ts_ns = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                        Ok(d) => {
+                            d.as_nanos()
+                        },
+                        Err(_d) => {
+                            tracing::error!(target: "server_log", "Time went backwards...");
+                            continue;
+                        }
+                    };
+                    let formatted_data = format!("route_event,host={} route=\"{}\",method=\"{}\",status_code={}u,request={}u,response={}u,latency={}u {}",
                         app_metrics.hostname,
                         data.route,
                         data.method,
@@ -93,12 +102,10 @@ pub async fn metrics_system(
                         data.request,
                         data.response,
                         data.latency,
-                        data.ts_ns
+                        ts_ns
                     );
                     match app_metrics.send_data_to_influxdb(formatted_data).await {
-                        Ok(_) => {
-                            tracing::info!(target: "server_log", "Successfully sent RouteEvent metrics data");
-                        },
+                        Ok(_) => {},
                         Err(e) => {
                             tracing::error!(target: "server_log", "Failed to send metrics data to influxdb.\nError: {:?}", e);
                         }
