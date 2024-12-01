@@ -83,6 +83,25 @@ pub async fn metrics_system(
                         }
                     }
 
+                },
+                AppMetricsEvent::RouteEvent(data) => {
+                    let formatted_data = format!("route_event,host={} route={},method={},status_code={},request={}u,response={}u,latency={}u {}",
+                        app_metrics.hostname,
+                        data.route,
+                        data.method,
+                        data.status_code,
+                        data.request,
+                        data.response,
+                        data.latency,
+                        data.ts_ns
+                    );
+                    match app_metrics.send_data_to_influxdb(formatted_data).await {
+                        Ok(_) => {
+                        },
+                        Err(e) => {
+                            tracing::error!(target: "server_log", "Failed to send metrics data to influxdb.\nError: {:?}", e);
+                        }
+                    }
                 }
             }
         }

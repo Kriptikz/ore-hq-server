@@ -8,6 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use app_metrics::MetricsRouteEventData;
 use ore_boost_api::state::{boost_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
@@ -1161,6 +1162,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(app_cache_last_challenge_submissions))
         .layer(Extension(app_cache_challenges))
         .layer(Extension(app_cache_latest_blockhash_cache))
+        .layer(Extension(metrics_message_sender))
         // Logging
         .layer(
             TraceLayer::new_for_http()
@@ -1210,10 +1212,35 @@ async fn get_pool_fee_payer_pubkey(
 
 async fn get_latest_blockhash(
     Extension(app_cached_latest_blockhash): Extension<Arc<RwLock<LatestBlockhashCache>>>,
+    Extension(app_metrics_channel): Extension<UnboundedSender<AppMetricsEvent>>,
 ) -> impl IntoResponse {
+    let metrics_start = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
     let reader = app_cached_latest_blockhash.read().await;
     let encoded_blockhash = reader.item.clone();
     drop(reader);
+
+    let metrics_end = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
+    let metrics_data = MetricsRouteEventData {
+        route: "latest-blockhash".to_string(),
+        method: "GET".to_string(),
+        status_code: 200,
+        request: metrics_start,
+        response: metrics_end,
+        latency: metrics_end - metrics_start,
+        ts_ns: metrics_end,
+
+    };
+    if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+        tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+    };
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/text")

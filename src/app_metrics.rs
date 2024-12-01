@@ -21,10 +21,22 @@ pub struct MetricsProcessingClaimsEventData {
 }
 
 #[derive(Debug)]
+pub struct MetricsRouteEventData {
+    pub route: String,
+    pub method: String,
+    pub status_code: u32,
+    pub request: u128,
+    pub response: u128,
+    pub latency: u128,
+    pub ts_ns: u128,
+}
+
+#[derive(Debug)]
 pub enum AppMetricsEvent {
     MineEvent(MineEventWithBoosts),
     ClaimEvent(MetricsClaimEventData),
     ProcessingClaimsEvent(MetricsProcessingClaimsEventData),
+    RouteEvent(MetricsRouteEventData),
 }
 
 pub struct AppMetrics {
