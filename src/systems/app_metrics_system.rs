@@ -97,6 +97,7 @@ pub async fn metrics_system(
                     );
                     match app_metrics.send_data_to_influxdb(formatted_data).await {
                         Ok(_) => {
+                            tracing::info!(target: "server_log", "Successfully sent RouteEvent metrics data");
                         },
                         Err(e) => {
                             tracing::error!(target: "server_log", "Failed to send metrics data to influxdb.\nError: {:?}", e);
