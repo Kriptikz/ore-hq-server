@@ -1461,7 +1461,13 @@ struct PubkeyParam {
 async fn get_miner_rewards(
     query_params: Query<PubkeyParam>,
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
+    Extension(app_metrics_channel): Extension<UnboundedSender<AppMetricsEvent>>,
 ) -> impl IntoResponse {
+    let metrics_start = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
     if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
         let res = app_rr_database
             .get_miner_rewards(user_pubkey.to_string())
@@ -1472,6 +1478,24 @@ async fn get_miner_rewards(
                 let decimal_bal =
                     rewards.balance as f64 / 10f64.powf(ore_api::consts::TOKEN_DECIMALS as f64);
                 let response = format!("{}", decimal_bal);
+                let metrics_end = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis();
+
+                let metrics_data = MetricsRouteEventData {
+                    route: "miner/rewards".to_string(),
+                    method: "GET".to_string(),
+                    status_code: 200,
+                    request: metrics_start,
+                    response: metrics_end,
+                    latency: metrics_end - metrics_start,
+                    ts_ns: metrics_end,
+
+                };
+                if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                    tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+                };
                 return Response::builder()
                     .status(StatusCode::OK)
                     .body(response)
@@ -1479,6 +1503,24 @@ async fn get_miner_rewards(
             }
             Err(_) => {
                 error!(target: "server_log", "get_miner_rewards: failed to get rewards balance from db for {}", user_pubkey.to_string());
+                let metrics_end = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis();
+
+                let metrics_data = MetricsRouteEventData {
+                    route: "miner/rewards".to_string(),
+                    method: "GET".to_string(),
+                    status_code: 500,
+                    request: metrics_start,
+                    response: metrics_end,
+                    latency: metrics_end - metrics_start,
+                    ts_ns: metrics_end,
+
+                };
+                if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                    tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+                };
                 return Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body("Failed to get balance".to_string())
@@ -1486,6 +1528,24 @@ async fn get_miner_rewards(
             }
         }
     } else {
+        let metrics_end = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
+        let metrics_data = MetricsRouteEventData {
+            route: "miner/rewards".to_string(),
+            method: "GET".to_string(),
+            status_code: 400,
+            request: metrics_start,
+            response: metrics_end,
+            latency: metrics_end - metrics_start,
+            ts_ns: metrics_end,
+
+        };
+        if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+            tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+        };
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid public key".to_string())
@@ -1496,11 +1556,34 @@ async fn get_miner_rewards(
 async fn get_last_challenge_submissions(
     Extension(app_config): Extension<Arc<Config>>,
     Extension(app_cache_last_challenge_submissions): Extension<Arc<RwLock<LastChallengeSubmissionsCache>>>,
+    Extension(app_metrics_channel): Extension<UnboundedSender<AppMetricsEvent>>,
 ) -> Result<Json<Vec<SubmissionWithPubkey>>, String> {
     if app_config.stats_enabled {
+        let metrics_start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
         let reader = app_cache_last_challenge_submissions.read().await;
         let cached_boost_multiplier = reader.clone();
         drop(reader);
+        let metrics_end = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
+        let metrics_data = MetricsRouteEventData {
+            route: "last-challenge-submissions".to_string(),
+            method: "GET".to_string(),
+            status_code: 200,
+            request: metrics_start,
+            response: metrics_end,
+            latency: metrics_end - metrics_start,
+            ts_ns: metrics_end,
+
+        };
+        if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+            tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+        };
         return Ok(Json(cached_boost_multiplier.item));
     } else {
         return Err("Stats not enabled for this server.".to_string());
@@ -1516,21 +1599,104 @@ async fn get_miner_submissions(
     query_params: Query<GetSubmissionsParams>,
     Extension(app_rr_database): Extension<Arc<AppRRDatabase>>,
     Extension(app_config): Extension<Arc<Config>>,
+    Extension(app_metrics_channel): Extension<UnboundedSender<AppMetricsEvent>>,
 ) -> Result<Json<Vec<Submission>>, String> {
+    let metrics_start = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
     if app_config.stats_enabled {
+
         if let Ok(user_pubkey) = Pubkey::from_str(&query_params.pubkey) {
             let res = app_rr_database
                 .get_miner_submissions(user_pubkey.to_string())
                 .await;
 
             match res {
-                Ok(submissions) => Ok(Json(submissions)),
-                Err(_) => Err("Failed to get submissions for miner".to_string()),
+                Ok(submissions) => {
+                    let metrics_end = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards")
+                        .as_millis();
+
+                    let metrics_data = MetricsRouteEventData {
+                        route: "miner/submissions".to_string(),
+                        method: "GET".to_string(),
+                        status_code: 200,
+                        request: metrics_start,
+                        response: metrics_end,
+                        latency: metrics_end - metrics_start,
+                        ts_ns: metrics_end,
+
+                    };
+                    if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                        tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+                    };
+                    Ok(Json(submissions))
+                },
+                Err(_) => {
+                let metrics_end = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis();
+
+                let metrics_data = MetricsRouteEventData {
+                    route: "miner/submissions".to_string(),
+                    method: "GET".to_string(),
+                    status_code: 500,
+                    request: metrics_start,
+                    response: metrics_end,
+                    latency: metrics_end - metrics_start,
+                    ts_ns: metrics_end,
+
+                };
+                if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                    tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+                };
+                    Err("Failed to get submissions for miner".to_string())
+                },
             }
         } else {
+            let metrics_end = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_millis();
+
+            let metrics_data = MetricsRouteEventData {
+                route: "miner/submissions".to_string(),
+                method: "GET".to_string(),
+                status_code: 400,
+                request: metrics_start,
+                response: metrics_end,
+                latency: metrics_end - metrics_start,
+                ts_ns: metrics_end,
+
+            };
+            if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+            };
             Err("Invalid public key".to_string())
         }
     } else {
+        let metrics_end = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
+        let metrics_data = MetricsRouteEventData {
+            route: "miner/submissions".to_string(),
+            method: "GET".to_string(),
+            status_code: 400,
+            request: metrics_start,
+            response: metrics_end,
+            latency: metrics_end - metrics_start,
+            ts_ns: metrics_end,
+
+        };
+        if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+            tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
+        };
         return Err("Stats not enabled for this server.".to_string());
     }
 }
