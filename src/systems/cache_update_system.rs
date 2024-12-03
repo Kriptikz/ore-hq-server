@@ -24,6 +24,36 @@ pub async fn cache_update_system(
     challenges_cache: Arc<RwLock<ChallengesCache>>,
     latest_blockhash_cache: Arc<RwLock<LatestBlockhashCache>>,
 ) {
+    // Cached LatestBlockhash
+    let cached_item = latest_blockhash_cache.clone();
+    let app_rpc_client = rpc_client.clone();
+    tokio::spawn(async move {
+        let latest_blockhash_cache = cached_item;
+        let rpc_client = app_rpc_client;
+        loop {
+            let lbhash = loop {
+                match rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await {
+                        Ok(lb) => {
+                            tracing::info!(target: "server_log", "Successfully updated latest blockhash");
+                            break lb
+                        },
+                        Err(e) => {
+                            tracing::error!(target: "server_log", "Failed to get latest blockhash in cache system. E: {:?}\n Retrying in 2 secs...", e);
+                            tokio::time::sleep(Duration::from_secs(2000)).await;
+                        }
+                };
+            };
+            let serialized_blockhash = bincode::serialize(&lbhash).unwrap();
+            let encoded_blockhash = BASE64_STANDARD.encode(serialized_blockhash);
+            let mut writer = latest_blockhash_cache.write().await;
+            writer.item = encoded_blockhash.clone();
+            writer.last_updated_at = Instant::now();
+            drop(writer);
+
+            tokio::time::sleep(Duration::from_secs(CACHED_LATEST_BLOCKHASH_UPDATE_INTERVAL)).await;
+        }
+    });
+
     if app_config.stats_enabled {
         // Cached Boost Multiplier
         let bm_cache = boost_multiplier_cache.clone();
@@ -142,38 +172,6 @@ pub async fn cache_update_system(
                 }
 
                 tokio::time::sleep(Duration::from_secs(CACHED_CHALLENGES_UPDATE_INTERVAL)).await;
-            }
-        });
-
-
-        // Cached LatestBlockhash
-        let cached_item = latest_blockhash_cache.clone();
-        let app_rpc_client = rpc_client.clone();
-        tokio::spawn(async move {
-            let latest_blockhash_cache = cached_item;
-            let rpc_client = app_rpc_client;
-            loop {
-                let lbhash;
-                loop {
-                    match rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await {
-                            Ok(lb) => {
-                                lbhash = lb;
-                                break;
-                            },
-                            Err(e) => {
-                                tracing::error!(target: "server_log", "Failed to get latest blockhash in cache system. E: {:?}\n Retrying in 2 secs...", e);
-                                tokio::time::sleep(Duration::from_secs(2000)).await;
-                            }
-                    };
-                }
-                let serialized_blockhash = bincode::serialize(&lbhash).unwrap();
-                let encoded_blockhash = BASE64_STANDARD.encode(serialized_blockhash);
-                let mut writer = latest_blockhash_cache.write().await;
-                writer.item = encoded_blockhash.clone();
-                writer.last_updated_at = Instant::now();
-                drop(writer);
-
-                tokio::time::sleep(Duration::from_secs(CACHED_LATEST_BLOCKHASH_UPDATE_INTERVAL)).await;
             }
         });
     }
