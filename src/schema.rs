@@ -27,7 +27,7 @@ diesel::table! {
 
 diesel::table! {
     earnings (id) {
-        id -> Integer,
+        id -> Bigint,
         miner_id -> Integer,
         pool_id -> Integer,
         challenge_id -> Integer,
