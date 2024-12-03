@@ -436,12 +436,6 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         last_updated_at: Instant::now(),
     }));
 
-
-    let app_cache_boost_multiplier: Arc<RwLock<BoostMultiplierCache>> = Arc::new(RwLock::new(BoostMultiplierCache {
-        item: vec![],
-        last_updated_at: Instant::now(),
-    }));
-
     // load wallet
     let wallet_path = Path::new(&wallet_path_str);
 
