@@ -20,8 +20,8 @@ use crate::{
         ORE_TOKEN_DECIMALS, AppState, ClientVersion, Config, InsertEarning, InsertSubmission, MessageInternalMineSuccess, UpdateReward, UpdateStakeAccountRewards, WalletExtension
 };
 
-pub const ORE_STAKE_PERCENTAGE: u64 = 16;
-pub const ORE_SOL_STAKE_PERCENTAGE: u64 = 24;
+pub const ORE_STAKE_PERCENTAGE: u64 = 22;
+pub const ORE_SOL_STAKE_PERCENTAGE: u64 = 18;
 pub const ORE_ISC_STAKE_PERCENTAGE: u64 = 20;
 pub const TOTAL_STAKER_PERCENTAGE: u64 = ORE_STAKE_PERCENTAGE + ORE_SOL_STAKE_PERCENTAGE + ORE_ISC_STAKE_PERCENTAGE;
 
