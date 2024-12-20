@@ -2490,21 +2490,31 @@ async fn post_unstake(
                     .unwrap();
             }
 
-            let result = rpc_client.send_and_confirm_transaction(&tx).await;
-
-            match result {
+            match send_txn(rpc_client.clone(), &tx).await {
                 Ok(sig) => {
-                    let amount_dec =
-                        query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-                    info!(target: "server_log", "Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .body("SUCCESS".to_string())
-                        .unwrap();
-                }
+                    match confirm_txn(rpc_client, sig).await {
+                        Ok(sig) => {
+                            let amount_dec =
+                                query_params.amount as f64 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
+                            info!(target: "server_log", "Miner {} successfully undelegated stake of {}.\nSig: {}", user_pubkey.to_string(), amount_dec, sig.to_string());
+                            return Response::builder()
+                                .status(StatusCode::OK)
+                                .body("SUCCESS".to_string())
+                                .unwrap();
+                        }
+                        Err(e) => {
+                            error!(target: "server_log", "{} unstake transaction failed...", user_pubkey.to_string());
+                            error!(target: "server_log", "Failed to confirm tx, Error: {:?}", e);
+                            return Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body("Failed to confirm tx".to_string())
+                                .unwrap();
+                        }
+                    }
+                },
                 Err(e) => {
                     error!(target: "server_log", "{} unstake transaction failed...", user_pubkey.to_string());
-                    error!(target: "server_log", "Unstake Tx Error: {:?}", e);
+                    error!(target: "server_log", "Failed to send tx, Error: {:?}", e);
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body("Failed to send tx".to_string())
@@ -3660,6 +3670,53 @@ async fn update_delegate_boost_stake_accounts(
         tracing::info!(target: "server_log", "Successfully updated stake_accounts");
     }
     tracing::info!(target: "server_log", "Updated stake_accounts in {}ms", instant.elapsed().as_millis());
+}
+
+pub async fn send_txn(rpc_client: Arc<RpcClient>, txn: &Transaction) -> Result<Signature, String> {
+    let rpc_config = RpcSendTransactionConfig {
+        preflight_commitment: Some(rpc_client.commitment().commitment),
+        ..RpcSendTransactionConfig::default()
+    };
+
+    match rpc_client
+        .send_transaction_with_config(txn, rpc_config)
+        .await 
+    {
+        Ok(sig) => {
+            return Ok(sig)
+        },
+        Err(e) => {
+            return Err(format!("{:?}", e))
+        }
+    }
+}
+
+pub async fn confirm_txn(rpc_client: Arc<RpcClient>, sig: Signature) -> Result<Signature, String> {
+    let expired_timer = Instant::now();
+    let result: Result<Signature, String> = loop {
+        let elapsed = expired_timer.elapsed().as_secs();
+        if elapsed >= 180 {
+            break Err("Transaction Expired".to_string());
+        }
+        let results = rpc_client.get_signature_statuses(&[sig]).await;
+        if let Ok(response) = results {
+            let statuses = response.value;
+            if let Some(status) = &statuses[0] {
+                if status.confirmation_status()
+                    == TransactionConfirmationStatus::Confirmed
+                {
+                    if status.err.is_some() {
+                        let e_str = format!("Transaction Failed: {:?}", status.err);
+                        break Err(e_str);
+                    }
+                    break Ok(sig);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(5000)).await;
+    };
+
+    result
 }
 
 
