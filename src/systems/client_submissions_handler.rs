@@ -170,8 +170,6 @@ pub async fn client_submissions_handler(
                     }
                     drop(reader);
                 }
-            } else {
-                tracing::error!(target: "server_log", "Diff to low, skipping");
             }
         }
     }
