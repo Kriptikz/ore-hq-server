@@ -152,6 +152,7 @@ pub struct MessageInternalMineSuccess {
     ore_config: Option<ore_api::state::Config>,
     multiplier: f64,
     submissions: HashMap<Pubkey, InternalMessageSubmission>,
+    global_boosts_active: bool,
 }
 
 pub struct LastPong {

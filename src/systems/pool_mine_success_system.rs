@@ -52,7 +52,12 @@ pub async fn pool_mine_success_system(
 
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Processing submission results for challenge: {}.", id, c);
-                let staker_rewards = (msg.rewards as u128).saturating_mul(TOTAL_STAKER_PERCENTAGE as u128).saturating_div(100) as u64;
+                let staker_rewards = if !msg.global_boosts_active {
+                    (msg.rewards as u128).saturating_mul(TOTAL_STAKER_PERCENTAGE as u128).saturating_div(100) as u64
+                } else {
+                    info!(target: "server_log", "{} - Global Boosts Active, Staking rewards are 0", id);
+                    0
+                };
                 let total_rewards = msg.rewards - msg.commissions - staker_rewards;
                 info!(target: "server_log", "{} - Miners Rewards: {}", id, total_rewards);
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
@@ -279,10 +284,13 @@ pub async fn pool_mine_success_system(
                     }
                 }
 
-                info!(target: "server_log", "{} - Processing stakers rewards", id);
-                process_stakers_rewards(msg.rewards, staker_rewards, &app_database, &app_config).await;
-                info!(target: "server_log", "{} - Total Distributed For Miners: {}", id, total_miners_earned_rewards);
-
+                if msg.global_boosts_active {
+                    info!(target: "server_log", "{} - Global Boosts Active, skipping processing of staker rewards.", id);
+                } else {
+                    info!(target: "server_log", "{} - Processing stakers rewards", id);
+                    process_stakers_rewards(msg.rewards, staker_rewards, &app_database, &app_config).await;
+                    info!(target: "server_log", "{} - Total Distributed For Miners: {}", id, total_miners_earned_rewards);
+                }
 
                 info!(target: "server_log", "{} - Finished processing internal mine success for challenge: {}", id, c);
             }
