@@ -67,7 +67,7 @@ pub async fn handle_ready_clients_system(
 
                 if should_mine && !is_window_closed {
                     let r_clients_len = clients.len();
-                    tracing::info!(target: "server_log", "Handling {} ready clients.", r_clients_len);
+                    //tracing::info!(target: "server_log", "Handling {} ready clients.", r_clients_len);
                     let lock = app_proof.lock().await;
                     let latest_proof = lock.clone();
                     drop(lock);
@@ -136,7 +136,7 @@ pub async fn handle_ready_clients_system(
                         // remove ready client from list
                         let _ = ready_clients.lock().await.remove(&client);
                     }
-                    tracing::info!(target: "server_log", "Handled {} ready clients.", r_clients_len);
+                    //tracing::info!(target: "server_log", "Handled {} ready clients.", r_clients_len);
                 }
             }
         } else {
