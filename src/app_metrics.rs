@@ -1,6 +1,6 @@
 use reqwest::Client;
 
-use crate::ore_utils::MineEventWithBoosts;
+use crate::ore_utils::{MineEventWithBoosts, MineEventWithGlobalBoosts};
 
 #[derive(Debug)]
 pub enum AppMetricsError {
@@ -32,8 +32,14 @@ pub struct MetricsRouteEventData {
 }
 
 #[derive(Debug)]
+ pub enum AppMetricsMineEvent {
+    V1(MineEventWithBoosts),
+    V2(MineEventWithGlobalBoosts),
+}
+
+#[derive(Debug)]
 pub enum AppMetricsEvent {
-    MineEvent(MineEventWithBoosts),
+    MineEvent(AppMetricsMineEvent),
     ClaimEvent(MetricsClaimEventData),
     ProcessingClaimsEvent(MetricsProcessingClaimsEventData),
     RouteEvent(MetricsRouteEventData),
