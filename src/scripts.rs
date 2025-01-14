@@ -199,5 +199,33 @@ pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub async fn db_submissions_cleanup() -> Result<(), Box<dyn std::error::Error>> {
+    let interval_secs = 30;
+    println!("Starting db submissions cleaup script.");
+    println!("Submissions over 7 days old will be cleared every {} seconds.", interval_secs);
+
+    // load envs
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
+
+    let app_database = Arc::new(AppDatabase::new(database_url));
+
+    loop {
+        let time = Instant::now();
+        println!("Starting submissions cleanup.");
+        match app_database.delete_old_submissions().await {
+            Ok(_) => {
+
+                println!("Successfully ran submissions cleanup in {}ms", time.elapsed().as_millis());
+            },
+            Err(e) => {
+                println!("Error cleaning up submissions.\nError: {:?}", e);
+            }
+        }
+
+        println!("Next cleanup in {} seconds.", interval_secs);
+        tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
 
 

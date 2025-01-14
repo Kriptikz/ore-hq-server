@@ -266,6 +266,8 @@ enum Commands {
     Serve(ServeArgs),
     #[command(about = "Manually run the update for stake accounts balances from on-chain")]
     UpdateStakeAccounts,
+    #[command(about = "Start the db submissions cleanup script.")]
+    DbSubmissionsCleanup,
 }
 
 #[tokio::main]
@@ -309,6 +311,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::UpdateStakeAccounts => {
             scripts::update_stake_accounts().await
+        }
+        Commands::DbSubmissionsCleanup => {
+            scripts::db_submissions_cleanup().await
         }
     }
 }

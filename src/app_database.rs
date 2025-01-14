@@ -1151,4 +1151,33 @@ impl AppDatabase {
             return Err(AppDatabaseError::FailedToGetConnectionFromPool);
         };
     }
+     
+    pub async fn delete_old_submissions(&self) -> Result<(), AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("DELETE FROM submissions WHERE created_at < NOW() - INTERVAL 7 DAY LIMIT 50000")
+                        .execute(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(_query) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
 }
