@@ -200,9 +200,9 @@ pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn db_submissions_cleanup() -> Result<(), Box<dyn std::error::Error>> {
-    let interval_secs = 30;
+    let sleep_secs = 10;
     println!("Starting db submissions cleaup script.");
-    println!("Submissions over 7 days old will be cleared every {} seconds.", interval_secs);
+    println!("Submissions over 7 days old will be cleared every {} seconds.", sleep_secs);
 
     // load envs
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set.");
@@ -222,8 +222,8 @@ pub async fn db_submissions_cleanup() -> Result<(), Box<dyn std::error::Error>> 
             }
         }
 
-        println!("Next cleanup in {} seconds.", interval_secs);
-        tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+        println!("Next cleanup in {} seconds.", sleep_secs);
+        tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
     }
 }
 
