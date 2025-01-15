@@ -1156,7 +1156,7 @@ impl AppDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("DELETE FROM submissions WHERE created_at < NOW() - INTERVAL 7 DAY LIMIT 50000")
+                    diesel::sql_query("DELETE FROM submissions WHERE created_at < NOW() - INTERVAL 7 DAY LIMIT 100000")
                         .execute(conn)
                 })
                 .await;
