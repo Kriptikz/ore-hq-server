@@ -61,12 +61,12 @@ pub fn get_mine_ix_with_boosts(signer: Pubkey, solution: Solution, bus: usize, b
     let managed_proof_account = managed_proof_pda(signer);
     let mut boosts = Vec::new();
 
-    for boost_mint in boost_mints {
-        let boost_account = boost_pda(boost_mint);
-        let boost_stake = stake_pda(managed_proof_account.0, boost_account.0);
-        boosts.push(boost_account.0);
-        boosts.push(boost_stake.0);
-    }
+    // for boost_mint in boost_mints {
+    //     let boost_account = boost_pda(boost_mint);
+    //     let boost_stake = stake_pda(managed_proof_account.0, boost_account.0);
+    //     boosts.push(boost_account.0);
+    //     boosts.push(boost_stake.0);
+    // }
 
     instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boosts)
 }
