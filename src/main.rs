@@ -9,7 +9,7 @@ use std::{
 };
 
 use app_metrics::MetricsRouteEventData;
-use ore_boost_api::state::{boost_pda, stake_pda};
+use ore_boost_api::state::{boost_pda, reservation_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
 use steel::AccountDeserialize as _;
@@ -21,7 +21,7 @@ use systems::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
-    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
+    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda, proof_pubkey}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
 };
 
 use self::models::*;
@@ -771,6 +771,48 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => {
                         error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
                         panic!("Failed to create managed proof boost stake account for {}", boost_mint.to_string());
+                    }
+                }
+            }
+        }
+
+
+        info!(target: "server_log", "Getting managed proof, ore Proof account.");
+        let proof_address = proof_pubkey(managed_proof.0);
+
+        let pool_boost_reservation_acc = reservation_pda(managed_proof.0);
+        match rpc_client.get_account(&pool_boost_reservation_acc.0).await {
+            Ok(_) => {
+                info!(target: "server_log", "Pool boost reservation acc already exists. Continuing...");
+            }
+            Err(_e) => {
+                error!(target: "server_log", "Failed to get pool boost reservation account. Creating boost reservation account...");
+                let ix = ore_boost_api::sdk::register(wallet.pubkey(), wallet.pubkey(), proof_address);
+
+                let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+                let blockhash = rpc_client
+                    .get_latest_blockhash()
+                    .await
+                    .expect("should get latest blockhash");
+
+                tx.sign(&[&wallet], blockhash);
+
+                match rpc_client
+                    .send_and_confirm_transaction_with_spinner_and_commitment(
+                        &tx,
+                        CommitmentConfig {
+        commitment: CommitmentLevel::Confirmed,
+                        },
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(target: "server_log", "Successfully created boost reservation account: {}", pool_boost_reservation_acc.0.to_string());
+                    }
+                    Err(e) => {
+                        error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+                        panic!("Failed to create boost reservation account.");
                     }
                 }
             }
