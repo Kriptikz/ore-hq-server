@@ -376,12 +376,6 @@ pub async fn get_pool_boost_stake(rpc_client: &RpcClient, authority: Pubkey) -> 
     let mut stake_acct = vec![];
     if let Ok(accounts) = rpc_client.get_multiple_accounts(&boost_stake_acct_pdas).await {
         for account in accounts {
-            if let Some(acc) = account {
-                if let Ok(a) = ore_boost_api::state::Stake::try_from_bytes(&acc.data) {
-                    stake_acct.push(a.clone());
-                    continue;
-                }
-            }
         }
     } else {
         tracing::error!(target: "server_log", "Failed to get pool boost accounts.")
