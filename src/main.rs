@@ -736,47 +736,6 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let boost_acc = boost_pda(boost_mint);
-        let pool_boost_stake_acc = stake_pda(managed_proof.0, boost_acc.0);
-        match rpc_client.get_account(&pool_boost_stake_acc.0).await {
-            Ok(_) => {
-                info!(target: "server_log", "Managed proof boost stake account for {} already exists", boost_mint.to_string());
-            }
-            Err(_e) => {
-                error!(target: "server_log", "Failed to get managed proof boost stake account for {}", boost_mint.to_string());
-                info!(target: "server_log", "Creating managed proof boost stake account for {}", boost_mint.to_string());
-                let ix = ore_miner_delegation::instruction::open_managed_proof_boost(wallet.pubkey(), boost_mint);
-
-                let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
-
-                let blockhash = rpc_client
-                    .get_latest_blockhash()
-                    .await
-                    .expect("should get latest blockhash");
-
-                tx.sign(&[&wallet], blockhash);
-
-                match rpc_client
-                    .send_and_confirm_transaction_with_spinner_and_commitment(
-                        &tx,
-                        CommitmentConfig {
-        commitment: CommitmentLevel::Confirmed,
-                        },
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        info!(target: "server_log", "Successfully created managed proof boost stake account for {}", boost_mint.to_string());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-                        panic!("Failed to create managed proof boost stake account for {}", boost_mint.to_string());
-                    }
-                }
-            }
-        }
-
-
         info!(target: "server_log", "Getting managed proof, ore Proof account.");
         let proof_address = proof_pubkey(managed_proof.0);
 
