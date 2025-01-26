@@ -1,5 +1,5 @@
+use ore_boost_api::state::reservation_pda;
 use rand::seq::SliceRandom;
-use steel::AccountDeserialize as _;
 use std::{
     collections::HashMap,
     ops::{Mul, Range},
@@ -7,12 +7,11 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use ore_boost_api::state::{boost_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
-use crate::app_metrics::{AppMetricsEvent, AppMetricsMineEvent};
+use crate::{app_metrics::{AppMetricsEvent, AppMetricsMineEvent}, global_boost_util::{get_proof_and_config_with_busses, get_reservation}, ore_utils::{get_proof_pda, get_rotate_ix}};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
-use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
+use ore_api::{consts::BUS_COUNT, event::MineEvent, state::{Proof, proof_pda}};
 use rand::Rng;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
@@ -37,7 +36,7 @@ use tracing::info;
 
 use crate::{
     app_database::AppDatabase, ore_utils::{
-        get_auth_ix, get_cutoff, get_mine_ix_with_boosts, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, MineEventWithGlobalBoosts, ORE_TOKEN_DECIMALS
+        get_auth_ix, get_cutoff, get_mine_with_global_boost_ix, get_reset_ix, MineEventWithBoosts, MineEventWithGlobalBoosts, ORE_TOKEN_DECIMALS
     }, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
 };
 
@@ -129,11 +128,11 @@ pub async fn pool_submission_system(
                             text: String::from("Server is sending mine transaction..."),
                         });
 
-                        let mut cu_limit = 495_000;
+                        let mut cu_limit = 515_000;
                         let should_add_reset_ix = if let Some(config) = loaded_config {
                             let time_until_reset = (config.last_reset_at + 300) - now as i64;
                             if time_until_reset <= 5 {
-                                cu_limit = 550_000;
+                                cu_limit = 570_000;
                                 prio_fee += 50_000;
                                 info!(target: "server_log", "Including reset tx.");
                                 true
@@ -189,14 +188,23 @@ pub async fn pool_submission_system(
                             ixs.push(reset_ix);
                         }
 
-                        let boost_mints = vec![
-                            Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-                            Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-                            Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-                        ];
-
-                        let ix_mine = get_mine_ix_with_boosts(signer.pubkey(), best_solution, bus, boost_mints);
+                        // Check for reservation, add if available.
+                        let mut boost_accounts: Option<[Pubkey; 3]> = None;
+                        let proof_key = get_proof_pda(signer.pubkey());
+                        let reservation_key = reservation_pda(proof_key);
+                        if let Ok(reservation) = get_reservation(&rpc_client, get_proof_pda(signer.pubkey())).await {
+                            info!(target: "server_log", "Reservation: {:?}", reservation);
+                            if reservation.boost != Pubkey::default() {
+                                boost_accounts = Some([reservation.boost, proof_pda(reservation.boost).0, reservation_key.0]);
+                            }
+                        } else {
+                            println!("Failed to get reservation account from rpc...");
+                            info!(target: "server_log", "Failed to get reservation, skipping.");
+                        }
+                        let ix_mine = get_mine_with_global_boost_ix(signer.pubkey(), best_solution, bus, boost_accounts);
                         ixs.push(ix_mine);
+                        let ix_rotate = get_rotate_ix(signer.pubkey());
+                        ixs.push(ix_rotate);
 
                         if let Ok((hash, _slot)) = rpc_client
                             .get_latest_blockhash_with_commitment(rpc_client.commitment())
@@ -322,7 +330,7 @@ pub async fn pool_submission_system(
 
                                         if old_proof.challenge.eq(&latest_proof.challenge) {
                                             info!(target: "server_log", "Proof challenge not updated yet..");
-                                            if let Ok(p) = get_proof(
+                                            if let Ok(p) = crate::global_boost_util::get_proof(
                                                 &app_rpc_client,
                                                 app_wallet.miner_wallet.pubkey(),
                                             )
@@ -491,6 +499,7 @@ pub async fn pool_submission_system(
                                 return;
                             });
 
+                            info!(target: "server_log", "SIG: {}", signature.to_string());
                             let result: Result<Signature, String> = loop {
                                 if expired_timer.elapsed().as_secs() >= 200 {
                                     break Err("Transaction Expired".to_string());
@@ -726,7 +735,7 @@ pub async fn pool_submission_system(
 
                                         if old_proof.challenge.eq(&latest_proof.challenge) {
                                             info!(target: "server_log", "Proof challenge not updated yet..");
-                                            if let Ok(p) = get_proof(
+                                            if let Ok(p) = crate::global_boost_util::get_proof(
                                                 &rpc_client,
                                                 app_wallet.miner_wallet.pubkey(),
                                             )
@@ -956,3 +965,4 @@ pub async fn pool_submission_system(
         };
     }
 }
+
