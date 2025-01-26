@@ -1,5 +1,5 @@
+use ore_boost_api::state::reservation_pda;
 use rand::seq::SliceRandom;
-use steel::AccountDeserialize as _;
 use std::{
     collections::HashMap,
     ops::{Mul, Range},
@@ -7,12 +7,11 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use ore_boost_api::state::{boost_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
-use crate::app_metrics::{AppMetricsEvent, AppMetricsMineEvent};
+use crate::{app_metrics::{AppMetricsEvent, AppMetricsMineEvent}, global_boost_util::{get_proof_and_config_with_busses, get_reservation}, ore_utils::{get_proof_pda, get_rotate_ix}};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
-use ore_api::{consts::BUS_COUNT, event::MineEvent, state::Proof};
+use ore_api::{consts::BUS_COUNT, event::MineEvent, state::{Proof, proof_pda}};
 use rand::Rng;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
@@ -37,7 +36,7 @@ use tracing::info;
 
 use crate::{
     app_database::AppDatabase, ore_utils::{
-        get_auth_ix, get_cutoff, get_mine_ix_with_boosts, get_proof, get_proof_and_config_with_busses, get_reset_ix, MineEventWithBoosts, MineEventWithGlobalBoosts, ORE_TOKEN_DECIMALS
+        get_auth_ix, get_cutoff, get_mine_with_global_boost_ix, get_reset_ix, MineEventWithBoosts, MineEventWithGlobalBoosts, ORE_TOKEN_DECIMALS
     }, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
 };
 
@@ -129,11 +128,11 @@ pub async fn pool_submission_system(
                             text: String::from("Server is sending mine transaction..."),
                         });
 
-                        let mut cu_limit = 495_000;
+                        let mut cu_limit = 515_000;
                         let should_add_reset_ix = if let Some(config) = loaded_config {
                             let time_until_reset = (config.last_reset_at + 300) - now as i64;
                             if time_until_reset <= 5 {
-                                cu_limit = 550_000;
+                                cu_limit = 570_000;
                                 prio_fee += 50_000;
                                 info!(target: "server_log", "Including reset tx.");
                                 true
@@ -189,14 +188,23 @@ pub async fn pool_submission_system(
                             ixs.push(reset_ix);
                         }
 
-                        let boost_mints = vec![
-                            Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-                            Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-                            Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-                        ];
-
-                        let ix_mine = get_mine_ix_with_boosts(signer.pubkey(), best_solution, bus, boost_mints);
+                        // Check for reservation, add if available.
+                        let mut boost_accounts: Option<[Pubkey; 3]> = None;
+                        let proof_key = get_proof_pda(signer.pubkey());
+                        let reservation_key = reservation_pda(proof_key);
+                        if let Ok(reservation) = get_reservation(&rpc_client, get_proof_pda(signer.pubkey())).await {
+                            info!(target: "server_log", "Reservation: {:?}", reservation);
+                            if reservation.boost != Pubkey::default() {
+                                boost_accounts = Some([reservation.boost, proof_pda(reservation.boost).0, reservation_key.0]);
+                            }
+                        } else {
+                            println!("Failed to get reservation account from rpc...");
+                            info!(target: "server_log", "Failed to get reservation, skipping.");
+                        }
+                        let ix_mine = get_mine_with_global_boost_ix(signer.pubkey(), best_solution, bus, boost_accounts);
                         ixs.push(ix_mine);
+                        let ix_rotate = get_rotate_ix(signer.pubkey());
+                        ixs.push(ix_rotate);
 
                         if let Ok((hash, _slot)) = rpc_client
                             .get_latest_blockhash_with_commitment(rpc_client.commitment())
@@ -322,7 +330,7 @@ pub async fn pool_submission_system(
 
                                         if old_proof.challenge.eq(&latest_proof.challenge) {
                                             info!(target: "server_log", "Proof challenge not updated yet..");
-                                            if let Ok(p) = get_proof(
+                                            if let Ok(p) = crate::global_boost_util::get_proof(
                                                 &app_rpc_client,
                                                 app_wallet.miner_wallet.pubkey(),
                                             )
@@ -491,6 +499,7 @@ pub async fn pool_submission_system(
                                 return;
                             });
 
+                            info!(target: "server_log", "SIG: {}", signature.to_string());
                             let result: Result<Signature, String> = loop {
                                 if expired_timer.elapsed().as_secs() >= 200 {
                                     break Err("Transaction Expired".to_string());
@@ -553,7 +562,7 @@ pub async fn pool_submission_system(
                                         let mine_success_sender = app_mine_success_sender;
                                         let app_proof = app_app_proof;
                                         let app_config = app_app_config;
-                                        let app_wallet = app_app_wallet;
+                                        //let app_wallet = app_app_wallet;
                                         let app_metrics_sender = app_metrics;
                                         loop {
                                             if let Ok(txn_result) = rpc_client
@@ -573,19 +582,39 @@ pub async fn pool_submission_system(
                                                     .transaction
                                                     .meta
                                                     .unwrap()
-                                                    .return_data;
+                                                    .log_messages;
 
                                                 match data {
                                                     solana_transaction_status::option_serializer::OptionSerializer::Some(data) => {
-                                                        let bytes = BASE64_STANDARD.decode(data.data.0).unwrap();
+                                                    let prefix = format!("Program return: {} ", ore_miner_delegation::ID.to_string());
+                                                    let mut mine_event_str = "";
+                                                    for log_message in data.iter().rev() {
+                                                        if log_message.starts_with(&prefix) {
+                                                            mine_event_str = log_message.trim_start_matches(&prefix);
+                                                            break;
+                                                        }
+                                                    }
+                                                    if mine_event_str.is_empty() {
+                                                        tracing::error!(target: "server_log", "tx sig result missing return data");
+                                                    }
 
-                                                        if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEvent>(&bytes) {
-                                                            info!(target: "server_log", "MineEvent: {:?}", mine_event);
+                                                    // Parse return data 
+                                                    let bytes = BASE64_STANDARD.decode(mine_event_str).unwrap();
+
+                                                        if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEventWithGlobalBoosts>(&bytes) {
+                                                            info!(target: "server_log", "MineEvent Global Boosts: {:?}", mine_event);
                                                             //info!(target: "submission_log", "MineEvent: {:?}", mine_event);
-                                                            info!(target: "server_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
+                                                            let encoded_challenge = BASE64_STANDARD.encode(old_proof.challenge);
+                                                            info!(target: "server_log", "For Challenge: {:?}", encoded_challenge);
+                                                            match app_metrics_sender.send(AppMetricsEvent::MineEvent(AppMetricsMineEvent::V2(*mine_event))) {
+                                                                Ok(_) => {}
+                                                                Err(_) => {
+                                                                    tracing::error!(target: "server_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
+                                                                }
+                                                            }
                                                             //info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                            let full_rewards = mine_event.reward;
-                                                            let commissions = (full_rewards as u128).saturating_mul(5).saturating_div(100) as u64;
+                                                            let full_rewards = mine_event.net_base_reward.checked_add(mine_event.net_miner_boost_reward).unwrap();
+                                                            let commissions = full_rewards.mul(5).saturating_div(100);
 
                                                             // handle sending mine success message
                                                             let mut total_hashpower: u64 = 0;
@@ -629,7 +658,6 @@ pub async fn pool_submission_system(
                                                                     tokio::time::sleep(Duration::from_millis(1000)).await;
                                                                 }
                                                             }
-
                                                             // Insert commissions earning
                                                             let commissions_earning = vec![
                                                                 InsertEarning {
@@ -661,55 +689,12 @@ pub async fn pool_submission_system(
                                                             tracing::info!(target: "server_log", "Updated commissions rewards");
                                                             tokio::time::sleep(Duration::from_millis(200)).await;
 
+                                                            tokio::time::sleep(Duration::from_millis(1000)).await;
                                                             let latest_proof = { app_proof.lock().await.clone() };
                                                             let balance = (latest_proof.balance as f64)
                                                                 / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
 
-                                                            let boost_mints = vec![
-                                                                Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-                                                                Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-                                                                Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-                                                            ];
-
-                                                            // Get pools boost stake accounts
-                                                            let mut boost_stake_acct_pdas = vec![];
-                                                            let mut boost_acct_pdas = vec![];
-
-                                                            let managed_proof = managed_proof_pda(app_wallet.miner_wallet.pubkey());
-                                                            for boost_mint in boost_mints {
-                                                                let boost_account_pda = boost_pda(boost_mint);
-                                                                let boost_stake_pda = stake_pda(managed_proof.0, boost_account_pda.0);
-                                                                boost_stake_acct_pdas.push(boost_stake_pda.0);
-                                                                boost_acct_pdas.push(boost_account_pda.0);
-                                                            }
-
-                                                            let mut stake_acct = vec![];
-                                                            let mut boost_acct = vec![];
-                                                            if let Ok(accounts) = rpc_client.get_multiple_accounts(&[boost_stake_acct_pdas, boost_acct_pdas].concat()).await {
-                                                                tracing::info!(target: "server_log", "Got {} accounts", accounts.len());
-                                                                for account in accounts {
-                                                                    if let Some(acc) = account {
-                                                                        if let Ok(a) = ore_boost_api::state::Stake::try_from_bytes(&acc.data) {
-                                                                            tracing::info!(target: "server_log", "Boost stake account: {:?}", a);
-                                                                            stake_acct.push(a.clone());
-                                                                            continue;
-                                                                        }
-                                                                        if let Ok(a) = ore_boost_api::state::Boost::try_from_bytes(&acc.data) {
-                                                                            tracing::info!(target: "server_log", "Boost account: {:?}", a);
-                                                                            boost_acct.push(a.clone());
-                                                                            continue;
-                                                                        }
-                                                                    }
-                                                                }
-                                                            } else {
-                                                                tracing::error!(target: "server_log", "Failed to get accounts.")
-                                                            }
-                                                            let mut multiplier = 0.0f64;
-                                                            for (index,stake_a) in stake_acct.iter().enumerate() {
-                                                                let boost_multiplier = boost_acct[index].multiplier as f64 * (stake_a.balance as f64 / boost_acct[index].total_stake as f64);
-                                                                info!(target: "server_log", "Multiplier {}: {}", boost_acct[index].mint, boost_multiplier);
-                                                                multiplier += boost_multiplier
-                                                            }
+                                                            let multiplier = 0.0f64;
 
                                                             info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
                                                             let _ = mine_success_sender.send(
@@ -725,173 +710,13 @@ pub async fn pool_submission_system(
                                                                     ore_config: loaded_config,
                                                                     multiplier,
                                                                     submissions,
-                                                                    global_boosts_active: false,
+                                                                    global_boosts_active: true,
                                                                 },
                                                             );
                                                             tokio::time::sleep(Duration::from_millis(200)).await;
                                                         } else {
-                                                            if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEventWithGlobalBoosts>(&bytes) {
-                                                                info!(target: "server_log", "MineEvent Global Boosts: {:?}", mine_event);
-                                                                //info!(target: "submission_log", "MineEvent: {:?}", mine_event);
-                                                                let encoded_challenge = BASE64_STANDARD.encode(old_proof.challenge);
-                                                                info!(target: "server_log", "For Challenge: {:?}", encoded_challenge);
-                                                                match app_metrics_sender.send(AppMetricsEvent::MineEvent(AppMetricsMineEvent::V2(*mine_event))) {
-                                                                    Ok(_) => {}
-                                                                    Err(_) => {
-                                                                        tracing::error!(target: "server_log", "Failed to send AppMetricsEvent down app_metrics_sender mpsc channel.");
-                                                                    }
-                                                                }
-                                                                //info!(target: "submission_log", "For Challenge: {:?}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                                let full_rewards = mine_event.net_base_reward.checked_add(mine_event.net_miner_boost_reward).unwrap();
-                                                                let commissions = full_rewards.mul(5).saturating_div(100);
-
-                                                                // handle sending mine success message
-                                                                let mut total_hashpower: u64 = 0;
-                                                                for submission in submissions.iter() {
-                                                                    total_hashpower += submission.1.hashpower
-                                                                }
-                                                                let challenge;
-                                                                loop {
-                                                                    if let Ok(c) = app_database
-                                                                        .get_challenge_by_challenge(
-                                                                            old_proof.challenge.to_vec(),
-                                                                        )
-                                                                        .await
-                                                                    {
-                                                                        challenge = c;
-                                                                        break;
-                                                                    } else {
-                                                                        tracing::error!(target: "server_log", 
-                                                                            "Failed to get challenge by challenge! Inserting if necessary..."
-                                                                        );
-                                                                        let new_challenge = InsertChallenge {
-                                                                            pool_id: app_config.pool_id,
-                                                                            challenge: old_proof.challenge.to_vec(),
-                                                                            rewards_earned: None,
-                                                                        };
-                                                                        while let Err(_) = app_database
-                                                                            .add_new_challenge(new_challenge.clone())
-                                                                            .await
-                                                                        {
-                                                                            tracing::error!(target: "server_log", "Failed to add new challenge to db.");
-                                                                            info!(target: "server_log", "Verifying challenge does not already exist.");
-                                                                            if let Ok(_) = app_database.get_challenge_by_challenge(new_challenge.challenge.clone()).await {
-                                                                                info!(target: "server_log", "Challenge already exists, continuing");
-                                                                                break;
-                                                                            }
-
-                                                                            tokio::time::sleep(Duration::from_millis(1000))
-                                                                                .await;
-                                                                        }
-                                                                        info!(target: "server_log", "New challenge successfully added to db");
-                                                                        tokio::time::sleep(Duration::from_millis(1000)).await;
-                                                                    }
-                                                                }
-                                                                // Insert commissions earning
-                                                                let commissions_earning = vec![
-                                                                    InsertEarning {
-                                                                        miner_id: app_config.commissions_miner_id,
-                                                                        pool_id: app_config.pool_id,
-                                                                        challenge_id: challenge.id,
-                                                                        amount: commissions,
-                                                                    }
-                                                                ];
-                                                                tracing::info!(target: "server_log", "Inserting commissions earning");
-                                                                while let Err(_) =
-                                                                    app_database.add_new_earnings_batch(commissions_earning.clone()).await
-                                                                {
-                                                                    tracing::error!(target: "server_log", "Failed to add commmissions earning... retrying...");
-                                                                    tokio::time::sleep(Duration::from_millis(500)).await;
-                                                                }
-                                                                tracing::info!(target: "server_log", "Inserted commissions earning");
-
-                                                                let new_commission_rewards = vec![UpdateReward {
-                                                                    miner_id: app_config.commissions_miner_id,
-                                                                    balance: commissions,
-                                                                }];
-
-                                                                tracing::info!(target: "server_log", "Updating commissions rewards...");
-                                                                while let Err(_) = app_database.update_rewards(new_commission_rewards.clone()).await {
-                                                                    tracing::error!(target: "server_log", "Failed to update commission rewards in db. Retrying...");
-                                                                    tokio::time::sleep(Duration::from_millis(500)).await;
-                                                                }
-                                                                tracing::info!(target: "server_log", "Updated commissions rewards");
-                                                                tokio::time::sleep(Duration::from_millis(200)).await;
-
-                                                                tokio::time::sleep(Duration::from_millis(1000)).await;
-                                                                let latest_proof = { app_proof.lock().await.clone() };
-                                                                let balance = (latest_proof.balance as f64)
-                                                                    / 10f64.powf(ORE_TOKEN_DECIMALS as f64);
-
-
-                                                                let boost_mints = vec![
-                                                                    Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-                                                                    Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-                                                                    Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-                                                                ];
-
-                                                                // Get pools boost stake accounts
-                                                                let mut boost_stake_acct_pdas = vec![];
-                                                                let mut boost_acct_pdas = vec![];
-
-                                                                let managed_proof = managed_proof_pda(app_wallet.miner_wallet.pubkey());
-                                                                for boost_mint in boost_mints {
-                                                                    let boost_account_pda = boost_pda(boost_mint);
-                                                                    let boost_stake_pda = stake_pda(managed_proof.0, boost_account_pda.0);
-                                                                    boost_stake_acct_pdas.push(boost_stake_pda.0);
-                                                                    boost_acct_pdas.push(boost_account_pda.0);
-                                                                }
-
-                                                                let mut stake_acct = vec![];
-                                                                let mut boost_acct = vec![];
-                                                                if let Ok(accounts) = rpc_client.get_multiple_accounts(&[boost_stake_acct_pdas, boost_acct_pdas].concat()).await {
-                                                                    tracing::info!(target: "server_log", "Got {} accounts", accounts.len());
-                                                                    for account in accounts {
-                                                                        if let Some(acc) = account {
-                                                                            if let Ok(a) = ore_boost_api::state::Stake::try_from_bytes(&acc.data) {
-                                                                                tracing::info!(target: "server_log", "Boost stake account: {:?}", a);
-                                                                                stake_acct.push(a.clone());
-                                                                                continue;
-                                                                            }
-                                                                            if let Ok(a) = ore_boost_api::state::Boost::try_from_bytes(&acc.data) {
-                                                                                tracing::info!(target: "server_log", "Boost account: {:?}", a);
-                                                                                boost_acct.push(a.clone());
-                                                                                continue;
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                } else {
-                                                                    tracing::error!(target: "server_log", "Failed to get boost stake accounts.")
-                                                                }
-                                                                let mut multiplier = 0.0f64;
-                                                                for (index,stake_a) in stake_acct.iter().enumerate() {
-                                                                    let boost_multiplier = boost_acct[index].multiplier as f64 * (stake_a.balance as f64 / boost_acct[index].total_stake as f64);
-                                                                    info!(target: "server_log", "Multiplier {}: {}", boost_acct[index].mint, boost_multiplier);
-                                                                    multiplier += boost_multiplier
-                                                                }
-
-                                                                info!(target: "server_log", "Sending internal mine success for challenge: {}", BASE64_STANDARD.encode(old_proof.challenge));
-                                                                let _ = mine_success_sender.send(
-                                                                    MessageInternalMineSuccess {
-                                                                        difficulty,
-                                                                        total_balance: balance,
-                                                                        rewards: full_rewards,
-                                                                        commissions,
-                                                                        challenge_id: challenge.id,
-                                                                        challenge: old_proof.challenge,
-                                                                        best_nonce: u64::from_le_bytes(best_solution.n),
-                                                                        total_hashpower,
-                                                                        ore_config: loaded_config,
-                                                                        multiplier,
-                                                                        submissions,
-                                                                        global_boosts_active: true,
-                                                                    },
-                                                                );
-                                                                tokio::time::sleep(Duration::from_millis(200)).await;
-                                                            } else {
-                                                                tracing::error!(target: "server_log", "Failed get MineEvent data from transaction... wtf...");
-                                                                break;
-                                                            }
+                                                            tracing::error!(target: "server_log", "Failed get MineEvent data from transaction... wtf...");
+                                                            break;
                                                         }
                                                     },
                                                     solana_transaction_status::option_serializer::OptionSerializer::None => {
@@ -923,7 +748,7 @@ pub async fn pool_submission_system(
 
                                         if old_proof.challenge.eq(&latest_proof.challenge) {
                                             info!(target: "server_log", "Proof challenge not updated yet..");
-                                            if let Ok(p) = get_proof(
+                                            if let Ok(p) = crate::global_boost_util::get_proof(
                                                 &rpc_client,
                                                 app_wallet.miner_wallet.pubkey(),
                                             )
@@ -1153,3 +978,4 @@ pub async fn pool_submission_system(
         };
     }
 }
+

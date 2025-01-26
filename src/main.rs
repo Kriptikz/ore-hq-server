@@ -9,7 +9,7 @@ use std::{
 };
 
 use app_metrics::MetricsRouteEventData;
-use ore_boost_api::state::{boost_pda, stake_pda};
+use ore_boost_api::state::{boost_pda, reservation_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
 use solana_account_decoder::UiAccountEncoding;
 use steel::AccountDeserialize as _;
@@ -21,7 +21,7 @@ use systems::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
-    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
+    app_metrics::AppMetricsEvent, global_boost_util::{get_original_proof, get_proof}, ore_utils::{get_managed_proof_token_ata, get_proof_pda, get_rotate_ix, proof_pubkey}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
 };
 
 use self::models::*;
@@ -43,7 +43,7 @@ use clap::{Parser, Subcommand};
 use drillx::Solution;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use ore_utils::{
-    get_config, get_delegated_boost_account, get_delegated_boost_account_v2, get_delegated_stake_account, get_ore_mint, get_original_proof, get_proof, get_register_ix, ORE_TOKEN_DECIMALS
+    get_delegated_boost_account, get_delegated_boost_account_v2, get_delegated_stake_account, get_ore_mint, get_register_ix, ORE_TOKEN_DECIMALS
 };
 use routes::{get_challenges, get_latest_mine_txn, get_pool_balance};
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,7 @@ mod schema;
 mod systems;
 mod scripts;
 mod app_metrics;
+mod global_boost_util;
 
 const MIN_DIFF: u32 = 12;
 const MIN_HASHPOWER: u64 = 80; // difficulty 12
@@ -681,102 +682,118 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    info!(target: "server_log", "creating managed proof boost token accounts");
-    let boost_mints = vec![
-        Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap(),
-        Pubkey::from_str("DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN").unwrap(),
-        Pubkey::from_str("meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb").unwrap()
-    ];
 
-    for boost_mint in boost_mints {
-        // create the managed proof token account
-        let managed_proof_boost_token_addr = get_associated_token_address(&managed_proof.0, &boost_mint);
-        match rpc_client
-            .get_token_account_balance(&managed_proof_boost_token_addr)
-            .await
-        {
-            Ok(_) => {
-                info!(target: "server_log", "Managed proof boost token account {} already created.", boost_mint.to_string());
-            }
-            Err(_) => {
-                info!(target: "server_log", "Creating managed proof boost token account {}", boost_mint.to_string());
-                let ix = create_associated_token_account(
-                    &wallet.pubkey(),
-                    &managed_proof.0,
-                    &boost_mint,
-                    &spl_token::id(),
-                );
+    info!(target: "server_log", "Getting managed proof, ore Proof account.");
+    let ore_proof = ore_api::state::proof_pda(managed_proof.0);
+    let pool_boost_reservation_acc = reservation_pda(ore_proof.0);
+    match rpc_client.get_account(&pool_boost_reservation_acc.0).await {
+        Ok(_) => {
+            info!(target: "server_log", "Pool boost reservation acc already exists. Continuing...");
+        }
+        Err(_e) => {
+            error!(target: "server_log", "Failed to get pool boost reservation account. Creating boost reservation account...");
+            let ix = ore_miner_delegation::instruction::register_global_boost(wallet.pubkey());
 
-                let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
 
-                let blockhash = rpc_client
-                    .get_latest_blockhash()
-                    .await
-                    .expect("should get latest blockhash");
+            let blockhash = rpc_client
+                .get_latest_blockhash()
+                .await
+                .expect("should get latest blockhash");
 
-                tx.sign(&[&wallet], blockhash);
+            tx.sign(&[&wallet], blockhash);
 
-                match rpc_client
-                    .send_and_confirm_transaction_with_spinner_and_commitment(
-                        &tx,
-                        CommitmentConfig {
-        commitment: CommitmentLevel::Confirmed,
-                        },
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        info!(target: "server_log", "Successfully created managed proof boost token account {}", boost_mint.to_string());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-                        panic!("Failed to create managed proof boost token account {}", boost_mint.to_string());
-                    }
+            match rpc_client
+                .send_and_confirm_transaction_with_spinner_and_commitment(
+                    &tx,
+                    CommitmentConfig {
+    commitment: CommitmentLevel::Confirmed,
+                    },
+                )
+                .await
+            {
+                Ok(_) => {
+                    info!(target: "server_log", "Successfully created boost reservation account: {}", pool_boost_reservation_acc.0.to_string());
+                }
+                Err(e) => {
+                    error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+                    panic!("Failed to create boost reservation account.");
                 }
             }
         }
-
-        let boost_acc = boost_pda(boost_mint);
-        let pool_boost_stake_acc = stake_pda(managed_proof.0, boost_acc.0);
-        match rpc_client.get_account(&pool_boost_stake_acc.0).await {
-            Ok(_) => {
-                info!(target: "server_log", "Managed proof boost stake account for {} already exists", boost_mint.to_string());
-            }
-            Err(_e) => {
-                error!(target: "server_log", "Failed to get managed proof boost stake account for {}", boost_mint.to_string());
-                info!(target: "server_log", "Creating managed proof boost stake account for {}", boost_mint.to_string());
-                let ix = ore_miner_delegation::instruction::open_managed_proof_boost(wallet.pubkey(), boost_mint);
-
-                let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
-
-                let blockhash = rpc_client
-                    .get_latest_blockhash()
-                    .await
-                    .expect("should get latest blockhash");
-
-                tx.sign(&[&wallet], blockhash);
-
-                match rpc_client
-                    .send_and_confirm_transaction_with_spinner_and_commitment(
-                        &tx,
-                        CommitmentConfig {
-        commitment: CommitmentLevel::Confirmed,
-                        },
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        info!(target: "server_log", "Successfully created managed proof boost stake account for {}", boost_mint.to_string());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-                        panic!("Failed to create managed proof boost stake account for {}", boost_mint.to_string());
-                    }
-                }
-            }
-        }
-
     }
+
+    // info!(target: "server_log", "Verifying proof mining authority is updated");
+    
+    // info!(target: "server_log", "Rotating boost.");
+    // let ix_rotate = get_rotate_ix(wallet.pubkey());
+    // if let Ok((_hash, _slot)) = rpc_client
+    //     .get_latest_blockhash_with_commitment(rpc_client.commitment())
+    //     .await
+    // {
+    //     let mut tx = Transaction::new_with_payer(&[ix_rotate], Some(&wallet.pubkey()));
+
+    //     let blockhash = rpc_client
+    //         .get_latest_blockhash()
+    //         .await
+    //         .expect("should get latest blockhash");
+
+    //     tx.sign(&[&wallet], blockhash);
+
+    //     match rpc_client
+    //         .send_and_confirm_transaction_with_spinner_and_commitment(
+    //             &tx,
+    //             CommitmentConfig {
+    //                 commitment: CommitmentLevel::Confirmed,
+    //             },
+    //         )
+    //         .await
+    //     {
+    //         Ok(_) => {
+    //             info!(target: "server_log", "Successfully rotated boost reservation");
+    //         }
+    //         Err(e) => {
+    //             error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+    //             panic!("Failed to rotate boost reservation");
+    //         }
+    //     }
+    // }
+
+
+    // info!(target: "server_log", "Verifying proof mining authority is updated");
+    // let managed_proof_pda = managed_proof_pda(wallet.pubkey());
+    // if proof.miner != managed_proof_pda.0 {
+    //     info!(target: "server_log", "Proof miner is not the wallet pubkey, updating....");
+    //     let ix = ore_miner_delegation::instruction::update_miner_authority(wallet.pubkey(), managed_proof_pda.0);
+
+    //     let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
+
+    //     let blockhash = rpc_client
+    //         .get_latest_blockhash()
+    //         .await
+    //         .expect("should get latest blockhash");
+
+    //     tx.sign(&[&wallet], blockhash);
+
+    //     match rpc_client
+    //         .send_and_confirm_transaction_with_spinner_and_commitment(
+    //             &tx,
+    //             CommitmentConfig {
+    //                 commitment: CommitmentLevel::Confirmed,
+    //             },
+    //         )
+    //         .await
+    //     {
+    //         Ok(_) => {
+    //             info!(target: "server_log", "Successfully updated miner authority for proof.");
+    //         }
+    //         Err(e) => {
+    //             error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+    //             panic!("Failed to update miner authority");
+    //         }
+    //     }
+    // }
+
 
     info!(target: "server_log", "Validating pool exists in db");
     let db_pool = app_database
@@ -1238,7 +1255,7 @@ async fn get_latest_blockhash(
         ts_ns: metrics_end,
 
     };
-    if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+    if let Err(_e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
         tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
     };
     Response::builder()
@@ -1493,7 +1510,7 @@ async fn get_miner_rewards(
                     ts_ns: metrics_end,
 
                 };
-                if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                if let Err(_e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
                     tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
                 };
                 return Response::builder()
@@ -1518,7 +1535,7 @@ async fn get_miner_rewards(
                     ts_ns: metrics_end,
 
                 };
-                if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                if let Err(_e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
                     tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
                 };
                 return Response::builder()
@@ -1543,7 +1560,7 @@ async fn get_miner_rewards(
             ts_ns: metrics_end,
 
         };
-        if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+        if let Err(_e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
             tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
         };
         return Response::builder()
@@ -1581,7 +1598,7 @@ async fn get_last_challenge_submissions(
             ts_ns: metrics_end,
 
         };
-        if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+        if let Err(_e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
             tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
         };
         return Ok(Json(cached_boost_multiplier.item));
@@ -1630,7 +1647,7 @@ async fn get_miner_submissions(
                         ts_ns: metrics_end,
 
                     };
-                    if let Err(e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
+                    if let Err(_e) = app_metrics_channel.send(AppMetricsEvent::RouteEvent(metrics_data)) {
                         tracing::error!(target: "server_log", "Failed to send msg down app metrics channel.");
                     };
                     Ok(Json(submissions))

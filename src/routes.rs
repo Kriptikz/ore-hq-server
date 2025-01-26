@@ -11,7 +11,7 @@ use tokio::{sync::{mpsc::UnboundedSender, RwLock}, time::Instant};
 use tracing::error;
 
 use crate::{
-    app_metrics::{AppMetricsEvent, MetricsRouteEventData}, app_rr_database, ore_utils::{get_ore_mint, get_proof}, ChallengeWithDifficulty, ChallengesCache, Config, Txn
+    app_metrics::{AppMetricsEvent, MetricsRouteEventData}, app_rr_database, ore_utils::{get_ore_mint}, ChallengeWithDifficulty, ChallengesCache, Config, Txn, global_boost_util::get_proof
 };
 use std::{str::FromStr, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
