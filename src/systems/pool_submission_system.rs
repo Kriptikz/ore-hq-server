@@ -128,11 +128,11 @@ pub async fn pool_submission_system(
                             text: String::from("Server is sending mine transaction..."),
                         });
 
-                        let mut cu_limit = 515_000;
+                        let mut cu_limit = 540_000;
                         let should_add_reset_ix = if let Some(config) = loaded_config {
                             let time_until_reset = (config.last_reset_at + 300) - now as i64;
                             if time_until_reset <= 5 {
-                                cu_limit = 570_000;
+                                cu_limit = 600_000;
                                 prio_fee += 50_000;
                                 info!(target: "server_log", "Including reset tx.");
                                 true
