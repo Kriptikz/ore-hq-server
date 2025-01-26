@@ -562,7 +562,7 @@ pub async fn pool_submission_system(
                                         let mine_success_sender = app_mine_success_sender;
                                         let app_proof = app_app_proof;
                                         let app_config = app_app_config;
-                                        let app_wallet = app_app_wallet;
+                                        //let app_wallet = app_app_wallet;
                                         let app_metrics_sender = app_metrics;
                                         loop {
                                             if let Ok(txn_result) = rpc_client
@@ -582,11 +582,24 @@ pub async fn pool_submission_system(
                                                     .transaction
                                                     .meta
                                                     .unwrap()
-                                                    .return_data;
+                                                    .log_messages;
 
                                                 match data {
                                                     solana_transaction_status::option_serializer::OptionSerializer::Some(data) => {
-                                                        let bytes = BASE64_STANDARD.decode(data.data.0).unwrap();
+                                                    let prefix = format!("Program return: {} ", ore_miner_delegation::ID.to_string());
+                                                    let mut mine_event_str = "";
+                                                    for log_message in data.iter().rev() {
+                                                        if log_message.starts_with(&prefix) {
+                                                            mine_event_str = log_message.trim_start_matches(&prefix);
+                                                            break;
+                                                        }
+                                                    }
+                                                    if mine_event_str.is_empty() {
+                                                        tracing::error!(target: "server_log", "tx sig result missing return data");
+                                                    }
+
+                                                    // Parse return data 
+                                                    let bytes = BASE64_STANDARD.decode(mine_event_str).unwrap();
 
                                                         if let Ok(mine_event) = bytemuck::try_from_bytes::<MineEventWithGlobalBoosts>(&bytes) {
                                                             info!(target: "server_log", "MineEvent Global Boosts: {:?}", mine_event);

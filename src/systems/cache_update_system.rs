@@ -34,7 +34,7 @@ pub async fn cache_update_system(
             let lbhash = loop {
                 match rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment: CommitmentLevel::Finalized }).await {
                         Ok(lb) => {
-                            tracing::info!(target: "server_log", "Successfully updated latest blockhash");
+                            //tracing::info!(target: "server_log", "Successfully updated latest blockhash");
                             break lb
                         },
                         Err(e) => {

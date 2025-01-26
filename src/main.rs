@@ -21,7 +21,7 @@ use systems::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
-    app_metrics::AppMetricsEvent, ore_utils::{get_managed_proof_token_ata, get_proof_pda, proof_pubkey}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}, global_boost_util::{get_proof, get_original_proof}
+    app_metrics::AppMetricsEvent, global_boost_util::{get_original_proof, get_proof}, ore_utils::{get_managed_proof_token_ata, get_proof_pda, get_rotate_ix, proof_pubkey}, systems::{app_metrics_system::metrics_system, cache_update_system::cache_update_system, delegate_boost_tracking_system::delegate_boost_tracking_system, message_text_all_clients_system::message_text_all_clients_system, pool_mine_success_system::pool_mine_success_system, pool_submission_system::pool_submission_system}
 };
 
 use self::models::*;
@@ -722,6 +722,44 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    // info!(target: "server_log", "Verifying proof mining authority is updated");
+    
+    // info!(target: "server_log", "Rotating boost.");
+    // let ix_rotate = get_rotate_ix(wallet.pubkey());
+    // if let Ok((_hash, _slot)) = rpc_client
+    //     .get_latest_blockhash_with_commitment(rpc_client.commitment())
+    //     .await
+    // {
+    //     let mut tx = Transaction::new_with_payer(&[ix_rotate], Some(&wallet.pubkey()));
+
+    //     let blockhash = rpc_client
+    //         .get_latest_blockhash()
+    //         .await
+    //         .expect("should get latest blockhash");
+
+    //     tx.sign(&[&wallet], blockhash);
+
+    //     match rpc_client
+    //         .send_and_confirm_transaction_with_spinner_and_commitment(
+    //             &tx,
+    //             CommitmentConfig {
+    //                 commitment: CommitmentLevel::Confirmed,
+    //             },
+    //         )
+    //         .await
+    //     {
+    //         Ok(_) => {
+    //             info!(target: "server_log", "Successfully rotated boost reservation");
+    //         }
+    //         Err(e) => {
+    //             error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
+    //             panic!("Failed to rotate boost reservation");
+    //         }
+    //     }
+    // }
+
+
     // info!(target: "server_log", "Verifying proof mining authority is updated");
     // let managed_proof_pda = managed_proof_pda(wallet.pubkey());
     // if proof.miner != managed_proof_pda.0 {
