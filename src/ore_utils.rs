@@ -59,7 +59,7 @@ pub fn get_mine_with_global_boost_ix(signer: Pubkey, solution: Solution, bus: us
         boosts = boost_accounts.to_vec()
     }
 
-    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boosts)
+    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, Vec::new())
 }
 
 pub fn get_rotate_ix(signer: Pubkey) -> Instruction {
