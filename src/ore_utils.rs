@@ -53,9 +53,13 @@ pub fn get_auth_ix(signer: Pubkey) -> Instruction {
 }
 
 pub fn get_mine_with_global_boost_ix(signer: Pubkey, solution: Solution, bus: usize, boost_accounts: Option<[Pubkey; 3]>) -> Instruction {
-    let managed_proof_account = managed_proof_pda(signer);
-    //ore_api::sdk::mine(signer, managed_proof_account.0, BUS_ADDRESSES[bus], solution, boost_accounts)
-    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, Vec::new())
+    let mut boosts = Vec::new();
+
+    if let Some(boost_accounts) = boost_accounts {
+        boosts = boost_accounts.to_vec()
+    }
+
+    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boosts)
 }
 
 pub fn get_rotate_ix(signer: Pubkey) -> Instruction {
