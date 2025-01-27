@@ -53,33 +53,11 @@ pub fn get_auth_ix(signer: Pubkey) -> Instruction {
 }
 
 pub fn get_mine_with_global_boost_ix(signer: Pubkey, solution: Solution, bus: usize, boost_accounts: Option<[Pubkey; 3]>) -> Instruction {
-    let mut boosts = Vec::new();
-
-    if let Some(boost_accounts) = boost_accounts {
-        boosts = boost_accounts.to_vec()
-    }
-
-    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boosts)
+    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boost_accounts)
 }
 
 pub fn get_rotate_ix(signer: Pubkey) -> Instruction {
     instruction::rotate_global_boost(signer)
-}
-
-
-
-pub fn get_mine_ix_with_boosts(signer: Pubkey, solution: Solution, bus: usize, boost_mints: Vec<Pubkey>) -> Instruction {
-    //let managed_proof_account = managed_proof_pda(signer);
-    let boosts = Vec::new();
-
-    // for boost_mint in boost_mints {
-    //     let boost_account = boost_pda(boost_mint);
-    //     let boost_stake = stake_pda(managed_proof_account.0, boost_account.0);
-    //     boosts.push(boost_account.0);
-    //     boosts.push(boost_stake.0);
-    // }
-
-    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boosts)
 }
 
 pub fn get_register_ix(signer: Pubkey) -> Instruction {
