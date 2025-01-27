@@ -223,7 +223,7 @@ pub async fn pool_submission_system(
                             };
 
                             let rpc_config = RpcSendTransactionConfig {
-                                skip_preflight: false,
+                                skip_preflight: true,
                                 preflight_commitment: Some(rpc_client.commitment().commitment),
                                 ..RpcSendTransactionConfig::default()
                             };
