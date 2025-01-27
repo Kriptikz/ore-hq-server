@@ -235,27 +235,27 @@ pub async fn pool_submission_system(
 
                             let sim_tx = tx.clone();
 
-                            // if let Ok(result) = rpc_client
-                            //     .simulate_transaction_with_config(&sim_tx, rpc_sim_config)
-                            //     .await
-                            // {
-                            //     if let Some(tx_error) = result.value.err {
-                            //         if tx_error
-                            //             == TransactionError::InstructionError(
-                            //                 4,
-                            //                 InstructionError::Custom(1),
-                            //             )
-                            //             || tx_error
-                            //                 == TransactionError::InstructionError(
-                            //                     5,
-                            //                     InstructionError::Custom(1),
-                            //                 )
-                            //         {
-                            //             tracing::error!(target: "server_log", "Custom program error: Invalid Hash");
-                            //             break;
-                            //         }
-                            //     }
-                            // }
+                            if let Ok(result) = rpc_client
+                                .simulate_transaction_with_config(&sim_tx, rpc_sim_config)
+                                .await
+                            {
+                                if let Some(tx_error) = result.value.err {
+                                    if tx_error
+                                        == TransactionError::InstructionError(
+                                            4,
+                                            InstructionError::Custom(1),
+                                        )
+                                        || tx_error
+                                            == TransactionError::InstructionError(
+                                                5,
+                                                InstructionError::Custom(1),
+                                            )
+                                    {
+                                        tracing::error!(target: "server_log", "Custom program error: Invalid Hash");
+                                        break;
+                                    }
+                                }
+                            }
 
                             let mut rpc_send_attempts = 1;
                             let signature = loop {
