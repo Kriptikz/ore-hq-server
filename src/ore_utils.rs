@@ -8,7 +8,7 @@ use ore_api::{
     ID as ORE_ID,
 };
 use ore_boost_api::state::{boost_pda, stake_pda};
-use ore_miner_delegation::{instruction, state::{DelegatedBoost, DelegatedBoostV2, DelegatedStake}, utils::AccountDeserialize, pda::managed_proof_pda};
+use ore_miner_delegation::{instruction, state::{DelegatedBoost, DelegatedBoostV2, DelegatedStake}, utils::AccountDeserializeV1, pda::managed_proof_pda};
 use ore_utils::event;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, instruction::Instruction, pubkey::Pubkey};

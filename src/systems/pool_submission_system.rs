@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
+use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserializeV1};
 use crate::{app_metrics::{AppMetricsEvent, AppMetricsMineEvent}, global_boost_util::{get_proof_and_config_with_busses, get_reservation}, ore_utils::{get_proof_pda, get_rotate_ix}};
 
 use base64::{prelude::BASE64_STANDARD, Engine};

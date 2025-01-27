@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, HashSet}, str::FromStr, sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use ore_miner_delegation::{pda::managed_proof_pda, state::DelegatedBoostV2, utils::AccountDeserialize};
+use ore_miner_delegation::{pda::managed_proof_pda, state::DelegatedBoostV2, utils::AccountDeserializeV1};
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient}, rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig}, rpc_filter::{Memcmp, RpcFilterType}};
 use solana_sdk::{commitment_config::{CommitmentConfig, CommitmentLevel}, pubkey::Pubkey};

@@ -10,7 +10,7 @@ use std::{
 
 use app_metrics::MetricsRouteEventData;
 use ore_boost_api::state::{boost_pda, reservation_pda, stake_pda};
-use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserialize};
+use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserializeV1};
 use solana_account_decoder::UiAccountEncoding;
 use steel::AccountDeserialize as _;
 use systems::{
