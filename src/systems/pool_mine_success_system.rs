@@ -542,7 +542,7 @@ pub async fn process_unclaimed_bonus_rewards(total_rewards: u64, bonus_rewards: 
     let mut total_distributed_for_stakers = 0;
     if total_staker_rewards_unclaimed > 0 {
         for stake_account in staker_rewards_accounts.iter() {
-            let rewards_balance = (bonus_rewards as u128 * stake_account.staked_balance as u128 / total_unclaimed_amount as u128) as u64;
+            let rewards_balance = (bonus_rewards as u128 * stake_account.rewards_balance as u128 / total_unclaimed_amount as u128) as u64;
             let stake_rewards = UpdateStakeAccountRewards {
                 stake_pda: stake_account.stake_pda.clone(),
                 rewards_balance,
