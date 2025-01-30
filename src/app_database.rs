@@ -5,7 +5,7 @@ use diesel::{
 use tokio::time::Instant;
 use tracing::{error, info};
 
-use crate::{models, Miner, StakeAccount, SubmissionWithId, ORE_BOOST_MINT, ORE_ISC_BOOST_MINT, ORE_SOL_BOOST_MINT};
+use crate::{models::{self, Reward}, Miner, StakeAccount, SubmissionWithId, ORE_BOOST_MINT, ORE_ISC_BOOST_MINT, ORE_SOL_BOOST_MINT};
 
 #[derive(Debug)]
 pub enum AppDatabaseError {
@@ -1173,6 +1173,39 @@ impl AppDatabase {
                 },
                 Err(e) => {
                     error!(target: "server_log", "{:?}", e);
+                    return Err(AppDatabaseError::InteractionFailed);
+                }
+            }
+        } else {
+            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
+        };
+    }
+
+    pub async fn get_miner_reward_accounts(
+        &self,
+        last_id: i32,
+    ) -> Result<Vec<Reward>, AppDatabaseError> {
+        if let Ok(db_conn) = self.connection_pool.get().await {
+            let res = db_conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM rewards r WHERE r.id > ? ORDER BY r.id ASC LIMIT 500")
+                        .bind::<Integer, _>(last_id)
+                        .load::<Reward>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(interaction) => match interaction {
+                    Ok(query) => {
+                        return Ok(query);
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(AppDatabaseError::QueryFailed);
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
                     return Err(AppDatabaseError::InteractionFailed);
                 }
             }

@@ -24,6 +24,7 @@ pub const ORE_STAKE_PERCENTAGE: u64 = 20;
 pub const ORE_SOL_STAKE_PERCENTAGE: u64 = 10;
 pub const ORE_ISC_STAKE_PERCENTAGE: u64 = 14;
 pub const TOTAL_STAKER_PERCENTAGE: u64 = ORE_STAKE_PERCENTAGE + ORE_SOL_STAKE_PERCENTAGE + ORE_ISC_STAKE_PERCENTAGE;
+pub const UNCLAIMED_BONUS_PERCENTAGE: u64 = 30;
 
 pub async fn pool_mine_success_system(
     app_shared_state: Arc<RwLock<AppState>>,
@@ -58,10 +59,14 @@ pub async fn pool_mine_success_system(
                     info!(target: "server_log", "{} - Global Boosts Active, Staking rewards are 0", id);
                     0
                 };
-                let total_rewards = msg.rewards - msg.commissions - staker_rewards;
+
+                let unclaimed_rewards_bonus = 
+                    (msg.rewards as u128).saturating_mul(UNCLAIMED_BONUS_PERCENTAGE as u128).saturating_div(100) as u64;
+                let total_rewards = msg.rewards - msg.commissions - staker_rewards - unclaimed_rewards_bonus;
                 info!(target: "server_log", "{} - Miners Rewards: {}", id, total_rewards);
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
                 info!(target: "server_log", "{} - Staker Rewards: {}", id, staker_rewards);
+                info!(target: "server_log", "{} - Unclaimed Bonus Rewards: {}", id, unclaimed_rewards_bonus);
                 let mut total_miners_earned_rewards = 0;
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
                     let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
@@ -286,6 +291,8 @@ pub async fn pool_mine_success_system(
 
                 if msg.global_boosts_active {
                     info!(target: "server_log", "{} - Global Boosts Active, skipping processing of staker rewards.", id);
+                    info!(target: "server_log", "{} - Processing unclaimed rewards bonuses.", id);
+                    process_unclaimed_bonus_rewards(msg.rewards, unclaimed_rewards_bonus, &app_database, &app_config).await;
                 } else {
                     info!(target: "server_log", "{} - Processing stakers rewards", id);
                     process_stakers_rewards(msg.rewards, staker_rewards, &app_database, &app_config).await;
@@ -472,6 +479,139 @@ pub async fn process_stakers_rewards(total_rewards: u64, staker_rewards: u64, ap
 }
 
 
+pub async fn process_unclaimed_bonus_rewards(total_rewards: u64, bonus_rewards: u64, app_database: &Arc<AppDatabase>, app_config: &Arc<Config>) {
+
+    // get all the rewards accounts for miners
+    let mut miner_rewards_accounts = vec![];
+    let mut total_miner_rewards_unclaimed = 0;
+    let mut last_id: i32 = 0;
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        match app_database.get_miner_reward_accounts(last_id).await {
+            Ok(d) => {
+                if d.len() > 0 {
+                    for ac in d.iter() {
+                        last_id = ac.id;
+                        total_miner_rewards_unclaimed += ac.balance;
+                        miner_rewards_accounts.push(ac.clone());
+                    }
+                }
+                
+                if d.len() < 500 {
+                    break;
+                }
+            },
+            Err(e) => {
+                tracing::error!(target: "server_log", "Failed to get miner reward accounts.");
+                tracing::error!(target: "server_log", "Error: {:?}", e);
+            }
+        };
+    }
+    // get all the rewards accounts from legacy pool staking
+    let mut staker_rewards_accounts = vec![];
+    let mut total_staker_rewards_unclaimed = 0;
+    let mut last_id: i32 = 0;
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        match app_database.get_stake_accounts(app_config.pool_id, last_id).await {
+            Ok(d) => {
+                if d.len() > 0 {
+                    for ac in d.iter() {
+                        last_id = ac.id;
+                        total_staker_rewards_unclaimed += ac.rewards_balance;
+                        staker_rewards_accounts.push(ac.clone());
+                    }
+                }
+                
+                if d.len() < 500 {
+                    break;
+                }
+            },
+            Err(e) => {
+                tracing::error!(target: "server_log", "Failed to get staker reward accounts.");
+                tracing::error!(target: "server_log", "Error: {:?}", e);
+            }
+        };
+    }
+
+    // calculated total unclaimed amount
+    let total_unclaimed_amount = total_miner_rewards_unclaimed + total_staker_rewards_unclaimed;
+
+    // distribute bonus_rewards based on % of unclaimed amount
+    let mut update_stake_rewards = vec![];
+    let mut total_distributed_for_stakers = 0;
+    if total_staker_rewards_unclaimed > 0 {
+        for stake_account in staker_rewards_accounts.iter() {
+            let rewards_balance = (bonus_rewards as u128 * stake_account.staked_balance as u128 / total_unclaimed_amount as u128) as u64;
+            let stake_rewards = UpdateStakeAccountRewards {
+                stake_pda: stake_account.stake_pda.clone(),
+                rewards_balance,
+            };
+            total_distributed_for_stakers += rewards_balance;
+            update_stake_rewards.push(stake_rewards);
+        }
+    }
+    info!(target: "server_log", "Total calculated distribution amount to stakers: {}", total_distributed_for_stakers);
+    let mut total_distributed_for_miners = 0;
+    let mut i_rewards = Vec::new();
+    if total_miner_rewards_unclaimed > 0 {
+        for rewards_account in miner_rewards_accounts.iter() {
+            let rewards_balance = (bonus_rewards as u128 * rewards_account.balance as u128 / total_unclaimed_amount as u128) as u64;
+            let new_reward = UpdateReward {
+                miner_id: rewards_account.miner_id,
+                balance: rewards_balance,
+            };
+
+            total_distributed_for_miners += rewards_balance;
+            i_rewards.push(new_reward);
+        }
+    }
+    info!(target: "server_log", "Total calculated distribution amount to miners: {}", total_distributed_for_miners);
+
+    info!(target: "server_log", "Total calculated distribution amount for all: {}", total_distributed_for_stakers + total_distributed_for_miners);
+
+    // let instant = Instant::now();
+
+    // let batch_size = 400;
+    //  info!(target: "server_log", "Updating bonus staking rewards");
+    //  if update_stake_rewards.len() > 0 {
+    //      let mut batch_num = 1;
+    //      for batch in update_stake_rewards.chunks(batch_size) {
+    //          let instant = Instant::now();
+    //          info!(target: "server_log", "Updating stake reward batch {}", batch_num);
+    //          while let Err(_) = app_database.update_stake_accounts_rewards(batch.to_vec()).await {
+    //              tracing::error!(target: "server_log", "Failed to update rewards in db. Retrying...");
+    //              tokio::time::sleep(Duration::from_millis(500)).await;
+    //          }
+    //          info!(target: "server_log", "Updated reward batch {} in {}ms", batch_num, instant.elapsed().as_millis());
+    //          batch_num += 1;
+    //          tokio::time::sleep(Duration::from_millis(200)).await;
+    //      }
+    //      info!(target: "server_log", "Successfully updated rewards");
+    //  }
+    // info!(target: "server_log", "Updated rewards in {}ms", instant.elapsed().as_millis());
+
+    // tokio::time::sleep(Duration::from_millis(500)).await;
+    // let batch_size = 400;
+    // let instant = Instant::now();
+    // info!(target: "server_log", "Updating bonus miner rewards");
+    // if i_rewards.len() > 0 {
+    //     let mut batch_num = 1;
+    //     for batch in i_rewards.chunks(batch_size) {
+    //         let instant = Instant::now();
+    //         info!(target: "server_log", "Updating reward batch {}", batch_num);
+    //         while let Err(_) = app_database.update_rewards(batch.to_vec()).await {
+    //             tracing::error!(target: "server_log", "Failed to update rewards in db. Retrying...");
+    //             tokio::time::sleep(Duration::from_millis(500)).await;
+    //         }
+    //         info!(target: "server_log", "Updated reward batch {} in {}ms", batch_num, instant.elapsed().as_millis());
+    //         batch_num += 1;
+    //         tokio::time::sleep(Duration::from_millis(200)).await;
+    //     }
+    //     info!(target: "server_log", "Successfully updated rewards",);
+    // }
+    // info!(target: "server_log", "Updated rewards in {}ms", instant.elapsed().as_millis());
+}
 
 
 
