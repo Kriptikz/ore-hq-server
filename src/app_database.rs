@@ -184,7 +184,7 @@ impl AppDatabase {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
                     diesel::sql_query(
-                        "SELECT id FROM submissions WHERE submissions.nonce = ? ORDER BY id DESC",
+                        "SELECT id FROM submissions_2 WHERE submissions_2.nonce = ? ORDER BY id DESC",
                     )
                     .bind::<Unsigned<BigInt>, _>(nonce)
                     .get_result::<SubmissionWithId>(conn)
@@ -672,7 +672,7 @@ impl AppDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    insert_into(crate::schema::submissions::dsl::submissions)
+                    insert_into(crate::schema::submissions_2::dsl::submissions_2)
                         .values(&submissions)
                         .execute(conn)
                 })

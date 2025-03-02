@@ -107,6 +107,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    submissions_2 (id) {
+        id -> Integer,
+        miner_id -> Integer,
+        challenge_id -> Integer,
+        difficulty -> Tinyint,
+        nonce -> Unsigned<Bigint>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     txns (id) {
         id -> Integer,
         #[max_length = 15]
@@ -128,5 +140,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     rewards,
     stake_accounts,
     submissions,
+    submissions_2,
     txns,
 );

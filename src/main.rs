@@ -2513,8 +2513,10 @@ async fn post_unstake(
                     .unwrap();
             }
 
+            tracing::info!("Sending txn");
             match send_txn(rpc_client.clone(), &tx).await {
                 Ok(sig) => {
+                    tracing::info!("Confirming txn");
                     match confirm_txn(rpc_client, sig).await {
                         Ok(sig) => {
                             let amount_dec =
@@ -3529,8 +3531,12 @@ pub async fn confirm_txn(rpc_client: Arc<RpcClient>, sig: Signature) -> Result<S
         if let Ok(response) = results {
             let statuses = response.value;
             if let Some(status) = &statuses[0] {
+                //let confirmation_status = status.confirmation_status();
+
+                tracing::info!("confirm_txn: Sig: {}, Status: {:?}", sig.to_string(), status);
+
                 if status.confirmation_status()
-                    == TransactionConfirmationStatus::Confirmed
+                    == TransactionConfirmationStatus::Confirmed || status.confirmation_status() == TransactionConfirmationStatus::Finalized
                 {
                     if status.err.is_some() {
                         let e_str = format!("Transaction Failed: {:?}", status.err);
