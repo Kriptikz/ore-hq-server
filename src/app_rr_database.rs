@@ -60,7 +60,7 @@ impl AppRRDatabase {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
 
-                    diesel::sql_query("SELECT s.*, m.pubkey FROM submissions s JOIN miners m ON s.miner_id = m.id JOIN challenges c ON s.challenge_id = c.id WHERE c.id = (SELECT id from challenges WHERE rewards_earned IS NOT NULL ORDER BY id DESC LIMIT 1)")
+                    diesel::sql_query("SELECT s.*, m.pubkey FROM submissions_2 s JOIN miners m ON s.miner_id = m.id JOIN challenges c ON s.challenge_id = c.id WHERE c.id = (SELECT id from challenges WHERE rewards_earned IS NOT NULL ORDER BY id DESC LIMIT 1)")
                         .load::<SubmissionWithPubkey>(conn)
                 })
                 .await;
@@ -92,7 +92,7 @@ impl AppRRDatabase {
         if let Ok(db_conn) = self.connection_pool.get().await {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
-                    diesel::sql_query("SELECT s.* FROM submissions s JOIN miners m ON s.miner_id = m.id WHERE m.pubkey = ? ORDER BY s.id DESC LIMIT 100")
+                    diesel::sql_query("SELECT s.* FROM submissions_2 s JOIN miners m ON s.miner_id = m.id WHERE m.pubkey = ? ORDER BY s.id DESC LIMIT 100")
                         .bind::<Text, _>(pubkey)
                         .load::<Submission>(conn)
                 })
@@ -123,7 +123,7 @@ impl AppRRDatabase {
             let res = db_conn
                 .interact(move |conn: &mut MysqlConnection| {
 
-                    diesel::sql_query("SELECT c.id, c.rewards_earned, c.updated_at, s.difficulty FROM challenges c JOIN submissions s ON c.submission_id = s.id WHERE c.submission_id IS NOT NULL ORDER BY c.id  DESC LIMIT 1440")
+                    diesel::sql_query("SELECT c.id, c.rewards_earned, c.updated_at, s.difficulty FROM challenges c JOIN submissions_2 s ON c.submission_id = s.id WHERE c.submission_id IS NOT NULL ORDER BY c.id  DESC LIMIT 1440")
                         .load::<ChallengeWithDifficulty>(conn)
                 })
                 .await;
