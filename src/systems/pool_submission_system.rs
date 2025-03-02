@@ -658,23 +658,6 @@ pub async fn pool_submission_system(
                                                                     tokio::time::sleep(Duration::from_millis(1000)).await;
                                                                 }
                                                             }
-                                                            // Insert commissions earning
-                                                            let commissions_earning = vec![
-                                                                InsertEarning {
-                                                                    miner_id: app_config.commissions_miner_id,
-                                                                    pool_id: app_config.pool_id,
-                                                                    challenge_id: challenge.id,
-                                                                    amount: commissions,
-                                                                }
-                                                            ];
-                                                            tracing::info!(target: "server_log", "Inserting commissions earning");
-                                                            while let Err(_) =
-                                                                app_database.add_new_earnings_batch(commissions_earning.clone()).await
-                                                            {
-                                                                tracing::error!(target: "server_log", "Failed to add commmissions earning... retrying...");
-                                                                tokio::time::sleep(Duration::from_millis(500)).await;
-                                                            }
-                                                            tracing::info!(target: "server_log", "Inserted commissions earning");
 
                                                             let new_commission_rewards = vec![UpdateReward {
                                                                 miner_id: app_config.commissions_miner_id,

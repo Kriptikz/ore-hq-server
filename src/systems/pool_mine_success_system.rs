@@ -47,7 +47,6 @@ pub async fn pool_mine_success_system(
                 drop(shared_state);
                 info!(target: "server_log", "{} - Got sockets in {}.", id, instant.elapsed().as_millis());
 
-                let mut i_earnings = Vec::new();
                 let mut i_rewards = Vec::new();
                 let mut i_submissions = Vec::new();
 
@@ -73,13 +72,6 @@ pub async fn pool_mine_success_system(
                     let earned_rewards = (total_rewards as u128).saturating_mul(msg_submission.hashpower as u128).saturating_div(msg.total_hashpower as u128) as u64;
                     total_miners_earned_rewards += earned_rewards;
 
-                    let new_earning = InsertEarning {
-                        miner_id: msg_submission.miner_id,
-                        pool_id: app_config.pool_id,
-                        challenge_id: msg.challenge_id,
-                        amount: earned_rewards,
-                    };
-
                     let new_submission = InsertSubmission {
                         miner_id: msg_submission.miner_id,
                         challenge_id: msg.challenge_id,
@@ -92,7 +84,6 @@ pub async fn pool_mine_success_system(
                         balance: earned_rewards,
                     };
 
-                    i_earnings.push(new_earning);
                     i_rewards.push(new_reward);
                     i_submissions.push(new_submission);
                     //let _ = app_database.add_new_earning(new_earning).await.unwrap();
@@ -177,25 +168,7 @@ pub async fn pool_mine_success_system(
 
                 info!(target: "server_log", "{} - Finished processing submission results in {}ms for challenge: {}.", id, instant.elapsed().as_millis(), c);
 
-                let instant = Instant::now();
-                info!(target: "server_log", "{} - Adding earnings", id);
                 let batch_size = 1000;
-                if i_earnings.len() > 0 {
-                    for batch in i_earnings.chunks(batch_size) {
-                        while let Err(_) =
-                            app_database.add_new_earnings_batch(batch.to_vec()).await
-                        {
-                            tracing::error!(target: "server_log", "{} - Failed to add new earnings batch to db. Retrying...", id);
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                    info!(target: "server_log", "{} - Successfully added earnings batch", id);
-                }
-                info!(target: "server_log", "{} - Added earnings in {}ms", id, instant.elapsed().as_millis());
-
-                tokio::time::sleep(Duration::from_millis(500)).await;
-
                 let instant = Instant::now();
                 info!(target: "server_log", "{} - Adding submissions", id);
                 if i_submissions.len() > 0 {
