@@ -37,7 +37,7 @@ use tracing::info;
 use crate::{
     app_database::AppDatabase, ore_utils::{
         get_auth_ix, get_cutoff, get_mine_with_global_boost_ix, get_reset_ix, MineEventWithBoosts, MineEventWithGlobalBoosts, ORE_TOKEN_DECIMALS
-    }, Config, EpochHashes, InsertChallenge, InsertEarning, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
+    }, Config, EpochHashes, InsertChallenge, InsertTxn, MessageInternalAllClients, MessageInternalMineSuccess, SubmissionWindow, UpdateReward, WalletExtension
 };
 
 

@@ -90,17 +90,16 @@ pub struct Pool {
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
-#[diesel(table_name = crate::schema::submissions)]
+#[diesel(table_name = crate::schema::submissions_2)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct Submission {
-    pub id: i64,
+    pub id: i32,
     pub miner_id: i32,
     pub challenge_id: i32,
     pub nonce: u64,
     pub difficulty: i8,
     pub created_at: NaiveDateTime,
 }
-
 #[derive(Debug, Clone, Deserialize, Serialize, QueryableByName)]
 pub struct SubmissionWithPubkey {
     #[diesel(sql_type = BigInt)]
@@ -132,10 +131,10 @@ pub struct InsertSubmission {
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
-#[diesel(table_name = crate::schema::submissions)]
+#[diesel(table_name = crate::schema::submissions_2)]
 #[diesel(check_for_backend(diesel::mysql::Mysql))]
 pub struct SubmissionWithId {
-    pub id: i64,
+    pub id: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable, QueryableByName)]
@@ -188,16 +187,6 @@ pub struct Reward {
     pub id: i32,
     pub balance: u64,
     pub miner_id: i32,
-}
-
-#[derive(Debug, Copy, Clone, Deserialize, Insertable)]
-#[diesel(table_name = crate::schema::earnings)]
-#[diesel(check_for_backend(diesel::mysql::Mysql))]
-pub struct InsertEarning {
-    pub miner_id: i32,
-    pub pool_id: i32,
-    pub challenge_id: i32,
-    pub amount: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Insertable)]

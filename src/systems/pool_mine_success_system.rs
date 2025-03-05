@@ -17,7 +17,7 @@ use tracing::info;
 
 use crate::{
     app_database::AppDatabase, message::ServerMessagePoolSubmissionResult, ore_utils::
-        ORE_TOKEN_DECIMALS, AppState, ClientVersion, Config, InsertEarning, InsertSubmission, MessageInternalMineSuccess, UpdateReward, UpdateStakeAccountRewards, WalletExtension
+        ORE_TOKEN_DECIMALS, AppState, ClientVersion, Config, InsertSubmission, MessageInternalMineSuccess, UpdateReward, UpdateStakeAccountRewards, WalletExtension
 };
 
 pub const ORE_STAKE_PERCENTAGE: u64 = 20;

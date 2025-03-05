@@ -194,7 +194,7 @@ impl AppDatabase {
             match res {
                 Ok(interaction) => match interaction {
                     Ok(query) => {
-                        return Ok(query.id);
+                        return Ok(query.id as i64);
                     }
                     Err(e) => {
                         error!(target: "server_log", "{:?}", e);
@@ -627,43 +627,6 @@ impl AppDatabase {
     //         return Err(AppDatabaseError::FailedToGetConnectionFromPool);
     //     };
     // }
-
-    pub async fn add_new_earnings_batch(
-        &self,
-        earnings: Vec<models::InsertEarning>,
-    ) -> Result<(), AppDatabaseError> {
-        if let Ok(db_conn) = self.connection_pool.get().await {
-            let res = db_conn
-                .interact(move |conn: &mut MysqlConnection| {
-                    insert_into(crate::schema::earnings::dsl::earnings)
-                        .values(&earnings)
-                        .execute(conn)
-                })
-                .await;
-
-            match res {
-                Ok(interaction) => match interaction {
-                    Ok(query) => {
-                        info!(target: "server_log", "Earnings inserted: {}", query);
-                        if query == 0 {
-                            return Err(AppDatabaseError::FailedToInsertRow);
-                        }
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        error!(target: "server_log", "{:?}", e);
-                        return Err(AppDatabaseError::QueryFailed);
-                    }
-                },
-                Err(e) => {
-                    error!(target: "server_log", "{:?}", e);
-                    return Err(AppDatabaseError::InteractionFailed);
-                }
-            }
-        } else {
-            return Err(AppDatabaseError::FailedToGetConnectionFromPool);
-        };
-    }
 
     pub async fn add_new_submissions_batch(
         &self,
