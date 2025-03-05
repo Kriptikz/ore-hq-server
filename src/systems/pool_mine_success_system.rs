@@ -24,7 +24,6 @@ pub const ORE_STAKE_PERCENTAGE: u64 = 20;
 pub const ORE_SOL_STAKE_PERCENTAGE: u64 = 10;
 pub const ORE_ISC_STAKE_PERCENTAGE: u64 = 14;
 pub const TOTAL_STAKER_PERCENTAGE: u64 = ORE_STAKE_PERCENTAGE + ORE_SOL_STAKE_PERCENTAGE + ORE_ISC_STAKE_PERCENTAGE;
-pub const UNCLAIMED_BONUS_PERCENTAGE: u64 = 30;
 
 pub async fn pool_mine_success_system(
     app_shared_state: Arc<RwLock<AppState>>,
@@ -59,13 +58,10 @@ pub async fn pool_mine_success_system(
                     0
                 };
 
-                let unclaimed_rewards_bonus = 
-                    (msg.rewards as u128).saturating_mul(UNCLAIMED_BONUS_PERCENTAGE as u128).saturating_div(100) as u64;
-                let total_rewards = msg.rewards - msg.commissions - staker_rewards - unclaimed_rewards_bonus;
+                let total_rewards = msg.rewards - msg.commissions - staker_rewards;
                 info!(target: "server_log", "{} - Miners Rewards: {}", id, total_rewards);
                 info!(target: "server_log", "{} - Commission: {}", id, msg.commissions);
                 info!(target: "server_log", "{} - Staker Rewards: {}", id, staker_rewards);
-                info!(target: "server_log", "{} - Unclaimed Bonus Rewards: {}", id, unclaimed_rewards_bonus);
                 let mut total_miners_earned_rewards = 0;
                 for (miner_pubkey, msg_submission) in msg.submissions.iter() {
                     let decimals = 10f64.powf(ORE_TOKEN_DECIMALS as f64);
@@ -264,8 +260,7 @@ pub async fn pool_mine_success_system(
 
                 if msg.global_boosts_active {
                     info!(target: "server_log", "{} - Global Boosts Active, skipping processing of staker rewards.", id);
-                    info!(target: "server_log", "{} - Processing unclaimed rewards bonuses.", id);
-                    process_unclaimed_bonus_rewards(msg.rewards, unclaimed_rewards_bonus, &app_database, &app_config).await;
+                    info!(target: "server_log", "{} - Skipping unclaimed rewards bonuses.", id);
                 } else {
                     info!(target: "server_log", "{} - Processing stakers rewards", id);
                     process_stakers_rewards(msg.rewards, staker_rewards, &app_database, &app_config).await;
@@ -561,27 +556,6 @@ pub async fn process_unclaimed_bonus_rewards(total_rewards: u64, bonus_rewards: 
          }
          info!(target: "server_log", "Successfully updated rewards");
      }
-    info!(target: "server_log", "Updated rewards in {}ms", instant.elapsed().as_millis());
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let batch_size = 400;
-    let instant = Instant::now();
-    info!(target: "server_log", "Updating bonus miner rewards");
-    if i_rewards.len() > 0 {
-        let mut batch_num = 1;
-        for batch in i_rewards.chunks(batch_size) {
-            let instant = Instant::now();
-            info!(target: "server_log", "Updating reward batch {}", batch_num);
-            while let Err(_) = app_database.update_rewards(batch.to_vec()).await {
-                tracing::error!(target: "server_log", "Failed to update rewards in db. Retrying...");
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            info!(target: "server_log", "Updated reward batch {} in {}ms", batch_num, instant.elapsed().as_millis());
-            batch_num += 1;
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        info!(target: "server_log", "Successfully updated rewards",);
-    }
     info!(target: "server_log", "Updated rewards in {}ms", instant.elapsed().as_millis());
 }
 
