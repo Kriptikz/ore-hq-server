@@ -988,19 +988,6 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         ).await;
     });
 
-    let app_wallet = wallet_extension.clone();
-    let app_app_database = app_database.clone();
-    let app_rpc_client = rpc_client.clone();
-    tokio::spawn(async move {
-        delegate_boost_tracking_system(
-            rpc_ws_url,
-            app_wallet.miner_wallet.pubkey().clone(),
-            app_rpc_client,
-            app_app_database,
-        )
-        .await;
-    });
-
     let (client_message_sender, client_message_receiver) =
         tokio::sync::mpsc::unbounded_channel::<ClientMessage>();
 
