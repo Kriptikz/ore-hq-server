@@ -190,21 +190,11 @@ pub async fn pool_submission_system(
 
                         // Check for reservation, add if available.
                         let mut boost_accounts: Option<[Pubkey; 3]> = None;
-                        let proof_key = get_proof_pda(signer.pubkey());
-                        let reservation_key = reservation_pda(proof_key);
-                        if let Ok(reservation) = get_reservation(&rpc_client, get_proof_pda(signer.pubkey())).await {
-                            info!(target: "server_log", "Reservation: {:?}", reservation);
-                            if reservation.boost != Pubkey::default() {
-                                boost_accounts = Some([reservation.boost, proof_pda(reservation.boost).0, reservation_key.0]);
-                            }
-                        } else {
-                            println!("Failed to get reservation account from rpc...");
-                            info!(target: "server_log", "Failed to get reservation, skipping.");
-                        }
+                        
                         let ix_mine = get_mine_with_global_boost_ix(signer.pubkey(), best_solution, bus, boost_accounts);
                         ixs.push(ix_mine);
-                        let ix_rotate = get_rotate_ix(signer.pubkey());
-                        ixs.push(ix_rotate);
+                        //let ix_rotate = get_rotate_ix(signer.pubkey());
+                        //ixs.push(ix_rotate);
 
                         if let Ok((hash, _slot)) = rpc_client
                             .get_latest_blockhash_with_commitment(rpc_client.commitment())
