@@ -89,6 +89,8 @@ const ORE_BOOST_MINT: &str = "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp";
 const ORE_SOL_BOOST_MINT: &str = "DrSS5RM7zUd9qjUEdDaf31vnDUSbCrMto6mjqTrHFifN";
 const ORE_ISC_BOOST_MINT: &str = "meUwDp23AaxhiNKaQCyJ2EAF2T4oe1gSkEkGXSRVdZb";
 
+const CLAIM_MINIMUM: u64 = 5_000;
+
 #[derive(Clone)]
 enum ClientVersion {
     V1,
@@ -121,8 +123,14 @@ struct ClaimsQueueItem {
     mint: Option<Pubkey>,
 }
 
+#[derive(Clone, Copy)]
+struct ClaimCooldownItem {
+    last_processed: Instant,
+}
+
 struct ClaimsQueue {
     queue: RwLock<HashMap<(Pubkey, Option<Pubkey>), ClaimsQueueItem>>,
+    claim_cooldown: RwLock<HashMap<Pubkey, ClaimCooldownItem>>
 }
 
 struct SubmissionWindow {
@@ -920,6 +928,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let claims_queue = Arc::new(ClaimsQueue {
         queue: RwLock::new(HashMap::new()),
+        claim_cooldown: RwLock::new(HashMap::new()),
     });
 
     let submission_window = Arc::new(RwLock::new(SubmissionWindow { closed: false }));
@@ -2015,15 +2024,32 @@ async fn post_claim(
                 .unwrap();
         }
 
+
+        let reader = claims_queue.claim_cooldown.read().await;
+        let claim_cd = reader.clone();
+        drop(reader);
+
+        if let Some(item) =  claim_cd.get(&miner_pubkey) {
+            // seconds in a day 86_400
+            let cooldown_time = 86_400 * 2;
+            if item.last_processed.elapsed().as_secs() < cooldown_time {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("claims only allowed once every 48 hours".to_string())
+                    .unwrap();
+            }
+        }
+
         let amount = query_params.amount;
 
-        // 0.05000000000
-        if amount < 5_000_000_000 {
+        // 0.00000005000
+        if amount < CLAIM_MINIMUM {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body("claim minimum is 0.05".to_string())
+                .body("claim minimum is 0.00000005000".to_string())
                 .unwrap();
         }
+
 
         if let Ok(miner_rewards) = app_database
             .get_miner_rewards(miner_pubkey.to_string())
@@ -2036,20 +2062,6 @@ async fn post_claim(
                     .unwrap();
             }
 
-            if let Ok(last_claim) = app_database.get_last_claim(miner_rewards.miner_id).await {
-                let last_claim_ts = last_claim.created_at.and_utc().timestamp();
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_secs() as i64;
-                let time_difference = now - last_claim_ts;
-                if time_difference <= 1800 {
-                    return Response::builder()
-                        .status(StatusCode::TOO_MANY_REQUESTS)
-                        .body(time_difference.to_string())
-                        .unwrap();
-                }
-            }
 
             let mut writer = claims_queue.queue.write().await;
             writer.insert((miner_pubkey, None), ClaimsQueueItem{
@@ -2058,6 +2070,13 @@ async fn post_claim(
                 mint: None,
             });
             drop(writer);
+
+            let mut writer = claims_queue.claim_cooldown.write().await;
+            writer.insert(miner_pubkey, ClaimCooldownItem {
+                last_processed: Instant::now(),
+            });
+            drop(writer);
+
             return Response::builder()
                 .status(StatusCode::OK)
                 .body("SUCCESS".to_string())
@@ -2133,9 +2152,21 @@ async fn post_claim_v2(
 
                 let amount = query_params.amount;
 
-                // 0.05000000000
-                if amount < 5_000_000_000 {
-                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.05".to_string()));
+                // 0.00000005000
+                if amount < CLAIM_MINIMUM {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.00000005000".to_string()));
+                }
+
+                let reader = claims_queue.claim_cooldown.read().await;
+                let claim_cd = reader.clone();
+                drop(reader);
+
+                if let Some(item) =  claim_cd.get(&miner_pubkey) {
+                    // seconds in a day 86_400
+                    let cooldown_time = 86_400 * 2;
+                    if item.last_processed.elapsed().as_secs() < cooldown_time {
+                        return Err((StatusCode::BAD_REQUEST, "claims only allowed once every 48 hours".to_string()));
+                    }
                 }
 
                 if let Ok(miner_rewards) = app_database
@@ -2165,6 +2196,13 @@ async fn post_claim_v2(
                         mint: None,
                     });
                     drop(writer);
+
+                    let mut writer = claims_queue.claim_cooldown.write().await;
+                    writer.insert(miner_pubkey, ClaimCooldownItem {
+                        last_processed: Instant::now(),
+                    });
+                    drop(writer);
+
                     return Ok((StatusCode::OK, "SUCCESS"));
                 } else {
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to get miner account from database".to_string()));
@@ -2256,9 +2294,20 @@ async fn post_claim_stake_rewards_v2(
                     return Err((StatusCode::TOO_MANY_REQUESTS, "QUEUED".to_string()));
                 }
 
+                let reader = claims_queue.claim_cooldown.read().await;
+                let claim_cd = reader.clone();
+                drop(reader);
+
+                if let Some(item) =  claim_cd.get(&staker_pubkey) {
+                    // seconds in a day 86_400
+                    let cooldown_time = 86_400 * 2;
+                    if item.last_processed.elapsed().as_secs() < cooldown_time {
+                        return Err((StatusCode::BAD_REQUEST, "claims only allowed once every 48 hours".to_string()));
+                    }
+                }
+
                 let amount = query_params.amount;
 
-                // 0.00500000000
                 let ore_mint = get_ore_mint();
                 let receiver_token_account = get_associated_token_address(&receiver_pubkey, &ore_mint);
                 let mut is_creating_ata = true;
@@ -2271,11 +2320,12 @@ async fn post_claim_stake_rewards_v2(
                         is_creating_ata = false;
                     }
                 }
-                if amount < 5_000_000_000 {
-                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.05".to_string()));
+                // 0.00000005000
+                if amount < CLAIM_MINIMUM {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.00000005000".to_string()));
                 }
-                if is_creating_ata && amount < 5_000_000_000 {
-                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.05".to_string()));
+                if is_creating_ata && amount < CLAIM_MINIMUM {
+                    return Err((StatusCode::BAD_REQUEST, "claim minimum is 0.00000005000".to_string()));
                 }
 
                 if let Ok(staker_rewards) = app_database
@@ -2293,7 +2343,12 @@ async fn post_claim_stake_rewards_v2(
                         mint: Some(mint_pubkey),
                     });
                     drop(writer);
-                    return Ok((StatusCode::OK, "SUCCESS"));
+                    let mut writer = claims_queue.claim_cooldown.write().await;
+                    writer.insert(staker_pubkey, ClaimCooldownItem {
+                        last_processed: Instant::now(),
+                    });
+                    drop(writer);
+                    return Ok((StatusCode::OK, "SUCCESS".to_string()));
                 } else {
                     return Err((StatusCode::INTERNAL_SERVER_ERROR, "failed to get staker account from database".to_string()));
                 }
@@ -2343,6 +2398,21 @@ async fn post_claim_stake_rewards_v3(
                 .unwrap();
         }
 
+        let reader = claims_queue.claim_cooldown.read().await;
+        let claim_cd = reader.clone();
+        drop(reader);
+
+        if let Some(item) =  claim_cd.get(&staker_pubkey) {
+            // seconds in a day 86_400
+            let cooldown_time = 86_400 * 2;
+            if item.last_processed.elapsed().as_secs() < cooldown_time {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("claims only allowed once every 48 hours".to_string())
+                    .unwrap();
+            }
+        }
+
         let amount = query_params.amount;
 
         let ore_mint = get_ore_mint();
@@ -2357,15 +2427,14 @@ async fn post_claim_stake_rewards_v3(
                 is_creating_ata = false;
             }
         }
-        // 0.05000000000
-        if amount < 5_000_000_000 {
+        // 0.00000005000
+        if amount < CLAIM_MINIMUM {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("claim minimum is 0.05".to_string())
                 .unwrap();
         }
-        // 0.05000000000
-        if is_creating_ata && amount < 5_000_000_000 {
+        if is_creating_ata && amount < CLAIM_MINIMUM {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body("claim minimum is 0.05".to_string())
@@ -2390,6 +2459,13 @@ async fn post_claim_stake_rewards_v3(
                 mint: Some(mint_pubkey),
             });
             drop(writer);
+
+            let mut writer = claims_queue.claim_cooldown.write().await;
+            writer.insert(staker_pubkey, ClaimCooldownItem {
+                last_processed: Instant::now(),
+            });
+            drop(writer);
+
             return Response::builder()
                 .status(StatusCode::OK)
                 .body("SUCCESS".to_string())
