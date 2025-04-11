@@ -144,9 +144,9 @@ async fn process_claim(user_pubkey: Pubkey, claim_queue_item: ClaimsQueueItem, r
             )
         }
 
-        // 0.02_000_000_000
+        // 0.00_000_001_000
         if is_creating_ata {
-            claim_amount = amount - 2_000_000_000
+            claim_amount = amount - 1_000
         }
         let ix =
             crate::ore_utils::get_claim_ix(wallet.pubkey(), receiver_token_account, claim_amount);
