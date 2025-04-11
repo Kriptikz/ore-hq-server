@@ -21,7 +21,7 @@ pub async fn message_text_all_clients_system(
                     let socket = socket_sender.clone();
                     tokio::spawn(async move {
                         if let Ok(_) =
-                            socket.socket.lock().await.send(Message::Text(text)).await
+                            socket.socket.lock().await.send(Message::Text(text.into())).await
                         {
                         } else {
                             tracing::error!(target: "server_log", "Failed to send client text");

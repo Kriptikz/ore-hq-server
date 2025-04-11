@@ -3200,7 +3200,7 @@ async fn handle_socket(
     client_channel: UnboundedSender<ClientMessage>,
 ) {
     if socket
-        .send(axum::extract::ws::Message::Ping(vec![1, 2, 3]))
+        .send(axum::extract::ws::Message::Ping(vec![1, 2, 3].into()))
         .await
         .is_ok()
     {
@@ -3358,7 +3358,7 @@ async fn ping_check_system(shared_state: &Arc<RwLock<AppState>>) {
                     .socket
                     .lock()
                     .await
-                    .send(Message::Ping(vec![1, 2, 3]))
+                    .send(Message::Ping(vec![1, 2, 3].into()))
                     .await
                     .is_ok()
                 {

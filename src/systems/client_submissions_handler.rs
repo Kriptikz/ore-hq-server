@@ -52,7 +52,7 @@ pub async fn client_submissions_handler(
                             .socket
                             .lock()
                             .await
-                            .send(Message::Text(msg))
+                            .send(Message::Text(msg.into()))
                             .await;
                     } else {
                         //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
@@ -163,7 +163,7 @@ pub async fn client_submissions_handler(
 
                     let reader = app_state.read().await;
                     if let Some(app_client_socket) = reader.sockets.get(&addr) {
-                        let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string())).await;
+                        let _ = app_client_socket.socket.lock().await.send(Message::Text("Invalid solution. If this keeps happening, please contact support.".to_string().into())).await;
                     } else {
                         //tracing::error!(target: "server_log", "Failed to get client socket for addr: {}", addr);
                         continue;

@@ -105,7 +105,7 @@ pub async fn handle_ready_clients_system(
                                     .socket
                                     .lock()
                                     .await
-                                    .send(Message::Binary(start_mining_message.to_message_binary()))
+                                    .send(Message::Binary(start_mining_message.to_message_binary().into()))
                                     .await;
                                 let reader = app_client_nonce_ranges.read().await;
                                 let current_nonce_ranges =

@@ -117,7 +117,7 @@ pub async fn pool_mine_success_system(
                                         if let Ok(_) = socket_sender
                                             .lock()
                                             .await
-                                            .send(Message::Text(message))
+                                            .send(Message::Text(message.into()))
                                             .await
                                         {
                                         } else {
@@ -144,7 +144,7 @@ pub async fn pool_mine_success_system(
                                             .lock()
                                             .await
                                             .send(Message::Binary(
-                                                server_message.to_message_binary(),
+                                                server_message.to_message_binary().into(),
                                             ))
                                             .await
                                         {
