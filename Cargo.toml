@@ -22,9 +22,9 @@ solana-account-decoder = "=2.1"
 solana-transaction-status = "=2.1"
 spl-associated-token-account = { version = "^6", features = ["no-entrypoint"] }
 spl-token = { version = "^4", features = ["no-entrypoint"] }
-tokio = { version = "1.39.2", features = ["full", "rt-multi-thread"] }
-tower = { version = "0.4.13", features = ["util"] }
-tower-http = { version = "0.5.2", features = ["trace", "cors"] }
+tokio = { version = "1.44.2", features = ["full", "rt-multi-thread"] }
+tower = { version = "0.5.2", features = ["util"] }
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 dotenv = "0.15.0"
