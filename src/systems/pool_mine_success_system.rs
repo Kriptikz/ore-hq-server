@@ -93,11 +93,7 @@ pub async fn pool_mine_success_system(
                         0.0 // Handle the case where pool_rewards_dec is 0 to avoid division by zero
                     };
 
-                    let top_stake = if let Some(config) = msg.ore_config {
-                        (config.top_balance as f64).div(decimals)
-                    } else {
-                        1.0f64
-                    };
+                    let top_stake = 1.0f64;
 
                     for (_addr, client_connection) in socks.iter() {
                         if client_connection.pubkey.eq(&miner_pubkey) {

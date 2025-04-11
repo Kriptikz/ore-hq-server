@@ -3,31 +3,9 @@ use ore_api::state::{Proof, Config};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::account::ReadableAccount;
 use solana_sdk::pubkey::Pubkey;
-use ore_boost_api::state::reservation_pda;
 use steel::AccountDeserialize;
 
 use crate::ore_utils::{get_proof_pda, proof_pubkey};
-
-pub async fn get_reservation(
-    client: &RpcClient,
-    proof: Pubkey,
-) -> Result<ore_boost_api::state::Reservation, ()> {
-    let reservation_key = reservation_pda(proof);
-    let account_pubkeys = vec![
-        reservation_key.0
-    ];
-    let datas = client.get_multiple_accounts(&account_pubkeys).await;
-    if let Ok(datas) = datas {
-        let res = if let Some(data) = &datas[0] {
-            let res = *ore_boost_api::state::Reservation::try_from_bytes(data.data()).expect("Failed to parse reservation account");
-            return Ok(res)
-        } else {
-            return Err(())
-        };
-    } else {
-        Err(())
-    }
-}
 
 pub async fn get_proof(client: &RpcClient, authority: Pubkey) -> Result<Proof, String> {
     let proof_address = crate::ore_utils::get_proof_pda(authority);

@@ -9,7 +9,6 @@ use std::{
 };
 
 use app_metrics::MetricsRouteEventData;
-use ore_boost_api::state::{boost_pda, reservation_pda, stake_pda};
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserializeV1};
 use solana_account_decoder::UiAccountEncoding;
 use steel::AccountDeserialize as _;
@@ -689,119 +688,6 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             info!(target: "server_log", "Balances are 0, nothing to migrate.");
         }
     }
-
-
-    info!(target: "server_log", "Getting managed proof, ore Proof account.");
-    let ore_proof = ore_api::state::proof_pda(managed_proof.0);
-    let pool_boost_reservation_acc = reservation_pda(ore_proof.0);
-    match rpc_client.get_account(&pool_boost_reservation_acc.0).await {
-        Ok(_) => {
-            info!(target: "server_log", "Pool boost reservation acc already exists. Continuing...");
-        }
-        Err(_e) => {
-            error!(target: "server_log", "Failed to get pool boost reservation account. Creating boost reservation account...");
-            let ix = ore_miner_delegation::instruction::register_global_boost(wallet.pubkey());
-
-            let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
-
-            let blockhash = rpc_client
-                .get_latest_blockhash()
-                .await
-                .expect("should get latest blockhash");
-
-            tx.sign(&[&wallet], blockhash);
-
-            match rpc_client
-                .send_and_confirm_transaction_with_spinner_and_commitment(
-                    &tx,
-                    CommitmentConfig {
-    commitment: CommitmentLevel::Confirmed,
-                    },
-                )
-                .await
-            {
-                Ok(_) => {
-                    info!(target: "server_log", "Successfully created boost reservation account: {}", pool_boost_reservation_acc.0.to_string());
-                }
-                Err(e) => {
-                    error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-                    panic!("Failed to create boost reservation account.");
-                }
-            }
-        }
-    }
-
-    // info!(target: "server_log", "Verifying proof mining authority is updated");
-    
-    // info!(target: "server_log", "Rotating boost.");
-    // let ix_rotate = get_rotate_ix(wallet.pubkey());
-    // if let Ok((_hash, _slot)) = rpc_client
-    //     .get_latest_blockhash_with_commitment(rpc_client.commitment())
-    //     .await
-    // {
-    //     let mut tx = Transaction::new_with_payer(&[ix_rotate], Some(&wallet.pubkey()));
-
-    //     let blockhash = rpc_client
-    //         .get_latest_blockhash()
-    //         .await
-    //         .expect("should get latest blockhash");
-
-    //     tx.sign(&[&wallet], blockhash);
-
-    //     match rpc_client
-    //         .send_and_confirm_transaction_with_spinner_and_commitment(
-    //             &tx,
-    //             CommitmentConfig {
-    //                 commitment: CommitmentLevel::Confirmed,
-    //             },
-    //         )
-    //         .await
-    //     {
-    //         Ok(_) => {
-    //             info!(target: "server_log", "Successfully rotated boost reservation");
-    //         }
-    //         Err(e) => {
-    //             error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-    //             panic!("Failed to rotate boost reservation");
-    //         }
-    //     }
-    // }
-
-
-    // info!(target: "server_log", "Verifying proof mining authority is updated");
-    // let managed_proof_pda = managed_proof_pda(wallet.pubkey());
-    // if proof.miner != managed_proof_pda.0 {
-    //     info!(target: "server_log", "Proof miner is not the wallet pubkey, updating....");
-    //     let ix = ore_miner_delegation::instruction::update_miner_authority(wallet.pubkey(), managed_proof_pda.0);
-
-    //     let mut tx = Transaction::new_with_payer(&[ix], Some(&wallet.pubkey()));
-
-    //     let blockhash = rpc_client
-    //         .get_latest_blockhash()
-    //         .await
-    //         .expect("should get latest blockhash");
-
-    //     tx.sign(&[&wallet], blockhash);
-
-    //     match rpc_client
-    //         .send_and_confirm_transaction_with_spinner_and_commitment(
-    //             &tx,
-    //             CommitmentConfig {
-    //                 commitment: CommitmentLevel::Confirmed,
-    //             },
-    //         )
-    //         .await
-    //     {
-    //         Ok(_) => {
-    //             info!(target: "server_log", "Successfully updated miner authority for proof.");
-    //         }
-    //         Err(e) => {
-    //             error!(target: "server_log", "Failed to send and confirm tx.\nE: {:?}", e);
-    //             panic!("Failed to update miner authority");
-    //         }
-    //     }
-    // }
-
 
     info!(target: "server_log", "Validating pool exists in db");
     let db_pool = app_database
@@ -3519,6 +3405,7 @@ async fn update_delegate_boost_stake_accounts(
                 min_context_slot: None,
             },
             with_context: None,
+            sort_results: None,
         }
     ).await {
             Ok(pa) => {

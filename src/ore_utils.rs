@@ -3,16 +3,14 @@ use std::{str::FromStr, time::{SystemTime, UNIX_EPOCH}};
 use bytemuck::{Pod, Zeroable};
 use drillx::Solution;
 use ore_api::{
-    consts::{BUS_ADDRESSES, CONFIG_ADDRESS, MINT_ADDRESS, PROOF, TOKEN_DECIMALS},
-    state::{Config, Proof},
-    ID as ORE_ID,
+    consts::{BUS_ADDRESSES, CONFIG_ADDRESS, MINT_ADDRESS, PROOF, TOKEN_DECIMALS}, state::{Config, Proof}, ID as ORE_ID
 };
 use ore_boost_api::state::{boost_pda, stake_pda};
 use ore_miner_delegation::{instruction, state::{DelegatedBoost, DelegatedBoostV2, DelegatedStake}, utils::AccountDeserializeV1, pda::managed_proof_pda};
-use ore_utils::event;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, instruction::Instruction, pubkey::Pubkey};
 use spl_associated_token_account::get_associated_token_address;
+use steel::event;
 
 pub const ORE_TOKEN_DECIMALS: u8 = TOKEN_DECIMALS;
 
@@ -52,8 +50,8 @@ pub fn get_auth_ix(signer: Pubkey) -> Instruction {
     ore_api::prelude::auth(proof)
 }
 
-pub fn get_mine_with_global_boost_ix(signer: Pubkey, solution: Solution, bus: usize, boost_accounts: Option<[Pubkey; 3]>) -> Instruction {
-    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution, boost_accounts)
+pub fn get_mine_with_global_boost_ix(signer: Pubkey, solution: Solution, bus: usize) -> Instruction {
+    instruction::mine_with_boost(signer, BUS_ADDRESSES[bus], solution)
 }
 
 pub fn get_rotate_ix(signer: Pubkey) -> Instruction {

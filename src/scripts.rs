@@ -140,6 +140,7 @@ pub async fn update_stake_accounts() -> Result<(), Box<dyn std::error::Error>> {
                 min_context_slot: None,
             },
             with_context: None,
+            sort_results: None,
         }
     ).await {
             Ok(pa) => {

@@ -1,4 +1,3 @@
-use ore_boost_api::state::reservation_pda;
 use rand::seq::SliceRandom;
 use std::{
     collections::HashMap,
@@ -8,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use ore_miner_delegation::{pda::{delegated_boost_pda, managed_proof_pda}, state::DelegatedBoost, utils::AccountDeserializeV1};
-use crate::{app_metrics::{AppMetricsEvent, AppMetricsMineEvent}, global_boost_util::{get_proof_and_config_with_busses, get_reservation}, ore_utils::{get_proof_pda, get_rotate_ix}};
+use crate::{app_metrics::{AppMetricsEvent, AppMetricsMineEvent}, global_boost_util::{get_proof_and_config_with_busses}, ore_utils::{get_proof_pda, get_rotate_ix}};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use ore_api::{consts::BUS_COUNT, event::MineEvent, state::{Proof, proof_pda}};
@@ -188,13 +187,8 @@ pub async fn pool_submission_system(
                             ixs.push(reset_ix);
                         }
 
-                        // Check for reservation, add if available.
-                        let mut boost_accounts: Option<[Pubkey; 3]> = None;
-                        
-                        let ix_mine = get_mine_with_global_boost_ix(signer.pubkey(), best_solution, bus, boost_accounts);
+                        let ix_mine = get_mine_with_global_boost_ix(signer.pubkey(), best_solution, bus);
                         ixs.push(ix_mine);
-                        //let ix_rotate = get_rotate_ix(signer.pubkey());
-                        //ixs.push(ix_rotate);
 
                         if let Ok((hash, _slot)) = rpc_client
                             .get_latest_blockhash_with_commitment(rpc_client.commitment())
